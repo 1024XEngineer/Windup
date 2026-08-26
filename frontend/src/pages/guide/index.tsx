@@ -18,7 +18,12 @@ interface Journey {
   description: string
   label: string
   to: string
-  icon: ComponentType<{ 'aria-hidden'?: boolean; size?: number; weight?: 'duotone' }>
+  icon: ComponentType<{
+    'aria-hidden'?: boolean
+    className?: string
+    size?: number
+    weight?: 'duotone'
+  }>
 }
 
 const journeys: readonly Journey[] = [
@@ -59,22 +64,28 @@ export function GuidePage() {
     <>
       <MarketingHeader />
       <main className="min-h-[100dvh] bg-app-canvas pb-24 pt-32 text-app-ink sm:pt-36">
-        <div className="mx-auto w-full max-w-[1560px] px-4 sm:px-6 xl:px-8">
-          <section className="border-b border-app-line pb-10 sm:pb-12">
+        <article
+          aria-labelledby="guide-title"
+          className="mx-auto w-full max-w-[82rem] px-5 sm:px-8 lg:px-12"
+        >
+          <header className="border-b border-app-line pb-14 sm:pb-16">
             <p className="font-mono text-[0.68rem] font-semibold tracking-[0.16em] text-app-faint uppercase">
               使用说明
             </p>
-            <div className="mt-4 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.65fr)] lg:items-end">
+            <div className="mt-5 grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.46fr)] lg:items-end">
               <div>
-                <h1 className="max-w-3xl font-serif text-[clamp(2.5rem,6vw,5rem)] leading-[0.98] font-medium tracking-[-0.055em] text-app-ink">
+                <h1
+                  id="guide-title"
+                  className="max-w-4xl font-serif text-[clamp(3rem,6.4vw,5.25rem)] leading-[1.06] font-semibold tracking-[-0.055em] text-app-ink"
+                >
                   Windup 使用手册
                 </h1>
-                <p className="mt-5 max-w-2xl text-sm leading-7 text-app-muted sm:text-base">
+                <p className="mt-6 max-w-2xl text-base leading-8 text-app-muted sm:text-lg">
                   告诉 Windup
                   你想做什么，选择满意的角色和方向，然后把动作带进游戏。你可以从下面的目标直接开始，也可以按章节了解完整流程。
                 </p>
               </div>
-              <div className="flex flex-wrap gap-3 lg:justify-end">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-4 lg:justify-end">
                 <Link
                   to="/quick-start"
                   className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-app-accent px-5 text-sm font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
@@ -84,74 +95,80 @@ export function GuidePage() {
                 </Link>
                 <Link
                   to="/workspace"
-                  className="inline-flex min-h-11 items-center rounded-lg border border-app-line-strong bg-app-surface-raised px-5 text-sm font-semibold text-app-ink-soft transition-colors hover:border-app-accent hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                  className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-app-ink-soft underline decoration-app-line-strong underline-offset-4 transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
                 >
                   返回工作台
+                  <ArrowRight aria-hidden="true" size={14} weight="bold" />
                 </Link>
               </div>
             </div>
-          </section>
+          </header>
 
-          <section aria-labelledby="guide-goals-title" className="py-10 sm:py-12">
-            <div className="mb-5 flex items-end justify-between gap-4">
+          <section aria-labelledby="guide-goals-title" className="py-14 sm:py-16">
+            <div className="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
               <div>
-                <p className="text-xs font-medium text-app-faint">按你的目标开始</p>
+                <p className="font-mono text-[0.68rem] font-semibold tracking-[0.14em] text-app-faint uppercase">
+                  按你的目标开始
+                </p>
                 <h2
                   id="guide-goals-title"
-                  className="mt-1 font-serif text-2xl font-medium tracking-[-0.035em] text-app-ink sm:text-3xl"
+                  className="mt-3 text-2xl font-extrabold tracking-[-0.025em] text-app-ink sm:text-3xl"
                 >
                   你现在想做什么？
                 </h2>
               </div>
-              <span className="hidden text-xs text-app-faint sm:block">点击后进入对应功能</span>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {journeys.map((journey) => {
-                const Icon = journey.icon
-                return (
-                  <Link
-                    key={journey.title}
-                    to={journey.to}
-                    aria-label={journey.label}
-                    className="group flex min-h-48 flex-col rounded-[1.25rem] border border-app-line bg-app-surface-raised p-5 transition hover:-translate-y-0.5 hover:border-app-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
-                  >
-                    <Icon aria-hidden={true} size={28} weight="duotone" />
-                    <strong className="mt-auto font-serif text-xl font-medium tracking-[-0.025em] text-app-ink">
-                      {journey.title}
-                    </strong>
-                    <span className="mt-2 text-xs leading-5 text-app-muted">
-                      {journey.description}
-                    </span>
-                    <span className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-app-accent">
-                      {journey.label}
-                      <ArrowRight
-                        aria-hidden="true"
-                        className="transition-transform group-hover:translate-x-0.5"
-                        size={14}
-                        weight="bold"
+              <div className="grid md:grid-cols-2">
+                {journeys.map((journey) => {
+                  const Icon = journey.icon
+                  return (
+                    <Link
+                      key={journey.title}
+                      to={journey.to}
+                      aria-label={journey.label}
+                      className="group grid min-h-44 grid-cols-[2rem_minmax(0,1fr)] gap-x-4 border-t border-app-line py-6 md:px-6 md:first:pl-0 md:nth-[2]:pr-0 md:nth-[3]:pl-0 md:nth-[4]:pr-0"
+                    >
+                      <Icon
+                        aria-hidden={true}
+                        className="mt-0.5 text-app-accent"
+                        size={24}
+                        weight="duotone"
                       />
-                    </span>
-                  </Link>
-                )
-              })}
+                      <span className="flex min-w-0 flex-col">
+                        <strong className="text-lg font-bold tracking-[-0.015em] text-app-ink">
+                          {journey.title}
+                        </strong>
+                        <span className="mt-2 text-sm leading-6 text-app-muted">
+                          {journey.description}
+                        </span>
+                        <span className="mt-auto inline-flex items-center gap-1.5 pt-5 text-xs font-semibold text-app-accent">
+                          {journey.label}
+                          <ArrowRight
+                            aria-hidden="true"
+                            className="transition-transform group-hover:translate-x-1"
+                            size={14}
+                            weight="bold"
+                          />
+                        </span>
+                      </span>
+                    </Link>
+                  )
+                })}
+              </div>
             </div>
           </section>
 
-          <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] xl:gap-10">
-            <aside className="lg:sticky lg:top-24 lg:self-start">
-              <nav
-                aria-label="使用手册目录"
-                className="rounded-[1.25rem] border border-app-line bg-app-surface p-3"
-              >
-                <p className="px-3 pb-2 pt-1 text-[0.68rem] font-semibold tracking-[0.12em] text-app-faint uppercase">
+          <div className="grid gap-12 border-t border-app-line pt-10 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-16">
+            <aside className="lg:sticky lg:top-28 lg:self-start">
+              <nav aria-label="使用手册目录" className="border-l border-app-line pl-5">
+                <p className="font-mono text-[0.68rem] font-semibold tracking-[0.14em] text-app-faint uppercase">
                   完整流程
                 </p>
-                <ol className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-1">
+                <ol className="mt-5 grid grid-cols-2 gap-x-5 gap-y-1 sm:grid-cols-4 lg:grid-cols-1">
                   {guideChapters.map((chapter) => (
                     <li key={chapter.id}>
                       <a
                         href={`#${chapter.id}`}
-                        className="group flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm text-app-muted transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                        className="group flex min-h-10 items-center gap-3 py-2 text-sm text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
                       >
                         <span
                           aria-hidden="true"
@@ -167,97 +184,119 @@ export function GuidePage() {
               </nav>
             </aside>
 
-            <article className="min-w-0 space-y-5">
+            <div className="min-w-0">
               {guideChapters.map((chapter) => (
                 <section
                   key={chapter.id}
                   id={chapter.id}
                   aria-labelledby={`${chapter.id}-title`}
-                  className="scroll-mt-24 overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-raised"
+                  className="scroll-mt-28 border-b border-app-line py-14 first:pt-0 sm:py-20"
                 >
-                  <header className="grid gap-4 border-b border-app-line px-5 py-6 sm:grid-cols-[3.5rem_minmax(0,1fr)_auto] sm:items-start sm:px-7">
-                    <span aria-hidden="true" className="font-mono text-sm text-app-faint">
+                  <header className="grid gap-5 sm:grid-cols-[3.5rem_minmax(0,1fr)]">
+                    <span
+                      aria-hidden="true"
+                      className="font-mono text-sm tracking-[0.08em] text-app-faint"
+                    >
                       {chapter.index}
                     </span>
                     <div>
-                      <p className="text-xs font-medium text-app-faint">{chapter.navLabel}</p>
+                      <p className="text-xs font-semibold tracking-[0.08em] text-app-faint uppercase">
+                        {chapter.navLabel}
+                      </p>
                       <h2
                         id={`${chapter.id}-title`}
-                        className="mt-1 font-serif text-2xl font-medium tracking-[-0.035em] text-app-ink"
+                        className="mt-3 max-w-4xl text-[clamp(1.85rem,3.6vw,3.15rem)] leading-[1.18] font-extrabold tracking-[-0.035em] text-app-ink"
                       >
                         {chapter.title}
                       </h2>
-                      <p className="mt-3 max-w-3xl text-sm leading-6 text-app-muted">
+                      <p className="mt-5 max-w-3xl text-base leading-8 text-app-muted">
                         {chapter.summary}
                       </p>
+                      {chapter.action ? (
+                        <Link
+                          to={chapter.action.to}
+                          className="mt-6 inline-flex min-h-10 items-center gap-2 text-sm font-semibold text-app-accent underline decoration-app-line-strong underline-offset-4 transition-colors hover:text-app-accent-hover focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                        >
+                          {chapter.action.label}
+                          <ArrowRight aria-hidden="true" size={14} weight="bold" />
+                        </Link>
+                      ) : null}
                     </div>
-                    {chapter.action ? (
-                      <Link
-                        to={chapter.action.to}
-                        className="inline-flex min-h-10 items-center gap-1.5 self-start rounded-lg border border-app-line-strong px-3 text-xs font-semibold text-app-ink-soft transition-colors hover:border-app-accent hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent sm:ml-4"
-                      >
-                        {chapter.action.label}
-                        <ArrowRight aria-hidden="true" size={13} weight="bold" />
-                      </Link>
-                    ) : null}
                   </header>
 
-                  <div className="grid gap-px bg-app-line sm:grid-cols-2">
-                    {chapter.topics.map((topic) => (
-                      <div key={topic.title} className="bg-app-surface-raised p-5 sm:p-7">
-                        <h3 className="font-serif text-lg font-medium text-app-ink-soft">
-                          {topic.title}
-                        </h3>
-                        <p className="mt-2 text-sm leading-6 text-app-muted">{topic.description}</p>
-                        {topic.bullets ? (
-                          <ul className="mt-4 space-y-2">
-                            {topic.bullets.map((bullet) => (
-                              <li
-                                key={bullet}
-                                className="flex gap-2 text-xs leading-5 text-app-ink-soft"
-                              >
-                                <CheckCircle
-                                  aria-hidden="true"
-                                  className="mt-0.5 shrink-0 text-app-accent"
-                                  size={15}
-                                  weight="fill"
-                                />
-                                <span>{bullet}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        {topic.example ? (
-                          <p className="mt-4 rounded-lg border border-app-line bg-app-surface-muted px-3 py-2.5 font-mono text-xs leading-5 text-app-ink-soft">
-                            {topic.example}
-                          </p>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-
-                  {chapter.tip ? (
-                    <div className="flex gap-3 border-t border-app-line bg-app-accent-muted px-5 py-4 text-xs leading-5 text-app-ink-soft sm:px-7">
-                      <Lifebuoy
-                        aria-hidden="true"
-                        className="mt-0.5 shrink-0 text-app-accent"
-                        size={18}
-                        weight="duotone"
-                      />
-                      <p>{chapter.tip}</p>
+                  <div className="mt-10 sm:ml-[5.5rem] sm:mt-12">
+                    <div className="max-w-3xl divide-y divide-app-line">
+                      {chapter.topics.map((topic, topicIndex) => (
+                        <div
+                          key={topic.title}
+                          className="grid gap-4 py-8 first:pt-0 sm:grid-cols-[2rem_minmax(0,1fr)] sm:gap-6"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="font-mono text-[0.68rem] text-app-faint"
+                          >
+                            {String(topicIndex + 1).padStart(2, '0')}
+                          </span>
+                          <div>
+                            <h3 className="text-lg font-bold tracking-[-0.015em] text-app-ink-soft sm:text-xl">
+                              {topic.title}
+                            </h3>
+                            <p className="mt-3 text-sm leading-7 text-app-muted sm:text-base">
+                              {topic.description}
+                            </p>
+                            {topic.bullets ? (
+                              <ul className="mt-5 space-y-3">
+                                {topic.bullets.map((bullet) => (
+                                  <li
+                                    key={bullet}
+                                    className="flex gap-3 text-sm leading-6 text-app-ink-soft"
+                                  >
+                                    <CheckCircle
+                                      aria-hidden="true"
+                                      className="mt-1 shrink-0 text-app-accent"
+                                      size={16}
+                                      weight="fill"
+                                    />
+                                    <span>{bullet}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+                            {topic.example ? (
+                              <blockquote className="mt-5 border-l-2 border-app-line-strong pl-4 font-mono text-xs leading-6 text-app-ink-soft sm:text-sm">
+                                {topic.example}
+                              </blockquote>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ) : null}
+
+                    {chapter.tip ? (
+                      <div className="mt-4 flex max-w-3xl gap-3 border-l-2 border-app-accent bg-app-accent-muted px-5 py-4 text-sm leading-6 text-app-ink-soft">
+                        <Lifebuoy
+                          aria-hidden="true"
+                          className="mt-0.5 shrink-0 text-app-accent"
+                          size={18}
+                          weight="duotone"
+                        />
+                        <p>{chapter.tip}</p>
+                      </div>
+                    ) : null}
+                  </div>
                 </section>
               ))}
 
-              <section className="rounded-[1.25rem] bg-app-ink px-5 py-7 text-app-on-accent sm:px-7">
-                <p className="text-xs text-app-surface-strong">没有找到答案？</p>
-                <div className="mt-2 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+              <footer className="border-b border-app-line py-14 sm:py-20">
+                <p className="font-mono text-[0.68rem] font-semibold tracking-[0.14em] text-app-faint uppercase">
+                  没有找到答案？
+                </p>
+                <div className="mt-4 grid gap-8 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                   <div>
-                    <h2 className="font-serif text-2xl font-medium">
+                    <h2 className="max-w-3xl text-2xl font-extrabold tracking-[-0.025em] text-app-ink sm:text-3xl">
                       把页面提示和操作步骤告诉我们
                     </h2>
-                    <p className="mt-2 max-w-2xl text-xs leading-5 text-app-surface-strong">
+                    <p className="mt-4 max-w-2xl text-sm leading-7 text-app-muted">
                       附上所在页面、刚刚执行的操作、页面显示的错误信息和截图，可以更快定位问题。
                     </p>
                   </div>
@@ -265,16 +304,16 @@ export function GuidePage() {
                     href={githubIssues}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-app-surface-raised px-4 text-xs font-semibold text-app-ink transition hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-surface-raised"
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-app-ink px-5 text-sm font-semibold text-app-on-accent transition-colors hover:bg-app-ink-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
                   >
                     提交问题
                     <ArrowRight aria-hidden="true" size={14} weight="bold" />
                   </a>
                 </div>
-              </section>
-            </article>
+              </footer>
+            </div>
           </div>
-        </div>
+        </article>
       </main>
     </>
   )
