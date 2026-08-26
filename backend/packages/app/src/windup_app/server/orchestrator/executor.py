@@ -153,7 +153,7 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
         sprite_w=p.sprite_width,
         sprite_h=p.sprite_height,
         style=ArtStyle.phrase_from_stored(p.game_style),
-        stylize="pixel" if art_style.wants_pixelation else "none",
+        stylize="pixel" if art_style.wants_pixelation and p.auto_pixelate else "none",
         sprite_sample_url=p.sprite_sample_url or "",
     )
 

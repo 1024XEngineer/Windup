@@ -72,6 +72,7 @@ class ProjectService(ABC):
         *,
         project_name: str | None = None,
         game_style: str | None | UnsetType = UNSET,
+        auto_pixelate: bool | UnsetType = UNSET,
     ) -> Project:
         """改已完成归属校验的项目。
 

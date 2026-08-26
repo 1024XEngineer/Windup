@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, SmallInteger, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from windup_framework.db import Base
@@ -31,6 +31,9 @@ class Project(Base):
     sprite_width: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     sprite_height: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     game_style: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_pixelate: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
     sprite_sample_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     create_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
