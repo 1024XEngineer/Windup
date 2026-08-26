@@ -8,6 +8,7 @@ import gongbiBirdRight from '@/assets/landing/illustrations/gongbi-tit-flight-do
 import { useAuthSession } from '@/features/auth-session'
 import { usePrefersReducedMotion } from '@/shared/hooks'
 import { CapabilitiesRail } from './capabilities-rail'
+import { WorkflowDemoVideo } from './workflow-demo-video'
 import { MarketingHeader } from './marketing-header'
 import './landing-motion.css'
 
@@ -63,20 +64,6 @@ const styleShowcaseItems = [
     placeholder: '此处将展示项目自定义风格的生成结果。',
     title: '项目风格',
   },
-] as const
-
-const pipelineStages = [
-  ['01', '角色约束', '母版与项目风格'],
-  ['02', '动作意图', '姿态与节奏目标'],
-  ['03', '首帧确认', '先判断，再展开'],
-  ['04', '完整动画', '按策略生成'],
-  ['05', '审核入库', '留下可继续的资产'],
-] as const
-
-const pipelineTradeoffs = [
-  ['早期探索', '确认方向可读', '优先缩短等待', '控制投入'],
-  ['关键动作', '确认角色一致', '保持制作节奏', '按需投入'],
-  ['交付之前', '完成逐帧审核', '为质量让位', '集中投入'],
 ] as const
 
 const primaryCta =
@@ -407,101 +394,6 @@ function StyleGenerationShowcase() {
   )
 }
 
-function GenerationPipeline() {
-  return (
-    <section
-      id="pipeline"
-      className="border-b border-rule bg-[#f1f1ee] px-12 py-32 max-lg:px-4 max-lg:py-20"
-    >
-      <div className="mx-auto max-w-[82rem]">
-        <div className="grid grid-cols-[minmax(0,0.72fr)_minmax(30rem,1.28fr)] items-end gap-20 max-lg:grid-cols-1 max-lg:gap-10">
-          <div>
-            <p className="font-mono text-meta text-ink-faint">GENERATION STRATEGY</p>
-            <h2 className="mt-6 max-w-[8em] text-display text-ink">
-              不是每一步，都值得付出同样的代价。
-            </h2>
-          </div>
-          <div className="pb-2">
-            <p className="max-w-[37rem] text-lead text-ink-muted">
-              探索时先快一点，确认后再把资源交给质量。Windup
-              让角色约束、生成策略与审核结果留在同一条管线上，团队看得见每一次取舍发生在哪里。
-            </p>
-            <p className="mt-5 font-mono text-meta text-ink-faint">
-              下方为策略关系示意，不代表实测耗时或成本数据。
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-16 overflow-hidden rounded-xl bg-white max-lg:overflow-x-auto">
-          <ol className="grid grid-cols-5 max-lg:min-w-[48rem]" aria-label="角色生成管线">
-            {pipelineStages.map(([number, title, detail], index) => (
-              <li
-                key={title}
-                className={`min-h-[11.5rem] px-6 py-8 ${
-                  index === pipelineStages.length - 1 ? '' : 'border-r border-[#e5e5e1]'
-                }`}
-              >
-                <span className="font-mono text-[0.62rem] tracking-[0.1em] text-[#8a8d87]">
-                  {number}
-                </span>
-                <strong className="mt-[2.4rem] block text-[0.9rem] font-semibold text-[#242724]">
-                  {title}
-                </strong>
-                <small className="mt-[0.55rem] block text-[0.66rem] text-[#737771]">{detail}</small>
-              </li>
-            ))}
-          </ol>
-
-          <div
-            className="border-t border-[#dedfda] max-lg:min-w-[48rem]"
-            role="table"
-            aria-label="不同制作阶段的取舍"
-          >
-            <div role="row" className="grid grid-cols-[1.15fr_repeat(3,1fr)] bg-[#f7f7f5]">
-              {['制作阶段', '质量', '效率', '资源投入'].map((heading, index) => (
-                <span
-                  key={heading}
-                  role="columnheader"
-                  className={`min-h-[3.6rem] px-6 py-[1.15rem] font-mono text-[0.58rem] font-normal tracking-[0.08em] text-[#888b85] ${
-                    index === 3 ? '' : 'border-r border-[#ededeb]'
-                  }`}
-                >
-                  {heading}
-                </span>
-              ))}
-            </div>
-            {pipelineTradeoffs.map(([stage, quality, efficiency, cost]) => (
-              <div
-                key={stage}
-                role="row"
-                className="grid grid-cols-[1.15fr_repeat(3,1fr)] border-t border-[#ededeb]"
-              >
-                <strong
-                  role="cell"
-                  className="min-h-[3.6rem] border-r border-[#ededeb] px-6 py-[1.15rem] text-[0.7rem] font-semibold text-[#252825]"
-                >
-                  {stage}
-                </strong>
-                {[quality, efficiency, cost].map((value, index) => (
-                  <span
-                    key={value}
-                    role="cell"
-                    className={`min-h-[3.6rem] px-6 py-[1.15rem] text-[0.7rem] font-normal text-[#5f635d] ${
-                      index === 2 ? '' : 'border-r border-[#ededeb]'
-                    }`}
-                  >
-                    {value}
-                  </span>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  )
-}
-
 /** 面向访客的完整宣传页，不读取任何受保护业务数据。 */
 export function LandingPage() {
   const session = useAuthSession()
@@ -655,8 +547,6 @@ export function LandingPage() {
 
         <StyleGenerationShowcase />
 
-        <GenerationPipeline />
-
         <section className="border-b border-rule px-8 py-28 max-lg:px-4 max-lg:py-20 lg:px-12">
           <div className="mx-auto grid max-w-[82rem] gap-16 max-lg:gap-12 lg:grid-cols-[minmax(18rem,0.5fr)_minmax(0,1fr)] lg:items-center">
             <div>
@@ -679,10 +569,7 @@ export function LandingPage() {
             </div>
 
             <figure>
-              <div
-                data-testid="workflow-editor-placeholder"
-                className="aspect-[16/10] overflow-hidden rounded-xl border border-rule bg-paper-sunken"
-              />
+              <WorkflowDemoVideo />
               <figcaption className="mt-4 text-body text-ink-faint">
                 真实 WorkflowRun 会保留画布中的每一次确认结果。
               </figcaption>
