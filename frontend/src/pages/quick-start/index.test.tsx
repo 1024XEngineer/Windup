@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { BrowserRouter, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1302,6 +1303,107 @@ describe('QuickStartPage', () => {
       '旧版运行对话',
     )
     expect(window.localStorage.getItem(legacyKey)).toBeNull()
+  })
+
+  it('allows selecting and copying sent text and the optimized prompt', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls' as const,
+      toolCalls: [
+        {
+          toolName: 'start_character_generation' as const,
+          input: {
+            optimizedPrompt: '银发机械师，佩戴黄铜护目镜，全身像',
+            optimizationSummary: '已整理为完整的角色母版描述。',
+          },
+        },
+      ],
+    }))
+    const view = renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    const userTurn = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('[data-user-turn]')
+      expect(element).toBeTruthy()
+      return element!
+    })
+    expect(userTurn.className).toContain('select-text')
+    fireEvent.click(within(userTurn).getByRole('button', { name: '复制消息' }))
+    await waitFor(() => expect(writeText).toHaveBeenNthCalledWith(1, '银发机械师'))
+    expect(within(userTurn).getByRole('button', { name: '已复制消息' })).toBeTruthy()
+
+    const proposal = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('[data-prompt-proposal]')
+      expect(element).toBeTruthy()
+      return element!
+    })
+    expect(proposal.querySelector('blockquote')?.className).toContain('select-text')
+    expect(within(proposal).queryByRole('button', { name: '复制 Agent 回复' })).toBeNull()
+    fireEvent.click(within(proposal).getByRole('button', { name: '复制提示词提案' }))
+    await waitFor(() =>
+      expect(writeText).toHaveBeenNthCalledWith(2, '银发机械师，佩戴黄铜护目镜，全身像'),
+    )
+    expect(within(proposal).getByRole('button', { name: '已复制提示词提案' })).toBeTruthy()
+  })
+
+  it('allows selecting and copying a regular Agent reply', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const planner = vi.fn(async () => ({
+      text: '请再补充角色的服装颜色。',
+      finishReason: 'stop' as const,
+      toolCalls: [],
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    const reply = await screen.findByLabelText('Agent 回答')
+    expect(reply.className).toContain('select-text')
+    const agentCopy = reply.closest<HTMLElement>('[data-agent-copy]')
+    expect(agentCopy).toBeTruthy()
+    fireEvent.click(within(agentCopy!).getByRole('button', { name: '复制 Agent 回复' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('请再补充角色的服装颜色。'))
+  })
+
+  it('shows a contextual status when copying an Agent reply fails', async () => {
+    const writeText = vi.fn(async () => Promise.reject(new Error('denied')))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const planner = vi.fn(async () => ({
+      text: '请再补充角色的服装颜色。',
+      finishReason: 'stop' as const,
+      toolCalls: [],
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    const reply = await screen.findByLabelText('Agent 回答')
+    const agentCopy = reply.closest<HTMLElement>('[data-agent-copy]')
+    fireEvent.click(within(agentCopy!).getByRole('button', { name: '复制 Agent 回复' }))
+
+    expect((await within(agentCopy!).findByRole('status')).textContent).toBe('复制 Agent 回复失败')
   })
 
   it('keeps the proposal in chat until the user fills, edits, and sends it', async () => {

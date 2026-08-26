@@ -1648,10 +1648,17 @@ function PromptProposal({
 }) {
   return (
     <div data-prompt-proposal data-conversation-kind="agent" className="min-w-0 space-y-3">
-      <AgentCopy lines={[summary]} />
-      <blockquote className="max-w-2xl font-serif text-base leading-7 text-app-ink">
-        {prompt}
-      </blockquote>
+      <AgentCopy lines={[summary]} copyable={false} />
+      <div className="relative max-w-2xl pb-8">
+        <blockquote className="cursor-text select-text font-serif text-base leading-7 text-app-ink">
+          {prompt}
+        </blockquote>
+        <ConversationCopyButton
+          text={prompt}
+          label="复制提示词提案"
+          className="absolute right-0 bottom-0"
+        />
+      </div>
       {actionPrompt ? <p className="text-sm text-app-muted">动作：{actionPrompt}</p> : null}
       {status === 'pending' ? (
         <div className="flex flex-wrap items-center gap-3">
@@ -1683,10 +1690,12 @@ function AgentCopy({
   lines,
   tone = 'default',
   animate = true,
+  copyable = true,
 }: {
   lines: readonly string[]
   tone?: 'default' | 'danger'
   animate?: boolean
+  copyable?: boolean
 }) {
   const copy = lines.join('\n')
   const animatedCopy = animateMarkdownCharacters(compiler(copy))
@@ -1700,25 +1709,101 @@ function AgentCopy({
       }`}
     >
       <QuickStartAgentBot placement="answer" />
-      <div
-        aria-label="Agent 回答"
-        data-agent-markdown
-        className={`quick-start-agent-markdown min-w-0 ${
-          animate ? 'quick-start-agent-markdown--entering' : ''
-        }`}
-      >
-        {animate ? (
-          <>
-            <span className="sr-only" data-agent-copy-text>
-              {copy}
-            </span>
-            {animatedCopy}
-          </>
-        ) : (
-          <Markdown>{copy}</Markdown>
-        )}
+      <div className={`relative min-w-0 ${copyable ? 'pb-8' : ''}`}>
+        <div
+          aria-label="Agent 回答"
+          data-agent-markdown
+          className={`quick-start-agent-markdown min-w-0 cursor-text select-text ${
+            animate ? 'quick-start-agent-markdown--entering' : ''
+          }`}
+        >
+          {animate ? (
+            <>
+              <span className="sr-only" data-agent-copy-text>
+                {copy}
+              </span>
+              {animatedCopy}
+            </>
+          ) : (
+            <Markdown>{copy}</Markdown>
+          )}
+        </div>
+        {copyable ? (
+          <ConversationCopyButton
+            text={copy}
+            label="复制 Agent 回复"
+            className="absolute right-0 bottom-0"
+          />
+        ) : null}
       </div>
     </div>
+  )
+}
+
+function ConversationCopyButton({
+  text,
+  label,
+  className = '',
+}: {
+  text: string
+  label: string
+  className?: string
+}) {
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(
+    () => () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current)
+    },
+    [],
+  )
+
+  async function copyText() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable')
+      await navigator.clipboard.writeText(text)
+      setStatus('copied')
+    } catch {
+      setStatus('failed')
+    }
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+    resetTimer.current = setTimeout(() => {
+      resetTimer.current = null
+      setStatus('idle')
+    }, 1_600)
+  }
+
+  const accessibleLabel =
+    status === 'copied'
+      ? label.replace(/^复制/u, '已复制')
+      : status === 'failed'
+        ? `${label}失败`
+        : label
+  const statusMessage = status === 'idle' ? '' : accessibleLabel
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={accessibleLabel}
+        title={accessibleLabel}
+        onClick={() => void copyText()}
+        data-conversation-copy
+        className={`grid size-7 place-items-center rounded-md transition hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${status === 'failed' ? 'text-app-danger' : 'text-app-ink-soft'} ${className}`}
+      >
+        {status === 'copied' ? (
+          <Check aria-hidden="true" size={14} weight="bold" />
+        ) : status === 'failed' ? (
+          <X aria-hidden="true" size={14} weight="bold" />
+        ) : (
+          <CopySimple aria-hidden="true" size={14} weight="bold" />
+        )}
+      </button>
+      <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {statusMessage}
+      </span>
+    </>
   )
 }
 
@@ -1805,12 +1890,20 @@ function QuickStartAgentBot({ placement }: { placement: 'title' | 'thinking' | '
 }
 
 function UserTurn({ children }: { children: ReactNode }) {
+  const copyText = typeof children === 'string' ? children : null
   return (
     <div
       data-user-turn
-      className="ml-auto w-fit max-w-[78%] rounded-app-surface rounded-br-app-compact bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
+      className="relative ml-auto w-fit max-w-[78%] cursor-text select-text rounded-app-surface rounded-br-app-compact bg-app-surface-muted px-4 pt-2.5 pr-10 pb-8 text-left text-sm leading-6 text-app-ink-soft"
     >
       <span>{children}</span>
+      {copyText ? (
+        <ConversationCopyButton
+          text={copyText}
+          label="复制消息"
+          className="absolute right-1.5 bottom-1.5"
+        />
+      ) : null}
     </div>
   )
 }
