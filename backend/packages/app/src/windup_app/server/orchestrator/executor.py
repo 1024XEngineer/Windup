@@ -112,6 +112,20 @@ class ProjectConstraints:
     sprite_sample_url: str = ""  # 项目风格参考图 URL
 
 
+def _image_view_prompt(cons: ProjectConstraints) -> str:
+    """避免多方向角色被项目默认侧视角锁成同一朝向。"""
+
+    if cons.directions <= 1:
+        return f"{cons.view}, full body head to feet, centered."
+    projection = "" if cons.perspective == 1 else f"{cons.view}. "
+    return (
+        f"{projection}Use one fixed game-sprite camera and projection for the whole direction set. "
+        "Rotate the character, not the camera, to the requested compass direction. "
+        "Keep body proportions, pose, scale, framing, and ground contact identical. "
+        "Full body head to feet, centered."
+    )
+
+
 def _load_constraints(session: Session, project_id: int | None) -> ProjectConstraints:
     """查 Project 组装全局约束;无 project_id / 查不到 → 缺省。"""
     if project_id is None:
@@ -864,7 +878,7 @@ class ImageTaskExecutor:
         )
         parts = [
             base,
-            f"{cons.view}, full body head to feet, centered.",
+            _image_view_prompt(cons),
             direction_prompt(input.direction),
         ]
         if cons.style:

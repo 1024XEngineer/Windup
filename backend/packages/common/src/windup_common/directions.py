@@ -25,6 +25,7 @@ _REQUIRED_DIRECTIONS: dict[int, tuple[ActionDirection, ...]] = {
     3: tuple(ActionDirection),
 }
 
+
 def required_directions_for_movement(movement: int) -> tuple[ActionDirection, ...]:
     """返回项目必须真实生成的方向；未知项目配置按单向兼容。"""
 
@@ -38,14 +39,14 @@ def is_required_direction(movement: int, direction: ActionDirection) -> bool:
 
 
 _DIRECTION_PROMPTS: dict[ActionDirection, str] = {
-    ActionDirection.EAST: "The character faces and moves to the right, in the east direction.",
-    ActionDirection.WEST: "The character faces and moves to the left, in the west direction.",
-    ActionDirection.NORTH: "The character faces away from the viewer, toward the north direction.",
-    ActionDirection.SOUTH: "The character faces toward the viewer, toward the south direction.",
-    ActionDirection.NORTH_EAST: "The character faces diagonally away from the viewer and to the right, toward north-east.",
-    ActionDirection.NORTH_WEST: "The character faces diagonally away from the viewer and to the left, toward north-west.",
-    ActionDirection.SOUTH_EAST: "The character faces diagonally toward the viewer and to the right, toward south-east.",
-    ActionDirection.SOUTH_WEST: "The character faces diagonally toward the viewer and to the left, toward south-west.",
+    ActionDirection.EAST: "Show a strict right-facing side profile toward east.",
+    ActionDirection.WEST: "Show a strict left-facing side profile toward west.",
+    ActionDirection.NORTH: "Show a full back view facing away from the viewer toward north.",
+    ActionDirection.SOUTH: "Show a full front view facing the viewer toward south.",
+    ActionDirection.NORTH_EAST: "Show a back-right three-quarter view toward north-east.",
+    ActionDirection.NORTH_WEST: "Show a back-left three-quarter view toward north-west.",
+    ActionDirection.SOUTH_EAST: "Show a front-right three-quarter view toward south-east.",
+    ActionDirection.SOUTH_WEST: "Show a front-left three-quarter view toward south-west.",
 }
 
 

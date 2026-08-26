@@ -1719,7 +1719,7 @@ describe('QuickStartPage', () => {
     expect(choices.every((choice) => !choice.className.includes('row-span-2'))).toBe(true)
   })
 
-  it('母版确认后把四向首帧堆叠在一个大方框内且不再逐方向选择', async () => {
+  it('母版确认后把四向首帧放入中心留空的九宫格且不再逐方向选择', async () => {
     const run = workflow(
       setupAndTemplate({
         selectedImageUrl: 'east.png',
@@ -1750,7 +1750,14 @@ describe('QuickStartPage', () => {
     )
 
     const directionSet = await screen.findByRole('group', { name: '四向首帧集合' })
-    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-stack')
+    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-grid')
+    expect(directionSet.className).toContain('grid-cols-3')
+    expect(directionSet.children).toHaveLength(9)
+    expect(screen.getByLabelText('中心留空')).toBeTruthy()
+    expect(screen.getByLabelText('西北方向为空')).toBeTruthy()
+    expect(screen.getByLabelText('东北方向为空')).toBeTruthy()
+    expect(screen.getByLabelText('西南方向为空')).toBeTruthy()
+    expect(screen.getByLabelText('东南方向为空')).toBeTruthy()
     await waitFor(() => expect(directionSet.querySelectorAll('img')).toHaveLength(4))
     expect(screen.getByRole('img', { name: '东方向首帧' })).toBeTruthy()
     expect(screen.getByRole('img', { name: '西方向首帧' })).toBeTruthy()
@@ -1948,7 +1955,11 @@ describe('QuickStartPage', () => {
     for (const [, label] of directions) {
       expect(await screen.findByRole('img', { name: `${label}方向首帧` })).toBeTruthy()
     }
-    expect(screen.getByRole('group', { name: '八向首帧集合' })).toBeTruthy()
+    const directionSet = screen.getByRole('group', { name: '八向首帧集合' })
+    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-grid')
+    expect(directionSet.className).toContain('grid-cols-3')
+    expect(directionSet.children).toHaveLength(9)
+    expect(screen.getByLabelText('中心留空')).toBeTruthy()
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {

@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 from windup_app.server.orchestrator.executor import ImageTaskExecutor, ProjectConstraints
 from windup_app.server.orchestrator.model import CharacterImageInput, TaskStatus
 from windup_app.server.orchestrator.service import AiGenerationService
+from windup_common.directions import ActionDirection
 from windup_framework.db.base import Base
 from windup_framework.mq.model import MqMessage  # noqa: F401 — register metadata
 
@@ -198,6 +199,106 @@ def test_confirmed_master_is_sent_as_identity_reference_without_style_sample():
 
     assert seen["refs"] == [master]
     assert "preserve its identity" in str(seen["prompt"])
+
+
+@pytest.mark.parametrize(
+    ("direction", "orientation"),
+    [
+        (ActionDirection.EAST, "strict right-facing side profile"),
+        (ActionDirection.WEST, "strict left-facing side profile"),
+        (ActionDirection.NORTH, "full back view"),
+        (ActionDirection.SOUTH, "full front view"),
+        (ActionDirection.NORTH_EAST, "back-right three-quarter view"),
+        (ActionDirection.NORTH_WEST, "back-left three-quarter view"),
+        (ActionDirection.SOUTH_EAST, "front-right three-quarter view"),
+        (ActionDirection.SOUTH_WEST, "front-left three-quarter view"),
+    ],
+)
+def test_multidirectional_master_prompt_rotates_character_without_side_view_conflict(
+    direction,
+    orientation,
+):
+    master = _master()
+    seen: dict[str, str] = {}
+
+    class _RecordingGen:
+        def gen_image(self, prompt, refs):
+            del refs
+            seen["prompt"] = prompt
+            return master
+
+    executor = ImageTaskExecutor(
+        image=_RecordingGen(),
+        matte=_BackgroundMatte(),
+        upload=lambda _png: "https://cdn.example.com/result.png",
+    )
+
+    executor._produce_image(
+        CharacterImageInput(
+            prompt="像素风勇者",
+            width=64,
+            height=64,
+            num_images=1,
+            direction=direction,
+        ),
+        ProjectConstraints(
+            directions=8,
+            view="side view, horizontal side-scroller",
+            sprite_w=64,
+            sprite_h=64,
+        ),
+    )
+
+    prompt = seen["prompt"].lower()
+    assert "side view, horizontal side-scroller" not in prompt
+    assert "rotate the character, not the camera" in prompt
+    assert orientation in prompt
+
+
+@pytest.mark.parametrize(
+    ("perspective", "view"),
+    [
+        (2, "top-down view"),
+        (3, "2.5D three-quarter view"),
+    ],
+)
+def test_multidirectional_master_prompt_preserves_non_side_projection(
+    perspective,
+    view,
+):
+    master = _master()
+    seen: dict[str, str] = {}
+
+    class _RecordingGen:
+        def gen_image(self, prompt, refs):
+            del refs
+            seen["prompt"] = prompt
+            return master
+
+    ImageTaskExecutor(
+        image=_RecordingGen(),
+        matte=_BackgroundMatte(),
+        upload=lambda _png: "https://cdn.example.com/result.png",
+    )._produce_image(
+        CharacterImageInput(
+            prompt="像素风勇者",
+            width=64,
+            height=64,
+            num_images=1,
+            direction=ActionDirection.NORTH,
+        ),
+        ProjectConstraints(
+            directions=8,
+            perspective=perspective,
+            view=view,
+            sprite_w=64,
+            sprite_h=64,
+        ),
+    )
+
+    prompt = seen["prompt"]
+    assert view in prompt
+    assert "Rotate the character, not the camera" in prompt
 
 
 def test_cutout_failure_fails_the_task_instead_of_delivering_gray():
