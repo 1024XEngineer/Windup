@@ -136,9 +136,14 @@ class _MemRedis:
         return 1 if self.set(shot, member, nx=True, ex=120) else 0
 
 
-def _patch_redis(monkeypatch, mem: _MemRedis | None = None) -> _MemRedis:
+def _patch_redis(
+    monkeypatch,
+    mem: _MemRedis | None = None,
+    lanes: tuple[str, ...] = ("primary.key0",),
+) -> _MemRedis:
     mem = mem or _MemRedis()
     monkeypatch.setattr("windup_app.server.mq.i2v_admit.get_redis", lambda: mem)
+    monkeypatch.setattr("windup_app.server.mq.i2v_admit.lane_ids", lambda: lanes)
     return mem
 
 
@@ -173,6 +178,40 @@ def test_fallback_key_advances_route_skip(monkeypatch):
     skip, retry = admit.retry_state(4)
     assert skip == 1
     assert retry == 0
+
+
+def test_two_keys_spread_load_and_cap_each(monkeypatch):
+    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    assert admit.try_acquire(1)
+    assert admit.try_acquire(2)
+    skip1, _ = admit.retry_state(1)
+    skip2, _ = admit.retry_state(2)
+    assert {skip1, skip2} == {0, 1}
+    assert admit.try_acquire(3)
+    assert admit.try_acquire(4)
+    assert not admit.try_acquire(5)
+
+
+def test_429_on_one_key_does_not_cool_the_other(monkeypatch):
+    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    assert admit.try_acquire(1)
+    assert admit.try_acquire(2)
+    wait = admit.on_rate_limit(wait_s=8, fallback_key=False, task_id=1)
+    assert wait == 8
+    assert not admit.can_submit(1)
+    assert admit.can_submit(2)
+
+
+def test_fallback_moves_claim_to_idle_key(monkeypatch):
+    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    assert admit.try_acquire(1)
+    skip_before, _ = admit.retry_state(1)
+    wait = admit.on_rate_limit(wait_s=16, fallback_key=True, task_id=1)
+    assert wait == 1.0
+    skip_after, retry = admit.retry_state(1)
+    assert skip_after != skip_before
+    assert retry == 0
+    assert admit.can_submit(1)
 
 
 def test_rebuild_restores_job_holders(monkeypatch):

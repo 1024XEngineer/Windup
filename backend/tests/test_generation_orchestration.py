@@ -656,7 +656,7 @@ def test_action_task_parks_i2v_and_stays_running(session_factory, monkeypatch):
     )
     monkeypatch.setattr(
         "windup_app.server.orchestrator.executor.i2v_admit.clear_cooling",
-        lambda: None,
+        lambda *_a, **_k: None,
     )
     monkeypatch.setattr(
         "windup_app.server.orchestrator.executor.i2v_admit.retry_state",

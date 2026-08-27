@@ -556,7 +556,10 @@ class ActionTaskExecutor:
                         i2v_admit.schedule_retry(task_id, i2v_admit.ADMIT_RETRY_S)
                         raise ActionAwaitingAdmit
                     if not i2v_admit.can_submit(task_id):
-                        wait = i2v_admit.cooldown_remaining_s() or i2v_admit.ADMIT_RETRY_S
+                        wait = (
+                            i2v_admit.cooldown_remaining_s(task_id)
+                            or i2v_admit.ADMIT_RETRY_S
+                        )
                         i2v_admit.schedule_retry(task_id, wait)
                         raise ActionAwaitingAdmit
                     skip, retry_n = i2v_admit.retry_state(task_id)
@@ -583,7 +586,7 @@ class ActionTaskExecutor:
                         raise ActionAwaitingAdmit from exc
                     finally:
                         unbind_retry()
-                    i2v_admit.clear_cooling()
+                    i2v_admit.clear_cooling(task_id)
                     i2v_poll.schedule(task_id, job, poll_count=0)
                     raise ActionAwaitingVideo
                 generated = gen.generate(card, action, master, progress, canvas=canvas)
