@@ -403,16 +403,13 @@ class VideoGateway:
                         if bound_job_id is not None:
                             fail(last_http_status)
                         if not follow and error_type is ModelErrorType.RATE_LIMIT:
-                            if has_next_route:
-                                raise RateLimitBackoff(
-                                    wait_s=rate_limit_wait_s(
-                                        retry_count=retry_count,
-                                        retry_after_s=result.retry_after_s,
-                                    ),
-                                    fallback_key=True,
-                                )
-                            self._circuit.open("aggregator")
-                            fail(last_http_status)
+                            raise RateLimitBackoff(
+                                wait_s=rate_limit_wait_s(
+                                    retry_count=retry_count,
+                                    retry_after_s=result.retry_after_s,
+                                ),
+                                fallback_key=has_next_route,
+                            )
                         if has_next_route:
                             nxt = routes[route_index + 1]
                             time.sleep(

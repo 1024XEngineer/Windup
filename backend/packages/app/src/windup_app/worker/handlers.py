@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from windup_app.server.mq import i2v_admit
 from windup_app.server.mq.catalog import (
     EMAIL_HANDLER_RETRIES,
     MSG_TYPE_CHARACTER_ACTION,
@@ -38,6 +39,14 @@ logger = logging.getLogger("windup.worker.handlers")
 
 class HandlerDeferred(Exception):
     """任务仍在执行中，消息应留 PEL 稍后重试，不可 ACK。"""
+
+
+def _release_i2v_claim(task_id: int) -> None:
+    """终态/失踪/无冻结时清掉无 TTL 的在途名额，避免永久占坑。"""
+    try:
+        i2v_admit.release(task_id)
+    except Exception:
+        logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
 
 
 def handle_verification_code(payload: dict[str, Any]) -> None:
@@ -161,9 +170,11 @@ def handle_generation(
         task = task_repo.get_task(session, task_id)
         if task is None:
             logger.warning("生成任务不存在 | task_id=%d", task_id)
+            _release_i2v_claim(task_id)
             return
         if task.is_terminal:
             logger.info("任务已终态，跳过执行 | task_id=%d status=%s", task_id, task.status)
+            _release_i2v_claim(task_id)
             return
         resume_admit = bool(payload.get("resume_i2v_admit"))
         if task.status is TaskStatus.RUNNING and not (
@@ -174,6 +185,7 @@ def handle_generation(
         billing_attempt = billing.attempt_for_task(task.task_type, task.input_payload)
         if not billing.has_open_freeze(session, task_id, billing_attempt):
             logger.warning("任务无开放冻结，跳过 | task_id=%d", task_id)
+            _release_i2v_claim(task_id)
             return
 
         input_payload = task.input_payload or {}
@@ -224,12 +236,15 @@ def handle_action_poll(
         task = task_repo.get_task(session, task_id)
         if task is None:
             logger.warning("轮询任务不存在 | task_id=%d", task_id)
+            _release_i2v_claim(task_id)
             return
         if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             logger.info("轮询任务已终态，跳过 | task_id=%d status=%s", task_id, task.status)
+            _release_i2v_claim(task_id)
             return
         if not billing.has_open_freeze(session, task_id):
             logger.warning("轮询任务无开放冻结，跳过 | task_id=%d", task_id)
+            _release_i2v_claim(task_id)
             return
         input_payload = task.input_payload or {}
         project_id = task.project_id

@@ -35,6 +35,7 @@ from windup_app.worker.consumer import ConsumerConfig, StreamConsumer, start_rel
 from windup_app.worker.handlers import (
     HandlerDeferred,
     dispatch_handler,
+    handle_action_poll,
     handle_generation,
     handle_verification_code,
 )
@@ -464,6 +465,131 @@ def test_handle_generation_resumes_running_action_for_i2v_admit(
         run_action_task=run_action,
     )
     run_action.assert_called_once()
+
+
+def test_handle_generation_releases_i2v_claim_when_action_terminal(
+    db_session, engine, monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_action(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterActionInput(
+            character_id=1,
+            action_type=ActionType.WALK,
+            num_frames=4,
+        ),
+    )
+    task_repo.update_status(db_session, task.id, TaskStatus.COMPLETED)
+    db_session.commit()
+
+    released: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    run_action = MagicMock()
+    handle_generation(
+        {
+            "task_id": task.id,
+            "task_type": GenerationType.CHARACTER_ACTION.value,
+            "resume_i2v_admit": True,
+        },
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    assert released == [task.id]
+    run_action.assert_not_called()
+
+
+def test_handle_generation_releases_i2v_claim_when_action_has_no_freeze(
+    db_session, engine, monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    task = task_repo.create_task(
+        db_session,
+        user_id=1,
+        project_id=1,
+        task_type=GenerationType.CHARACTER_ACTION,
+        input_payload={"character_id": 1, "action_type": ActionType.WALK.value},
+    )
+    db_session.commit()
+
+    released: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    run_action = MagicMock()
+    handle_generation(
+        {
+            "task_id": task.id,
+            "task_type": GenerationType.CHARACTER_ACTION.value,
+            "resume_i2v_admit": True,
+        },
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    assert released == [task.id]
+    run_action.assert_not_called()
+
+
+def test_handle_generation_releases_i2v_claim_when_task_missing(engine, monkeypatch):
+    _patch_worker_session_local(monkeypatch, engine)
+    released: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    run_action = MagicMock()
+    handle_generation(
+        {
+            "task_id": 9999,
+            "task_type": GenerationType.CHARACTER_ACTION.value,
+            "resume_i2v_admit": True,
+        },
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    assert released == [9999]
+    run_action.assert_not_called()
+
+
+def test_handle_action_poll_releases_i2v_claim_when_terminal(
+    db_session, engine, monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_action(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterActionInput(
+            character_id=1,
+            action_type=ActionType.WALK,
+            num_frames=4,
+        ),
+    )
+    task_repo.update_status(db_session, task.id, TaskStatus.FAILED)
+    db_session.commit()
+
+    released: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    resume_poll = MagicMock()
+    handle_action_poll({"task_id": task.id}, resume_action_poll=resume_poll)
+    assert released == [task.id]
+    resume_poll.assert_not_called()
 
 
 def test_handle_generation_unknown_type_raises(db_session, engine, monkeypatch):

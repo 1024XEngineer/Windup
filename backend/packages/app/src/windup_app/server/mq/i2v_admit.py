@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import time
 
 from windup_app.server.mq.catalog import MSG_TYPE_CHARACTER_ACTION, stream_for_msg_type
 from windup_app.server.mq.i2v_state import I2V_KEY_PREFIX, load_i2v_state

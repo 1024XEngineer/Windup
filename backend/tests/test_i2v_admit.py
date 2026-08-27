@@ -242,3 +242,47 @@ def test_start_i2v_second_429_asks_for_key_switch():
     assert caught.value.wait_s == 16
     assert key_a.submit_models == ["kling-v2-5-turbo"]
     assert key_b.submit_models == []
+
+
+def test_start_i2v_last_key_429_defers_with_cooldown():
+    rate = AdapterResult(ok=False, error_type=ModelErrorType.RATE_LIMIT, http_status=429)
+    ad = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [rate],
+            "kling-v2-6": [],
+        },
+        follows={},
+    )
+    from windup_framework.config.provider import AIProviderSettings
+    from windup_framework.gateway.circuit import CircuitBreaker
+    from windup_framework.gateway.registry import ModelRegistry
+    from windup_framework.gateway.video import VideoGateway
+
+    cfg = AIProviderSettings(
+        video_model="kling-v2-5-turbo",
+        video_fallbacks="kling-v2-6",
+        route_primary_name="primary",
+        route_primary_base_url="https://api.qnaigc.com/v1",
+        route_primary_api_key="key-only",
+        route_primary_api_keys="",
+        route_fallback_name="",
+        route_fallback_base_url="",
+        route_fallback_api_key="",
+        route_fallback_api_keys="",
+    )
+    gw = VideoGateway(
+        registry=ModelRegistry.from_settings(cfg),
+        adapter=ad,
+        circuit=CircuitBreaker(cooldown_s=60),
+        settings=cfg,
+        route_adapters={"primary.key0": ad},
+    )
+    reset = bind_call_context(i2v_retry_count=1)
+    try:
+        with pytest.raises(RateLimitBackoff) as caught:
+            gw.start_i2v(b"frame", "walk")
+    finally:
+        reset()
+    assert caught.value.fallback_key is False
+    assert caught.value.wait_s == 16
+    assert ad.submit_models == ["kling-v2-5-turbo"]
