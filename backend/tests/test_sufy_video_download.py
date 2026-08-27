@@ -977,6 +977,16 @@ def _submitted_first_frame(frame: bytes, size: str = "1280x720"):
     return _Image.open(_io.BytesIO(_b64.b64decode(uri.split(",", 1)[1])))
 
 
+def _fitted_scale(src_w: int, src_h: int, W: int = 1280, H: int = 720) -> int | float:
+    """``fit_first_frame`` 实际会用的倍数：放大取整，缩小不取整（#797）。
+
+    三条用例都从这里推导而不是各自写死数字 —— 当年 #509 的期望值是按非整数倍数算的，
+    倍数规则一改就要同时改三处，写死必然漏。
+    """
+    scale = min(W / src_w, H / src_h)
+    return int(scale) if scale > 1 else scale
+
+
 def _subject_height(im) -> int:
     """暗色主体在成品里的高度（像素）。JPEG 会糊边，阈值取宽一点。"""
     import numpy as _np
@@ -999,7 +1009,7 @@ def test_small_first_frame_is_enlarged_instead_of_pasted_at_source_size(src_w, s
     im = _submitted_first_frame(_sprite(src_w, src_h, alpha=alpha, subject_ratio=ratio))
     assert im.size == (W, H)
 
-    scale = min(W / src_w, H / src_h)
+    scale = _fitted_scale(src_w, src_h, W, H)
     content_h = round(src_h * scale)
     got = _subject_height(im)
     assert abs(got - ratio * content_h) <= 0.08 * content_h, (
@@ -1008,6 +1018,11 @@ def test_small_first_frame_is_enlarged_instead_of_pasted_at_source_size(src_w, s
     )
     # 与"不拉伸"是两条独立约束：放大到了也可能是拉伸放大的。
     assert scale > 1, "本用例的输入都小于画布，否则测不到放大"
+    # #509 的本意是"别原尺寸贴进去"。取整会让倍数比铺满画布时小一点（256x256 由
+    # x2.8125 变 x2），这条独立断言把那个本意钉住，免得将来倍数再降时无人发觉。
+    assert got >= 1.5 * ratio * src_h, (
+        f"{src_w}x{src_h}: 主体 {got}px，几乎等于原尺寸 {ratio * src_h:.0f}px，放大没生效"
+    )
 
 
 def test_transparent_first_frame_background_does_not_depend_on_undefined_rgb():
@@ -1040,8 +1055,11 @@ def test_opaque_first_frame_keeps_sampling_its_own_corner_for_padding():
     assert _np.allclose(corner, (200, 200, 200), atol=12), f"补边色 {corner}，应沿用源图角点色"
 
 
-def test_square_first_frame_forms_a_720x720_content_region_in_a_1280x720_canvas():
-    """方形输入在 1280x720 里应是 720x720 的等比内容区，左右各补 280px。
+def test_square_first_frame_forms_a_centered_square_content_region():
+    """方形输入在 1280x720 里应是居中的等比方形内容区，左右补边相等。
+
+    尺寸由整数倍数决定：256x256 的倍数 ``min(5.0, 2.8125)`` 取整为 2，内容区 512x512，
+    左右各补 384px（#797 之前是非整数 x2.8125、内容区 720x720、左右各 280px）。
 
     与"主体占幅"是两条判据:主体占幅对了也可能是内容区偏了(比如贴在角上)。
     源图最外一圈填成不透明亮色,内容区边界才量得到 —— 补边色与合成底色相同,
@@ -1058,13 +1076,15 @@ def test_square_first_frame_forms_a_720x720_content_region_in_a_1280x720_canvas(
     buf = _io.BytesIO()
     src.save(buf, "PNG")
 
+    side = round(256 * _fitted_scale(256, 256))
+    pad = (1280 - side) // 2
     im = _submitted_first_frame(buf.getvalue())
     a = _np.asarray(im.convert("L"))
     cols = _np.where((a > 200).any(axis=0))[0]
     rows = _np.where((a > 200).any(axis=1))[0]
-    assert 715 <= cols.max()-cols.min()+1 <= 725, f"内容区宽 {cols.max()-cols.min()+1}，应≈720"
-    assert 715 <= rows.max()-rows.min()+1 <= 725, f"内容区高 {rows.max()-rows.min()+1}，应≈720"
-    assert abs(cols.min() - 280) <= 4, f"内容区左边界 {cols.min()}，应≈280（左右各补 280）"
+    assert abs(cols.max()-cols.min()+1 - side) <= 5, f"内容区宽 {cols.max()-cols.min()+1}，应≈{side}"
+    assert abs(rows.max()-rows.min()+1 - side) <= 5, f"内容区高 {rows.max()-rows.min()+1}，应≈{side}"
+    assert abs(cols.min() - pad) <= 4, f"内容区左边界 {cols.min()}，应≈{pad}（左右各补 {pad}）"
 
 
 def test_upscaling_a_small_sprite_keeps_hard_edges_instead_of_interpolating_them():
@@ -1092,8 +1112,10 @@ def test_upscaling_a_small_sprite_keeps_hard_edges_instead_of_interpolating_them
     _Image.fromarray(src, "RGBA").save(buf, "PNG")
 
     im = _submitted_first_frame(buf.getvalue())
-    # 只取内容区：1280 宽的画布里，720x720 的内容区居中，两侧各 280px 是补边
-    row = _np.asarray(im.convert("RGB"))[360].astype(int)[280:1000]
+    # 只取内容区：内容区边长由整数倍数决定（64x64 的 11.25 取整为 11 → 704），居中放置
+    side = round(64 * _fitted_scale(64, 64))
+    pad = (1280 - side) // 2
+    row = _np.asarray(im.convert("RGB"))[360].astype(int)[pad:pad + side]
     far_from_left = _np.abs(row - _np.array(left)).sum(1) > 40
     far_from_right = _np.abs(row - _np.array(right)).sum(1) > 40
     width = int((far_from_left & far_from_right).sum())

@@ -140,3 +140,55 @@ def test_a_2xx_that_is_not_a_json_object_is_invalid_not_a_crash(body):
 
     assert p.parse_submit(resp).error_type is ModelErrorType.INVALID_RESPONSE
     assert p.parse_poll(resp, "job-9").error_type is ModelErrorType.INVALID_RESPONSE
+
+
+def _pixel_master(side: int = 100) -> bytes:
+    """一张纯色方块的「像素母版」。
+
+    必须带 alpha:不透明输入会让 ``fit_first_frame`` 用**源图角点色**当补边色,主体与补边
+    同色就量不出贴进去的那块有多宽。带 alpha 时补边走 ``FIRST_FRAME_BG``,两者才有对比。
+    """
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGBA", (side, side), (12, 180, 90, 255)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _pasted_width(jpg: bytes, pad_tol: int = 60) -> int:
+    """量 JPEG 画布里非补边那块的宽度。JPEG 会软化边界,故用容差判色而非精确相等。"""
+    import numpy as np
+    from PIL import Image
+
+    a = np.asarray(Image.open(io.BytesIO(jpg)).convert("RGB")).astype(int)
+    pad = a[0, 0]
+    cols = np.where((np.abs(a - pad).sum(axis=2) > pad_tol).any(axis=0))[0]
+    return int(cols.max() - cols.min() + 1) if len(cols) else 0
+
+
+def test_fit_first_frame_upscales_by_an_integer_factor():
+    """放大倍数取整。
+
+    NEAREST 是把一个源像素铺成一块;倍数非整数时那块的宽度在相邻整数之间不规则跳变,
+    块边长为 1 的像素母版会被打成马赛克,而这张图正是喂给 i2v 的输入(#797)。
+
+    100x100 进 1280x720:``min(12.8, 7.2) = 7.2``。取整前贴进去的是 720px(每个源像素
+    7.2px,实际 7px/8px 交替),取整后是 700px(恒 7px)。断言的是后者。
+    """
+    from windup_framework.providers.protocol.openai_video import fit_first_frame
+
+    width = _pasted_width(fit_first_frame(_pixel_master(100), "1280x720"))
+    assert abs(width - 700) <= 2, f"期望 700(=100x7),实得 {width}"
+    assert width % 100 <= 2 or width % 100 >= 98, f"{width} 不是 100 的整数倍"
+
+
+def test_fit_first_frame_keeps_shrink_path_unchanged():
+    """缩小路径不受影响 —— 取整只加在放大那一支上。
+
+    2000x2000 进 1280x720 的倍数是 0.36,取整会把它压成 0(整张图消失),
+    所以这条断言的是「缩小时不取整」这个边界,不是顺手写的冗余用例。
+    """
+    from windup_framework.providers.protocol.openai_video import fit_first_frame
+
+    width = _pasted_width(fit_first_frame(_pixel_master(2000), "1280x720"))
+    assert abs(width - 720) <= 2, f"缩小应仍填满高度方向的 720,实得 {width}"
