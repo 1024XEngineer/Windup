@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from windup_app.server.mq.catalog import GENERATION_STREAM, MSG_TYPE_CHARACTER_ACTION_POLL
+from windup_app.server.mq.catalog import MSG_TYPE_CHARACTER_ACTION_POLL, stream_for_msg_type
 from windup_app.server.mq.i2v_state import (
     I2V_FIRST_POLL_S,
     I2V_MAX_WAIT_S,
@@ -91,7 +91,7 @@ def schedule(
     )
     schedule_delayed(
         delay_s=wait,
-        stream=GENERATION_STREAM,
+        stream=stream_for_msg_type(MSG_TYPE_CHARACTER_ACTION_POLL),
         msg_type=MSG_TYPE_CHARACTER_ACTION_POLL,
         payload=_poll_payload(task_id, poll_count),
         dedupe_key=_poll_dedupe(task_id, poll_count),
@@ -154,7 +154,7 @@ def reschedule_if_waiting(task_id: int, *, delay_s: float = 1) -> bool:
     poll_count = int(state.get("poll_count") or 0)
     schedule_delayed(
         delay_s=delay_s,
-        stream=GENERATION_STREAM,
+        stream=stream_for_msg_type(MSG_TYPE_CHARACTER_ACTION_POLL),
         msg_type=MSG_TYPE_CHARACTER_ACTION_POLL,
         payload=_poll_payload(task_id, poll_count),
         dedupe_key=_poll_dedupe(task_id, poll_count),

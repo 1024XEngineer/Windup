@@ -371,6 +371,7 @@ def test_four_view_copies_confirmed_master_and_shares_image_queue(auth_client):
     assert "direction" not in body["data"]["input_payload"]
     assert publisher.enqueue.call_args.kwargs["msg_type"] == "character_image"
     assert publisher.enqueue.call_args.kwargs["payload"]["task_type"] == "character_four_view"
+    assert publisher.enqueue.call_args.kwargs["stream"] == "windup:stream:generation-image"
 
 
 def test_four_view_without_confirmed_master_is_rejected_before_queueing(auth_client):

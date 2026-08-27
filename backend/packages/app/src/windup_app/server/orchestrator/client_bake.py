@@ -19,8 +19,8 @@ import time
 from dataclasses import asdict, dataclass
 
 from windup_app.server.mq.catalog import (
-    GENERATION_STREAM,
     MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE,
+    stream_for_msg_type,
 )
 from windup_framework.db.redis import get_redis
 from windup_framework.mq.delayed import schedule_delayed
@@ -93,7 +93,7 @@ def open_job(task_id: int, spec: ClientBakeSpec) -> float:
     pipe.execute()
     schedule_delayed(
         delay_s=DEADLINE_S,
-        stream=GENERATION_STREAM,
+        stream=stream_for_msg_type(MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE),
         msg_type=MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE,
         payload={"task_id": task_id, "reason": REASON_TIMEOUT},
         dedupe_key=f"generation:{task_id}:clientbake:timeout",
@@ -169,7 +169,7 @@ def schedule_resume(task_id: int, reason: str = REASON_FRAMES, detail: str = "")
         payload["detail"] = detail[:200]
     schedule_delayed(
         delay_s=0,
-        stream=GENERATION_STREAM,
+        stream=stream_for_msg_type(MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE),
         msg_type=MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE,
         payload=payload,
         dedupe_key=f"generation:{task_id}:clientbake:{reason}",

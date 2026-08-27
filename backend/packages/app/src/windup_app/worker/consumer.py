@@ -96,6 +96,9 @@ class StreamConsumer:
         self._image_sem = self._semaphores.get(MSG_TYPE_CHARACTER_IMAGE)
         self._action_sem = self._semaphores.get(MSG_TYPE_CHARACTER_ACTION)
         self._poll_sem = self._semaphores.get(MSG_TYPE_CHARACTER_ACTION_POLL)
+        self._pool_capacity = {name: max(1, size) for name, size in pool_sizes.items()}
+        self._inflight_by_pool = {name: 0 for name in self._pool_capacity}
+        self._inflight_lock = threading.Lock()
         self._claim_cursor = "0-0"
         self._last_claim_at = 0.0
 
@@ -127,6 +130,10 @@ class StreamConsumer:
                 self._claim_idle(redis_client)
                 self._last_claim_at = now
 
+            if not self._has_free_slot():
+                self._stop.wait(timeout=0.05)
+                continue
+
             try:
                 batches = mq_client.xreadgroup(
                     redis_client,
@@ -142,25 +149,90 @@ class StreamConsumer:
 
             for _stream, messages in batches:
                 for stream_id, fields in messages:
-                    self._submit_message(stream_id, fields)
+                    self._accept_message(stream_id, fields)
+
+    def _has_free_slot(self) -> bool:
+        """任一线程池还有空槽才继续 XREADGROUP。具体类型在领到之后再卡对应池。"""
+        with self._inflight_lock:
+            return any(
+                self._inflight_by_pool[pool] < self._pool_capacity[pool]
+                for pool in self._pool_capacity
+            )
+
+    def _pool_has_slot(self, pool: str) -> bool:
+        cap = self._pool_capacity.get(pool)
+        if cap is None:
+            cap = self._pool_capacity[POOL_SHARED]
+            pool = POOL_SHARED
+        with self._inflight_lock:
+            return self._inflight_by_pool.get(pool, 0) < cap
+
+    def _acquire_slot(self, pool: str) -> None:
+        if pool not in self._pool_capacity:
+            pool = POOL_SHARED
+        with self._inflight_lock:
+            self._inflight_by_pool[pool] = self._inflight_by_pool.get(pool, 0) + 1
+
+    def _release_slot(self, pool: str) -> None:
+        if pool not in self._pool_capacity:
+            pool = POOL_SHARED
+        with self._inflight_lock:
+            n = self._inflight_by_pool.get(pool, 0)
+            if n > 0:
+                self._inflight_by_pool[pool] = n - 1
+
+    def _pool_name_for(self, fields: dict[str, str]) -> str:
+        try:
+            msg_type = str(mq_client.parse_envelope(fields)["type"])
+        except Exception:
+            return POOL_SHARED
+        spec = type_spec(msg_type)
+        if spec is None or spec.pool not in self._pool_capacity:
+            return POOL_SHARED
+        return spec.pool
+
+    def _accept_message(self, stream_id: str, fields: dict[str, str]) -> None:
+        """已领取的消息按目标池等空槽再提交，避免 PEL 里堆着执行器排队。"""
+        pool = self._pool_name_for(fields)
+        while not self._pool_has_slot(pool) and not self._stop.is_set():
+            self._stop.wait(timeout=0.05)
+        if self._stop.is_set():
+            return
+        self._submit_message(stream_id, fields)
 
     def _claim_idle(self, redis_client) -> None:
         while not self._stop.is_set():
+            if not self._has_free_slot():
+                break
             claimed, next_start = mq_client.claim_idle_messages(
                 redis_client,
                 self._config.stream,
                 self._config.group,
                 self._consumer_name,
                 start_id=self._claim_cursor,
+                count=1,
             )
             self._claim_cursor = next_start
             for stream_id, fields in claimed:
-                self._submit_message(stream_id, fields)
+                self._accept_message(stream_id, fields)
             if not claimed:
                 break
 
     def _submit_message(self, stream_id: str, fields: dict[str, str]) -> None:
-        self._executor_for(fields).submit(self._process_message, stream_id, fields)
+        pool = self._pool_name_for(fields)
+        self._acquire_slot(pool)
+        try:
+            future = self._executor_for(fields).submit(
+                self._process_message, stream_id, fields
+            )
+        except Exception:
+            self._release_slot(pool)
+            raise
+        done = getattr(future, "add_done_callback", None)
+        if done is None:
+            self._release_slot(pool)
+            return
+        done(lambda _f: self._release_slot(pool))
 
     def _executor_for(self, fields: dict[str, str]) -> ThreadPoolExecutor:
         try:

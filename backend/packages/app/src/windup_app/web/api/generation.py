@@ -44,8 +44,8 @@ from windup_framework.mq.publisher import MqPublisher
 from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.mq.catalog import (
-    GENERATION_STREAM,
     msg_type_for_generation,
+    stream_for_msg_type,
 )
 from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
@@ -543,7 +543,7 @@ def _publish_generation_after_commit(
     msg_type = msg_type_for_generation(task_type)
     message_id = publisher.enqueue(
         session,
-        stream=GENERATION_STREAM,
+        stream=stream_for_msg_type(msg_type),
         msg_type=msg_type,
         payload={"task_id": task_id, "task_type": task_type},
         dedupe_key=dedupe_key or f"generation:{task_id}",

@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 
 from windup_app.server.mq.catalog import (
     GENERATION_RUNNING_STALE_SECONDS,
-    GENERATION_STREAM,
     msg_type_for_generation,
+    stream_for_msg_type,
 )
 from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.orchestrator.i2v_poll import reschedule_if_waiting
@@ -109,10 +109,11 @@ def _requeue_pending(
             if hasattr(task.task_type, "value")
             else str(task.task_type)
         )
+        msg_type = msg_type_for_generation(task_type)
         message_id = publisher.enqueue(
             session,
-            stream=GENERATION_STREAM,
-            msg_type=msg_type_for_generation(task_type),
+            stream=stream_for_msg_type(msg_type),
+            msg_type=msg_type,
             payload={
                 "task_id": task.id,
                 "task_type": task_type,
