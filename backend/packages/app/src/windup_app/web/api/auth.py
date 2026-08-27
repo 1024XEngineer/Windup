@@ -16,11 +16,12 @@ from windup_framework.db import get_session
 from windup_app.server.user.model import (
     RegisterInput,
     ResetPasswordInput,
+    SetPasswordInput,
     UpdateNicknameInput,
     User,
     UserView,
 )
-from windup_app.server.user.service import service
+from windup_app.server.user.service import _has_password, service
 
 logger = logging.getLogger("windup.auth.api")
 
@@ -85,6 +86,12 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class SetPasswordRequest(BaseModel):
+    """设置初始密码请求。"""
+
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class UpdateNicknameRequest(BaseModel):
     """修改昵称请求。"""
 
@@ -124,6 +131,33 @@ class UserOut(BaseModel):
     nickname: str | None = None
     email_verified_at: str | None = None
     status: int = 0
+    has_password: bool = False
+
+
+def _user_out_from_orm(user: User) -> UserOut:
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        nickname=user.nickname,
+        email_verified_at=user.email_verified_at.isoformat()
+        if user.email_verified_at
+        else None,
+        status=user.status,
+        has_password=_has_password(user.password_hash),
+    )
+
+
+def _user_out_from_view(user: UserView) -> UserOut:
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        nickname=user.nickname,
+        email_verified_at=user.email_verified_at.isoformat()
+        if user.email_verified_at
+        else None,
+        status=int(user.status),
+        has_password=user.has_password,
+    )
 
 
 # -- 路由 ----------------------------------------------------------------
@@ -225,17 +259,7 @@ def get_me(request: Request, session: Session = Depends(get_session)):
         from windup_common.exceptions import BizException
 
         raise BizException("用户不存在", code=BizCode.NOT_FOUND)
-    return Response.success(
-        UserOut(
-            id=user.id,
-            email=user.email,
-            nickname=user.nickname,
-            email_verified_at=user.email_verified_at.isoformat()
-            if user.email_verified_at
-            else None,
-            status=user.status,
-        )
-    )
+    return Response.success(_user_out_from_orm(user))
 
 
 @router.post("/change-password", response_model=Response[None])
@@ -256,6 +280,22 @@ def change_password(
         )(),
     )
     return Response.success(None, message="密码修改成功")
+
+
+@router.post("/set-password", response_model=Response[None])
+def set_password(
+    body: SetPasswordRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """设置初始密码（仅未设密码用户）。"""
+    current_user = request.state.current_user
+    service.set_password(
+        session,
+        current_user.id,
+        SetPasswordInput(new_password=body.new_password),
+    )
+    return Response.success(None, message="密码设置成功")
 
 
 @router.post("/reset-password", response_model=Response[None])
@@ -281,15 +321,4 @@ def update_nickname(
     user_view = service.update_nickname(
         session, current_user.id, UpdateNicknameInput(nickname=body.nickname)
     )
-    return Response.success(
-        UserOut(
-            id=user_view.id,
-            email=user_view.email,
-            nickname=user_view.nickname,
-            email_verified_at=user_view.email_verified_at.isoformat()
-            if user_view.email_verified_at
-            else None,
-            status=user_view.status,
-        ),
-        message="昵称修改成功",
-    )
+    return Response.success(_user_out_from_view(user_view), message="昵称修改成功")

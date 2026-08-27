@@ -235,6 +235,10 @@ function AccountPanelDialog({
   const [success, setSuccess] = useState<string | null>(null)
   const [isSendingCode, setIsSendingCode] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [showSetPasswordPrompt, setShowSetPasswordPrompt] = useState(false)
+  const [setPasswordValue, setSetPasswordValue] = useState('')
+  const [confirmPasswordValue, setConfirmPasswordValue] = useState('')
+  const [showSetPassword, setShowSetPassword] = useState(false)
   const [cooldowns, setCooldowns] = useState<Map<string, number>>(() => new Map())
   const [now, setNow] = useState(Date.now())
   const emailInputRef = useRef<HTMLInputElement>(null)
@@ -252,6 +256,8 @@ function AccountPanelDialog({
   const passwordId = useId()
   const codeId = useId()
   const inviteCodeId = useId()
+  const setPasswordId = useId()
+  const confirmPasswordId = useId()
   const isRegister = entry === 'register'
   const shouldShowMotionCopy = !isRegister || registerStep === 0
   const motionCopy = isRegister ? registrationWelcomeMotionCopy : loginMotionCopy
@@ -445,6 +451,48 @@ function AccountPanelDialog({
     setRegisterStep((current) => Math.max(0, current - 1))
   }
 
+  function completeNavigation(message: string) {
+    if (dismissedRef.current) return
+    setSuccess(message)
+    navigationTimerRef.current = window.setTimeout(
+      () => leaveWithAnimation(() => navigate(returnTarget, { replace: true })),
+      SUCCESS_NAVIGATION_DELAY_MS - AUTH_EXIT_DURATION_MS,
+    )
+  }
+
+  function skipSetPassword() {
+    setError(null)
+    completeNavigation('登录成功，正在继续。')
+  }
+
+  async function submitSetPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (isSubmitting) return
+
+    if (setPasswordValue.length < 8 || setPasswordValue.length > 128) {
+      setError('密码需为 8–128 位')
+      return
+    }
+    if (setPasswordValue !== confirmPasswordValue) {
+      setError('两次输入的密码不一致')
+      return
+    }
+
+    setError(null)
+    setSuccess(null)
+    setIsSubmitting(true)
+    try {
+      await session.setPassword({ newPassword: setPasswordValue }, { keepSession: true })
+      await session.login({ email: normalizedEmail, password: setPasswordValue })
+      setShowSetPasswordPrompt(false)
+      completeNavigation('密码已设置，正在继续。')
+    } catch (submitError) {
+      if (dismissedRef.current) return
+      setError(errorMessage(submitError))
+      setIsSubmitting(false)
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isSubmitting || isSendingCode) return
@@ -475,7 +523,12 @@ function AccountPanelDialog({
         })
         successMessage = '账号已创建，正在继续。'
       } else if (mode === 'code') {
-        await session.loginByCode({ email: normalizedEmail, code })
+        const tokens = await session.loginByCode({ email: normalizedEmail, code })
+        if (!tokens.user.hasPassword) {
+          setShowSetPasswordPrompt(true)
+          setIsSubmitting(false)
+          return
+        }
         successMessage = '登录成功，正在继续。'
       } else {
         await session.login({ email: normalizedEmail, password })
@@ -483,11 +536,7 @@ function AccountPanelDialog({
       }
 
       if (dismissedRef.current) return
-      setSuccess(successMessage)
-      navigationTimerRef.current = window.setTimeout(
-        () => leaveWithAnimation(() => navigate(returnTarget, { replace: true })),
-        SUCCESS_NAVIGATION_DELAY_MS - AUTH_EXIT_DURATION_MS,
-      )
+      completeNavigation(successMessage)
     } catch (submitError) {
       if (dismissedRef.current) return
       setError(errorMessage(submitError))
@@ -528,7 +577,11 @@ function AccountPanelDialog({
   const registerCopy = registrationStepCopy[registerStep]
   const titleCopy = isRegister ? registerCopy.title : loginWelcomeCopy.title
   const descriptionCopy = isRegister ? registerCopy.description : loginWelcomeCopy.description
-  const dialogLabel = isRegister ? '创建 Windup 账号' : '登录 Windup'
+  const dialogLabel = showSetPasswordPrompt
+    ? '设置登录密码'
+    : isRegister
+      ? '创建 Windup 账号'
+      : '登录 Windup'
   const submitContent = isSubmitting
     ? '正在处理…'
     : isSendingCode
@@ -608,29 +661,39 @@ function AccountPanelDialog({
           <div className="auth-screen-intro relative z-[3] text-center">
             <KineticTitle
               id={titleId}
-              text={titleCopy}
+              text={
+                showSetPasswordPrompt ? '为账号加一道保护' : titleCopy
+              }
               emphasis={isRegister && registerStep === 0 ? 'Windup' : undefined}
             />
             <p id={descriptionId} className="sr-only">
-              {descriptionCopy}
+              {showSetPasswordPrompt
+                ? '设置 8–128 位密码，方便日后使用密码登录。'
+                : descriptionCopy}
             </p>
-            {shouldShowMotionCopy && (
-              <div className="auth-register-description mx-auto mt-3">
-                <KineticCopy
-                  lines={activeMotionCopy}
-                  copyKey={`${entry}-${registerStep}-${copyIndex}`}
-                  phase={copyPhase}
-                />
-              </div>
+            {showSetPasswordPrompt ? (
+              <p className="auth-register-step-description mx-auto mt-3 max-w-[30rem]">
+                设置 8–128 位密码，方便日后使用密码登录。
+              </p>
+            ) : (
+              shouldShowMotionCopy && (
+                <div className="auth-register-description mx-auto mt-3">
+                  <KineticCopy
+                    lines={activeMotionCopy}
+                    copyKey={`${entry}-${registerStep}-${copyIndex}`}
+                    phase={copyPhase}
+                  />
+                </div>
+              )
             )}
-            {isRegister && registerStep > 0 && (
+            {isRegister && registerStep > 0 && !showSetPasswordPrompt && (
               <p className="auth-register-step-description mx-auto mt-3 max-w-[30rem]">
                 {descriptionCopy}
               </p>
             )}
           </div>
 
-          {!isRegister && (
+          {!isRegister && !showSetPasswordPrompt && (
             <div
               role="tablist"
               aria-label="账号操作"
@@ -659,12 +722,62 @@ function AccountPanelDialog({
             </p>
           )}
 
-          <form
-            data-testid={isRegister ? 'register-fields' : undefined}
-            className={`auth-register-fields ${isRegister ? '' : 'auth-login-fields'}`}
-            onSubmit={submit}
-            noValidate
-          >
+          {showSetPasswordPrompt ? (
+            <form className="auth-register-fields auth-login-fields" onSubmit={submitSetPassword} noValidate>
+              <AuthField
+                id={setPasswordId}
+                label="新密码"
+                icon={Keyhole}
+                value={setPasswordValue}
+                autoComplete="new-password"
+                placeholder="新密码"
+                disabled={isSubmitting}
+                type={showSetPassword ? 'text' : 'password'}
+                variant="password"
+                onValueChange={setSetPasswordValue}
+                action={
+                  <PasswordVisibilityButton
+                    visible={showSetPassword}
+                    onClick={() => setShowSetPassword((visible) => !visible)}
+                  />
+                }
+              />
+              <AuthField
+                id={confirmPasswordId}
+                label="确认密码"
+                icon={Keyhole}
+                value={confirmPasswordValue}
+                autoComplete="new-password"
+                placeholder="再次输入密码"
+                disabled={isSubmitting}
+                type={showSetPassword ? 'text' : 'password'}
+                variant="password"
+                onValueChange={setConfirmPasswordValue}
+              />
+              {feedback}
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="auth-screen-submit px-4 text-white disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? '正在设置…' : '设置密码'}
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={skipSetPassword}
+                className="auth-screen-helper mt-3 w-full text-center text-sm underline-offset-2 hover:underline"
+              >
+                稍后设置
+              </button>
+            </form>
+          ) : (
+            <form
+              data-testid={isRegister ? 'register-fields' : undefined}
+              className={`auth-register-fields ${isRegister ? '' : 'auth-login-fields'}`}
+              onSubmit={submit}
+              noValidate
+            >
             {isRegister && registerStep > 0 && (
               <button
                 type="button"
@@ -815,14 +928,17 @@ function AccountPanelDialog({
               </span>
             </button>
           </form>
+          )}
 
+          {!showSetPasswordPrompt && (
           <p className="auth-screen-entry-switch mt-7 text-center text-sm">
             {isRegister ? '已有账号？' : '还没有账号？'}{' '}
             <button type="button" onClick={() => switchEntry(isRegister ? 'login' : 'register')}>
               {isRegister ? '登录' : '创建账号'}
             </button>
           </p>
-          {isRegister && (
+          )}
+          {isRegister && !showSetPasswordPrompt && (
             <p className="auth-screen-helper mt-2 text-center text-sm">
               {normalizedInviteCode ? '填写邀请码，注册后共得 500 积分。' : '注册即赠 300 积分。'}
             </p>

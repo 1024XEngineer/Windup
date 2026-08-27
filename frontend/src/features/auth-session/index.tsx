@@ -37,6 +37,10 @@ export interface AuthSessionValue {
   loginByCode(input: Parameters<UserApis['loginByCode']>[0]): Promise<AuthTokens>
   refreshCurrentUser(): Promise<User>
   updateNickname(nickname: string): Promise<User>
+  setPassword(
+    input: Parameters<UserApis['setPassword']>[0],
+    options?: { keepSession?: boolean },
+  ): Promise<void>
   changePassword(input: Parameters<UserApis['changePassword']>[0]): Promise<void>
   logout(): Promise<void>
 }
@@ -350,6 +354,16 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
     },
     [apis, commitCurrentUser],
   )
+  const setPassword = useCallback(
+    async (
+      input: Parameters<UserApis['setPassword']>[0],
+      options?: { keepSession?: boolean },
+    ) => {
+      await apis.setPassword(input)
+      if (!options?.keepSession) clearSession('password-changed')
+    },
+    [apis, clearSession],
+  )
   const changePassword = useCallback(
     async (input: Parameters<UserApis['changePassword']>[0]) => {
       await apis.changePassword(input)
@@ -372,6 +386,7 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
       loginByCode,
       refreshCurrentUser,
       updateNickname,
+      setPassword,
       changePassword,
       logout,
     }),
@@ -383,6 +398,7 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
       refreshCurrentUser,
       register,
       sendCode,
+      setPassword,
       state,
       updateNickname,
     ],

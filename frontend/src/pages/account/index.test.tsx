@@ -14,6 +14,7 @@ const user: User = {
   nickname: 'Reader',
   emailVerifiedAt: '2026-08-07T01:02:03Z',
   statusCode: 0,
+  hasPassword: true,
 }
 
 function tokens(): AuthTokens {
@@ -40,6 +41,7 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => user),
     updateNickname: vi.fn(async (nickname: string) => ({ ...user, nickname })),
+    setPassword: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
   }
 }
