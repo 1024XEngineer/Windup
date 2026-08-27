@@ -74,6 +74,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """JWT 鉴权中间件。"""
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        # 管理平台使用独立 Cookie/JWT；具体公开与保护边界由 admin router 统一声明。
+        if request.url.path.startswith("/admin-api/"):
+            return await call_next(request)
+
         # 白名单放行
         if _is_whitelisted(request.url.path):
             return await call_next(request)

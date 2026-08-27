@@ -37,6 +37,7 @@ from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
 from windup_app.server.action_preset import ACTION_PRESETS
 from windup_app.web.api.action_preset import router as action_preset_router
 from windup_app.web.api.admin_quota import router as admin_quota_router
+from windup_app.web.admin.router import router as admin_router
 from windup_app.web.api.agent import router as agent_router
 from windup_framework.mq.model import MqMessage  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
@@ -178,6 +179,7 @@ def create_app() -> FastAPI:
     app.include_router(media_router)
     app.include_router(generation_router)
     app.include_router(quota_router)
+    app.include_router(admin_router)
     app.include_router(admin_quota_router)
     app.include_router(render3d_router)
     app.include_router(agent_router)
