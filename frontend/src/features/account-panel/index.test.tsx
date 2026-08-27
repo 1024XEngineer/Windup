@@ -44,6 +44,9 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     updateNickname: vi.fn(async () => user),
     setPassword: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
+    resetPassword: vi.fn(async () => undefined),
+    sendPasswordChangeCode: vi.fn(async () => undefined),
+    changePasswordWithCode: vi.fn(async () => undefined),
   }
 }
 
@@ -221,6 +224,44 @@ describe('AccountPanel', () => {
 
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
     expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('calls the public reset flow from the password-login forgot-password entry', async () => {
+    const { apis } = renderPanel('/?account=login')
+    fireEvent.click(screen.getByRole('tab', { name: '密码登录' }))
+    fireEvent.click(screen.getByRole('button', { name: '忘记密码' }))
+
+    expect(screen.getByRole('dialog', { name: '忘记密码' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '忘记密码' })).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('邮箱'), {
+      target: { value: 'reader@example.com' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    await waitFor(() =>
+      expect(apis.sendCode).toHaveBeenCalledWith({
+        email: 'reader@example.com',
+        purpose: 'reset_password',
+      }),
+    )
+
+    fireEvent.change(screen.getByLabelText('验证码'), { target: { value: '123456' } })
+    fireEvent.change(screen.getByLabelText('新密码'), {
+      target: { value: 'new-password-123' },
+    })
+    fireEvent.change(screen.getByLabelText('确认新密码'), {
+      target: { value: 'new-password-123' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '重置密码' }))
+
+    await waitFor(() =>
+      expect(apis.resetPassword).toHaveBeenCalledWith({
+        email: 'reader@example.com',
+        code: '123456',
+        newPassword: 'new-password-123',
+      }),
+    )
+    expect(await screen.findByText('密码已重置，请使用新密码登录。')).toBeTruthy()
   })
 
   it('re-enables code delivery after its cooldown expires', async () => {

@@ -33,6 +33,9 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     updateNickname: vi.fn(async () => user),
     setPassword: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
+    resetPassword: vi.fn(async () => undefined),
+    sendPasswordChangeCode: vi.fn(async () => undefined),
+    changePasswordWithCode: vi.fn(async () => undefined),
   }
 }
 
@@ -496,6 +499,9 @@ describe('AppHeader', () => {
     expect(menuSurface.getAttribute('aria-hidden')).toBeNull()
     const account = screen.getByRole('link', { name: '打开账号中心' })
     expect(account.getAttribute('href')).toBe('/account')
+    expect(screen.getByRole('link', { name: '修改密码' }).getAttribute('href')).toBe(
+      '/account?section=security',
+    )
     expect(account.getAttribute('aria-current')).toBe('page')
     expect(accountMenu.textContent).toContain('Reader')
     expect(screen.queryByText('资料与登录安全')).toBeNull()

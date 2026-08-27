@@ -43,6 +43,9 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     updateNickname: vi.fn(async (nickname: string) => ({ ...user, nickname })),
     setPassword: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
+    resetPassword: vi.fn(async () => undefined),
+    sendPasswordChangeCode: vi.fn(async () => undefined),
+    changePasswordWithCode: vi.fn(async () => undefined),
   }
 }
 
@@ -130,26 +133,28 @@ describe('AccountPage', () => {
     expect(badgeButton.className).toContain('account-badge-shake')
     expect(screen.getByRole('navigation', { name: '账号设置' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '个人资料' })).toBeTruthy()
-    expect(screen.queryByLabelText('当前密码')).toBeNull()
+    expect(screen.queryByLabelText('邮箱验证码')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '登录安全' }))
-    expect(screen.getByRole('heading', { name: '登录安全' })).toBeTruthy()
-    const oldPassword = screen.getByLabelText('当前密码')
+    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+    expect(screen.getByRole('heading', { name: '修改密码' })).toBeTruthy()
+    const code = screen.getByLabelText('邮箱验证码')
     const newPassword = screen.getByLabelText('新密码')
-    expect(oldPassword).toBeTruthy()
+    expect(code).toBeTruthy()
+    expect(screen.getByText('reader@example.com')).toBeTruthy()
+    expect(screen.queryByLabelText('当前密码')).toBeNull()
     expect(screen.queryByLabelText('昵称')).toBeNull()
 
-    fireEvent.change(oldPassword, { target: { value: 'old-password' } })
+    fireEvent.change(code, { target: { value: '123456' } })
     fireEvent.change(newPassword, { target: { value: 'short' } })
-    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+    fireEvent.click(screen.getByRole('button', { name: '验证并修改密码' }))
     expect(await screen.findByText('新密码需为 8–128 位')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '个人资料' }))
     expect(screen.getByLabelText('昵称')).toBeTruthy()
     expect(screen.queryByText('新密码需为 8–128 位')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '登录安全' }))
-    expect((screen.getByLabelText('当前密码') as HTMLInputElement).value).toBe('')
+    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+    expect((screen.getByLabelText('邮箱验证码') as HTMLInputElement).value).toBe('')
     expect((screen.getByLabelText('新密码') as HTMLInputElement).value).toBe('')
   })
 
@@ -482,43 +487,66 @@ describe('AccountPage', () => {
     expect((nickname as HTMLInputElement).value).toBe('Taken Name')
   })
 
-  it('validates the new password locally and preserves both fields on backend error', async () => {
-    const apis = createApis()
-    apis.changePassword.mockRejectedValue(new Error('当前密码错误'))
-    renderAccount(apis)
-    fireEvent.click(await screen.findByRole('button', { name: '登录安全' }))
-    const oldPassword = await screen.findByLabelText('当前密码')
-    const newPassword = screen.getByLabelText('新密码')
+  it('sends a reset code to the current account email and enforces a resend cooldown', async () => {
+    const { apis } = renderAccount(createApis(), '/account?section=security')
 
-    fireEvent.change(oldPassword, { target: { value: 'old-password' } })
-    fireEvent.change(newPassword, { target: { value: 'short' } })
-    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+    expect(await screen.findByRole('heading', { name: '修改密码' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
 
-    expect(await screen.findByText('新密码需为 8–128 位')).toBeTruthy()
-    expect(apis.changePassword).not.toHaveBeenCalled()
-
-    fireEvent.change(newPassword, { target: { value: 'new-password-123' } })
-    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
-
-    expect(await screen.findByText('当前密码错误')).toBeTruthy()
-    expect((oldPassword as HTMLInputElement).value).toBe('old-password')
-    expect((newPassword as HTMLInputElement).value).toBe('new-password-123')
+    await waitFor(() => expect(apis.sendPasswordChangeCode).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText('验证码已发送，请在 5 分钟内使用。')).toBeTruthy()
+    expect((screen.getByRole('button', { name: '60s 后重发' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
   })
 
-  it('clears the session after changing the password and asks for login before returning', async () => {
+  it('validates verification and matching passwords while preserving fields on backend error', async () => {
+    const apis = createApis()
+    apis.changePasswordWithCode.mockRejectedValue(new Error('验证码无效或已过期'))
+    renderAccount(apis)
+    fireEvent.click(await screen.findByRole('button', { name: '修改密码' }))
+    const code = await screen.findByLabelText('邮箱验证码')
+    const newPassword = screen.getByLabelText('新密码')
+    const confirmPassword = screen.getByLabelText('确认新密码')
+
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.change(newPassword, { target: { value: 'short' } })
+    fireEvent.click(screen.getByRole('button', { name: '验证并修改密码' }))
+
+    expect(await screen.findByText('新密码需为 8–128 位')).toBeTruthy()
+    expect(apis.changePasswordWithCode).not.toHaveBeenCalled()
+
+    fireEvent.change(newPassword, { target: { value: 'new-password-123' } })
+    fireEvent.change(confirmPassword, { target: { value: 'different-password' } })
+    fireEvent.click(screen.getByRole('button', { name: '验证并修改密码' }))
+    expect(await screen.findByText('两次输入的新密码不一致')).toBeTruthy()
+
+    fireEvent.change(confirmPassword, { target: { value: 'new-password-123' } })
+    fireEvent.click(screen.getByRole('button', { name: '验证并修改密码' }))
+
+    expect(await screen.findByText('验证码无效或已过期')).toBeTruthy()
+    expect((code as HTMLInputElement).value).toBe('123456')
+    expect((newPassword as HTMLInputElement).value).toBe('new-password-123')
+    expect((confirmPassword as HTMLInputElement).value).toBe('new-password-123')
+  })
+
+  it('clears the session after an email-verified password reset and asks for login', async () => {
     renderAccount()
-    fireEvent.click(await screen.findByRole('button', { name: '登录安全' }))
-    fireEvent.change(await screen.findByLabelText('当前密码'), {
-      target: { value: 'old-password' },
+    fireEvent.click(await screen.findByRole('button', { name: '修改密码' }))
+    fireEvent.change(await screen.findByLabelText('邮箱验证码'), {
+      target: { value: '123456' },
     })
     fireEvent.change(screen.getByLabelText('新密码'), {
       target: { value: 'new-password-123' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+    fireEvent.change(screen.getByLabelText('确认新密码'), {
+      target: { value: 'new-password-123' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '验证并修改密码' }))
 
     await waitFor(() =>
       expect(screen.getByTestId('location').textContent).toBe(
-        '/?account=login&returnTo=%2Faccount',
+        '/?account=login&returnTo=%2Faccount%3Fsection%3Dsecurity',
       ),
     )
     expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()

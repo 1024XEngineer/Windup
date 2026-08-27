@@ -14,6 +14,7 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.user.model import (
+    EmailChangePasswordInput,
     RegisterInput,
     ResetPasswordInput,
     SetPasswordInput,
@@ -105,6 +106,15 @@ class ResetPasswordRequest(BaseModel):
     code: str = Field(
         min_length=6, max_length=6, description="reset_password 用途的验证码"
     )
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class EmailChangePasswordRequest(BaseModel):
+    """当前登录账号的邮箱验证码改密请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(pattern=r"^\d{6}$")
     new_password: str = Field(min_length=8, max_length=128)
 
 
@@ -230,9 +240,9 @@ def login_by_code(body: LoginByCodeRequest, session: Session = Depends(get_sessi
 
 
 @router.post("/refresh", response_model=Response[TokenResponse])
-def refresh(body: RefreshRequest):
+def refresh(body: RefreshRequest, session: Session = Depends(get_session)):
     """刷新 token。"""
-    result = service.refresh_tokens(body.refresh_token)
+    result = service.refresh_tokens(session, body.refresh_token)
     return Response.success(
         TokenResponse(
             access_token=result.access_token,
@@ -296,6 +306,31 @@ def set_password(
         SetPasswordInput(new_password=body.new_password),
     )
     return Response.success(None, message="密码设置成功")
+
+
+@router.post("/change-password/send-code", response_model=Response[None])
+def send_password_change_code(request: Request):
+    """向当前登录账号的邮箱发送改密验证码。"""
+    service.send_verification_code(
+        request.state.current_user.email,
+        "change_password",
+    )
+    return Response.success(None, message="验证码已发送")
+
+
+@router.post("/change-password/confirm", response_model=Response[None])
+def change_password_by_email(
+    body: EmailChangePasswordRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """核验当前登录账号的邮箱验证码并修改密码。"""
+    service.change_password_by_email(
+        session,
+        request.state.current_user.id,
+        EmailChangePasswordInput(code=body.code, new_password=body.new_password),
+    )
+    return Response.success(None, message="密码修改成功")
 
 
 @router.post("/reset-password", response_model=Response[None])

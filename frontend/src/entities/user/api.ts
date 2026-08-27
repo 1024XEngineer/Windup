@@ -163,6 +163,30 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
         json: { old_password: input.oldPassword, new_password: input.newPassword },
       })
     },
+
+    async resetPassword(input) {
+      await authClient.request<null>('/auth/reset-password', {
+        method: 'POST',
+        json: {
+          email: input.email,
+          code: input.code,
+          new_password: input.newPassword,
+        },
+      })
+    },
+
+    async sendPasswordChangeCode() {
+      await protectedClient.request<null>('/auth/change-password/send-code', {
+        method: 'POST',
+      })
+    },
+
+    async changePasswordWithCode(input) {
+      await protectedClient.request<null>('/auth/change-password/confirm', {
+        method: 'POST',
+        json: { code: input.code, new_password: input.newPassword },
+      })
+    },
   }
 }
 
@@ -185,4 +209,7 @@ export const userApis: UserApis = {
   updateNickname: (nickname) => getDefaultApis().updateNickname(nickname),
   setPassword: (input) => getDefaultApis().setPassword(input),
   changePassword: (input) => getDefaultApis().changePassword(input),
+  resetPassword: (input) => getDefaultApis().resetPassword(input),
+  sendPasswordChangeCode: () => getDefaultApis().sendPasswordChangeCode(),
+  changePasswordWithCode: (input) => getDefaultApis().changePasswordWithCode(input),
 }

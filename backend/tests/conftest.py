@@ -7,6 +7,7 @@ engine 上(不碰全局 Postgres engine)。
 
 import os
 import pathlib
+from contextlib import nullcontext
 
 # CI 环境可能未配置真实凭据,在 import 触发 Settings 实例化前提供测试默认值。
 # setdefault 不覆盖已有的环境变量(本地 .env 或 CI secrets 优先生效)。
@@ -187,12 +188,17 @@ def client(engine):
 
 
 @pytest.fixture()
-def auth_client(engine):
+def auth_client(engine, db_session):
     """带认证 token 的 FastAPI TestClient。
 
     自动在请求头中添加 Authorization Bearer token，绕过鉴权中间件。
     """
     session_local = sessionmaker(bind=engine, expire_on_commit=False)
+    if db_session.get(User, 1) is None:
+        db_session.add(
+            User(id=1, email="test@example.com", password_hash="", nickname="旧昵称")
+        )
+        db_session.flush()
 
     def override_get_session():
         session = session_local()
@@ -206,6 +212,7 @@ def auth_client(engine):
             session.close()
 
     app = create_app()
+    app.state.auth_session_factory = lambda: nullcontext(db_session)
     _disable_generation_execution(app)
     from windup_app.server.orchestrator import task_repo
     from windup_app.web.api import generation as generation_api
@@ -218,7 +225,6 @@ def auth_client(engine):
     # 生成测试用 token
     token = create_access_token(1, "test@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
-
     try:
         yield client
     finally:
@@ -227,9 +233,12 @@ def auth_client(engine):
 
 
 @pytest.fixture()
-def auth_client_b(engine):
+def auth_client_b(engine, db_session):
     """另一个用户的认证 TestClient（user_id=2），用于跨用户权限测试。"""
     session_local = sessionmaker(bind=engine, expire_on_commit=False)
+    if db_session.get(User, 2) is None:
+        db_session.add(User(id=2, email="other@example.com", password_hash=""))
+        db_session.flush()
 
     def override_get_session():
         session = session_local()
@@ -243,6 +252,7 @@ def auth_client_b(engine):
             session.close()
 
     app = create_app()
+    app.state.auth_session_factory = lambda: nullcontext(db_session)
     _disable_generation_execution(app)
     from windup_app.server.orchestrator import task_repo
     from windup_app.web.api import generation as generation_api
@@ -254,7 +264,6 @@ def auth_client_b(engine):
 
     token = create_access_token(2, "other@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
-
     try:
         yield client
     finally:

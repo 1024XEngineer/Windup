@@ -51,6 +51,9 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     updateNickname: vi.fn(async () => user),
     setPassword: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
+    resetPassword: vi.fn(async () => undefined),
+    sendPasswordChangeCode: vi.fn(async () => undefined),
+    changePasswordWithCode: vi.fn(async () => undefined),
   }
 }
 
@@ -191,14 +194,17 @@ describe('AuthSessionProvider', () => {
     await expectState('guest:logged-out:')
   })
 
-  it('clears the session with a password-changed reason after changing the password', async () => {
+  it('clears the session with a password-changed reason after email-verified password reset', async () => {
     const apis = createApis()
     renderSession(apis)
     await expectState('guest::')
     await act(async () => session().loginByCode({ email: 'reader@example.com', code: '123456' }))
 
     await act(async () =>
-      session().changePassword({ oldPassword: 'password-123', newPassword: 'new-password-123' }),
+      session().changePasswordWithCode({
+        code: '123456',
+        newPassword: 'new-password-123',
+      }),
     )
 
     await expectState('guest:password-changed:')
