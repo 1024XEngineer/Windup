@@ -159,13 +159,24 @@ class AgnesVideoProtocol:
         if status == "completed":
             metadata = payload.get("metadata")
             url = metadata.get("url") if isinstance(metadata, dict) else None
+            if not url:
+                # 线上偶尔先把状态推进到 completed，随后才回填 metadata.url。
+                # 官方交付条件要求两者同时存在，因此这里继续轮询同一任务；若立即
+                # 判 INVALID_RESPONSE，已经生成成功的任务将无法恢复且兜底会重复建单。
+                return AdapterResult(
+                    ok=False,
+                    job_id=job_id,
+                    maybe_billed=True,
+                    http_status=resp.status_code,
+                    job_status="in_progress",
+                )
             return AdapterResult(
                 ok=True,
                 job_id=job_id,
                 maybe_billed=True,
                 http_status=resp.status_code,
                 job_status=status,
-                result_url=str(url) if url else None,
+                result_url=str(url),
             )
         if status in {"failed", "cancelled"}:
             return AdapterResult(

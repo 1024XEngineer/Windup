@@ -141,6 +141,25 @@ def test_agnes_completed_result_reads_metadata_url():
     assert result.result_url == "https://cdn.agnes-ai.com/out.mp4"
 
 
+def test_agnes_completed_without_metadata_url_remains_pollable():
+    response = httpx.Response(
+        200,
+        json={
+            "video_id": "video-1",
+            "status": "completed",
+            "progress": 100,
+            "metadata": None,
+        },
+    )
+
+    result = _protocol().parse_poll(response, "video-1")
+
+    assert not result.ok
+    assert result.error_type is None
+    assert result.job_status == "in_progress"
+    assert result.result_url is None
+
+
 def test_agnes_failed_result_is_upstream_failed_and_keeps_message():
     response = httpx.Response(
         200,
