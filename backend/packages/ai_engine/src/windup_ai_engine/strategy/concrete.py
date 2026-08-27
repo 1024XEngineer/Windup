@@ -157,12 +157,17 @@ class VideoFrameStrategy(DerivationStrategy):
             raise TypeError("当前 VideoProvider 不支持 start_i2v")
         return start(framed, self._build_prompt(action, card.stance), seconds=5)
 
-    def poll_job(self, job_id: str, *, route_id: str | None = None) -> bytes | None:
-        """探一次。``None`` = 仍在跑;bytes = 成片;失败抛错。"""
+    def poll_job(
+        self, job_id: str, *, route_id: str | None = None, model: str | None = None
+    ) -> bytes | None:
+        """探一次。``None`` = 仍在跑;bytes = 成片;失败抛错。
+
+        ``model`` 要一路带到 provider:单据地址按协议面拼,面认错就查不到已经建好的单。
+        """
         poll = getattr(self._video, "poll_i2v", None)
         if poll is None:
             raise TypeError("当前 VideoProvider 不支持 poll_i2v")
-        snap = poll(job_id, route_id=route_id)
+        snap = poll(job_id, route_id=route_id, model=model)
         if snap.ok and snap.body:
             return snap.body
         if getattr(snap, "error_type", None) is None:

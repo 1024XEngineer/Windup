@@ -671,7 +671,7 @@ def test_resume_action_poll_finishes_when_video_ready(session_factory, monkeypat
     png = _tiny_png()
 
     class _AsyncGen:
-        def poll_video(self, job_id, route_id=None):
+        def poll_video(self, job_id, route_id=None, model=None):
             assert job_id == "job-ready"
             return b"mp4"
 
@@ -737,7 +737,7 @@ def test_resume_action_poll_does_not_fetch_master_while_pending(
     parked: list[int] = []
 
     class _AsyncGen:
-        def poll_video(self, job_id, route_id=None):
+        def poll_video(self, job_id, route_id=None, model=None):
             return None
 
         def finish_video(self, *args, **kwargs):
@@ -797,7 +797,7 @@ def test_resume_action_poll_completes_after_credit_already_released(
     png = _tiny_png()
 
     class _AsyncGen:
-        def poll_video(self, job_id, route_id=None):
+        def poll_video(self, job_id, route_id=None, model=None):
             return b"mp4"
 
         def finish_video(self, video, *args, **kwargs):
@@ -860,7 +860,7 @@ def test_resume_action_poll_completes_after_credit_already_released(
 
 def test_resume_action_poll_timeout_without_video_fails(session_factory, monkeypatch):
     class _AsyncGen:
-        def poll_video(self, job_id, route_id=None):
+        def poll_video(self, job_id, route_id=None, model=None):
             return None
 
         def finish_video(self, *args, **kwargs):

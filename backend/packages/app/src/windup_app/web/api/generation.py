@@ -437,6 +437,18 @@ def _task_to_out(session: Session, task: GenerationTask) -> GenerationTaskOut:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _require_video_model_allowed(model: str | None, user_id: int) -> None:
+    """受限视频型号只对逐个列出的用户开放。
+
+    在 HTTP 边界就拒:任务还没建、积分还没冻,拒起来干净。编排层另有同一道判定,
+    那不是冗余 —— 任务可能被重排或重投,只在这里拦一次,绕过它的路径就直接花钱。
+    """
+    from windup_framework.gateway.registry import USER_GATED_MODELS, is_allowed_for_user
+
+    if model in USER_GATED_MODELS and not is_allowed_for_user(model, user_id):
+        raise BizException(f"视频模型 {model} 未对当前账号开放", code=403)
+
+
 def _get_project_or_raise(
     session: Session,
     project_id: int,
@@ -705,6 +717,7 @@ def submit_action_generation(
 ) -> Response[GenerationTaskOut]:
     """提交角色动作生成任务:建 PENDING 记录立即返回,实际生成后台跑。"""
     user_id = request.state.current_user.id
+    _require_video_model_allowed(body.video_model, user_id)
     project = _get_project_or_raise(session, body.project_id, user_id)
     _validate_project_direction(project, body.direction)
     character = _get_character_or_raise(session, body.character_id, body.project_id)

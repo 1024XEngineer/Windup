@@ -112,9 +112,20 @@ def estimate_cost(
 
         return IMAGE_UNIT_COST_USD.get(model or "")
     if scene == Scene.CHARACTER_ACTION:
-        if video_unit_cost_per_second is None:
+        from windup_framework.gateway.registry import (
+            VIDEO_UNIT_COST_USD_PER_SECOND,
+            billed_seconds,
+        )
+
+        # 配置的单值优先(网关转售价与官方牌价不一致时用它整体覆盖),否则按型号查牌价表。
+        # 视频链跨型号之后每秒单价能差一倍以上,再用单值记账会把成本算错,而错的方向
+        # 随兜底是否触发而变 —— 不是固定偏差,事后无法回补(与出图侧同一条理由)。
+        rate = video_unit_cost_per_second
+        if rate is None:
+            rate = VIDEO_UNIT_COST_USD_PER_SECOND.get(model or "")
+        if rate is None:
             return None
-        return video_unit_cost_per_second * seconds
+        return rate * billed_seconds(model, seconds)
     return None
 
 

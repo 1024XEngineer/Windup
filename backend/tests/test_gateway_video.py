@@ -28,7 +28,7 @@ class FakeVideoAdapter:
         self.submit_models.append(model)
         return self.submits[model].pop(0)
 
-    def follow_job(self, job_id):
+    def follow_job(self, job_id, model=None):
         self.followed.append(job_id)
         return self.follows[job_id]
 
@@ -305,7 +305,7 @@ def test_start_i2v_returns_job_without_follow():
 
 def test_poll_i2v_pending_then_download():
     class _PollAdapter(FakeVideoAdapter):
-        def inspect_job(self, job_id):
+        def inspect_job(self, job_id, model=None):
             self.followed.append(f"inspect:{job_id}")
             return AdapterResult(
                 ok=True,
@@ -325,7 +325,7 @@ def test_poll_i2v_pending_then_download():
 
 def test_poll_i2v_still_pending():
     class _Pending(FakeVideoAdapter):
-        def inspect_job(self, job_id):
+        def inspect_job(self, job_id, model=None):
             return AdapterResult(ok=False, job_id=job_id, maybe_billed=True, job_status="in_progress")
 
     result = _video_gw(_Pending(submits={}, follows={})).poll_i2v("j1")

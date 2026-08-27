@@ -117,7 +117,12 @@ def inspect(
     timed_out = elapsed >= I2V_MAX_WAIT_S
 
     route_id = state.get("route_id") or None
-    video = poll_video(state["job_id"], route_id=route_id)
+    # 型号早就随建单一起存进 Redis 了(见 save_i2v_state),但此前没往下传:
+    # kling 系只有一个协议面,不传也查得到单;veo 的单在另一条路径上,不传就是 404,
+    # 而单已经建了、钱已经花了。
+    video = poll_video(
+        state["job_id"], route_id=route_id, model=state.get("model") or None
+    )
     if video is not None:
         return Ready(video=video, route_id=route_id)
     if timed_out:

@@ -30,7 +30,11 @@ from windup_common.directions import direction_prompt
 from windup_common.enums import ArtStyle
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 from windup_framework.gateway import bind_call_context, fresh_gateway_request
-from windup_framework.gateway.registry import ModelRegistry
+from windup_framework.gateway.registry import (
+    USER_GATED_MODELS,
+    ModelRegistry,
+    is_allowed_for_user,
+)
 from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
 
@@ -227,14 +231,21 @@ class _TaskProgress:
         )
 
 
-def _resolve_video_model(name: str | None) -> str | None:
+def _resolve_video_model(name: str | None, user_id: int | None = None) -> str | None:
     """校验并返回视频模型名;``None`` 表示用部署默认值。
 
-    只允许是 CHARACTER_ACTION 链上的一员,含义是「这次从它开始试」。
-    非法取值在入口炸,不等到付费调用才失败。
+    两类型号分开判:链上的型号对所有人开放;``USER_GATED_MODELS`` 里的按用户白名单授权,
+    它们**不在链上**(链是兜底路径,让按用户授权的型号当兜底等于对所有人开放)。
+
+    这里的判定与 API 入口那道是**故意重复**的:任务可能被重排、重投或从别处再次进入,
+    只在 HTTP 边界拦一次,绕过它的路径就直接花钱。
     """
     if name is None:
         return None
+    if name in USER_GATED_MODELS:
+        if not is_allowed_for_user(name, user_id):
+            raise ValueError(f"视频模型 {name!r} 未对当前用户开放")
+        return name
     chain = ModelRegistry.from_settings().chain(Scene.CHARACTER_ACTION)
     if name not in chain:
         raise ValueError(f"视频模型 {name!r} 不在本期开放列表内。可选:" + "；".join(chain))
@@ -327,20 +338,21 @@ class ActionTaskExecutor:
                 if task is None:
                     raise RuntimeError(f"任务 {task_id} 不存在")
                 constraints = (self._fetch_constraints or _load_constraints)(s, project_id)
-                return constraints, task.project_id
+                return constraints, task.project_id, task.user_id
 
-            cons, task_project_id = generation_io.using_session(
+            cons, task_project_id, task_user_id = generation_io.using_session(
                 session, self._make_session, _mark_running
             )
             reset = bind_call_context(
                 task_id=str(task_id),
-                start_from_model=_resolve_video_model(input.video_model),
+                start_from_model=_resolve_video_model(input.video_model, task_user_id),
             )
             result = self._produce_action(
                 input,
                 cons,
                 task_id=task_id,
                 project_id=task_project_id,
+                user_id=task_user_id,
             )
 
             def _complete(s: Session) -> None:
@@ -385,6 +397,7 @@ class ActionTaskExecutor:
         *,
         task_id: int,
         project_id: int | None = None,
+        user_id: int | None = None,
     ) -> dict:
         """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
@@ -469,7 +482,7 @@ class ActionTaskExecutor:
                         f"3D 模型地址不在自家对象存储上:{model_url[:80]!r}"
                     )
                 plan = self._get_generator(
-                    _resolve_video_model(input.video_model), cons.directions
+                    _resolve_video_model(input.video_model, user_id), cons.directions
                 ).plan_rendered(action)
                 deadline = client_bake.open_job(
                     task_id,
@@ -501,12 +514,12 @@ class ActionTaskExecutor:
                     len(rigged),
                 )
                 generated = self._get_generator(
-                    _resolve_video_model(input.video_model), cons.directions
+                    _resolve_video_model(input.video_model, user_id), cons.directions
                 ).generate_rendered(card, action, rigged, progress, canvas=canvas)
             else:
                 master = (self._fetch_master or self._download_master)(input)
                 gen = self._get_generator(
-                    _resolve_video_model(input.video_model), cons.directions
+                    _resolve_video_model(input.video_model, user_id), cons.directions
                 )
                 # 注入的测试桩通常只有 generate()。生产装配且 VideoGateway 支持
                 # start_i2v 时,建单后把轮询丢进 ZSET,立刻让出 action worker。
@@ -541,10 +554,10 @@ class ActionTaskExecutor:
                 if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     raise _PollSkip(f"任务 {task_id} 已终态")
                 constraints = (self._fetch_constraints or _load_constraints)(s, project_id)
-                return constraints, task.project_id
+                return constraints, task.project_id, task.user_id
 
             try:
-                cons, task_project_id = generation_io.using_session(
+                cons, task_project_id, task_user_id = generation_io.using_session(
                     session, self._make_session, _mark_running
                 )
             except _PollSkip:
@@ -552,10 +565,10 @@ class ActionTaskExecutor:
 
             reset = bind_call_context(
                 task_id=str(task_id),
-                start_from_model=_resolve_video_model(input.video_model),
+                start_from_model=_resolve_video_model(input.video_model, task_user_id),
             )
             gen = self._get_generator(
-                _resolve_video_model(input.video_model), cons.directions
+                _resolve_video_model(input.video_model, task_user_id), cons.directions
             )
             reset_call = fresh_gateway_request()
             try:
@@ -621,16 +634,19 @@ class ActionTaskExecutor:
         """
         reset = None
         try:
-            def _mark_running(s: Session) -> ProjectConstraints:
+            def _mark_running(s: Session):
                 task = task_repo.get_task(s, task_id)
                 if task is None:
                     raise RuntimeError(f"任务 {task_id} 不存在")
                 if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     raise _PollSkip(f"任务 {task_id} 已终态")
-                return (self._fetch_constraints or _load_constraints)(s, project_id)
+                # 一并带出 user_id:受限型号按用户授权,而 task 只在这个内层函数里可见。
+                return (self._fetch_constraints or _load_constraints)(s, project_id), task.user_id
 
             try:
-                cons = generation_io.using_session(session, self._make_session, _mark_running)
+                cons, task_user_id = generation_io.using_session(
+                    session, self._make_session, _mark_running
+                )
             except _PollSkip:
                 client_bake.clear(task_id)
                 return
@@ -659,12 +675,12 @@ class ActionTaskExecutor:
             frames = client_bake.collect_frames(task_id, spec.frames)
             reset = bind_call_context(
                 task_id=str(task_id),
-                start_from_model=_resolve_video_model(input.video_model),
+                start_from_model=_resolve_video_model(input.video_model, task_user_id),
             )
             card, action, canvas = self._action_spec(input, cons)
             progress: ProgressPort = _TaskProgress(task_id=task_id, project_id=project_id)
             generated = self._get_generator(
-                _resolve_video_model(input.video_model), cons.directions
+                _resolve_video_model(input.video_model, task_user_id), cons.directions
             ).finish_rendered(frames, card, action, progress, canvas=canvas)
             result = self._deliver_generated(generated, input, cons, None)
             client_bake.clear(task_id)
@@ -818,11 +834,15 @@ class ActionTaskExecutor:
         from windup_framework.gateway.image import _CIRCUIT
         from windup_framework.providers import OnnxU2NetMatteProvider
 
+        from windup_app.server.media.first_frame import MediaFirstFrameUploader
+
         if self._matte is None:
             self._matte = OnnxU2NetMatteProvider()
         if self._image is None:
             self._image = build_image_gateway(circuit=_CIRCUIT)
-        video = build_video_gateway(circuit=_CIRCUIT)
+        # uploader 在这里注入而不是让 provider 自己去拿:framework 不认识 app 的对象存储。
+        # 只有走 FAL 队列面的型号(veo)会用到它,kling 那条路一个字节都不会传上去。
+        video = build_video_gateway(circuit=_CIRCUIT, uploader=MediaFirstFrameUploader())
         # 装配表必须与 GenRoute 对齐。下面那条断言让漏装在装配时暴露,而不是等到某个
         # 动作第一次被请求时才炸——注入 generator 的测试走不到这条装配路径,漏了会测试
         # 全绿而真实调用全崩。

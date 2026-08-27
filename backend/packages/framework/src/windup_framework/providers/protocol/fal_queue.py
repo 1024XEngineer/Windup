@@ -235,3 +235,122 @@ def _video_url(resp: httpx.Response) -> str | None:
             if isinstance(video, dict) and video.get("url"):
                 return str(video["url"])
     return None
+
+
+# ── veo3.1 ──────────────────────────────────────────────────────────────────
+
+#: veo3.1 的建单端点。型号名(链上/账本里用的 ``veo3.1``)与端点路径分开:前者是
+#: 我们的标识,后者是上游的 API 事实,拼不出来也不能互相推。
+VEO_ENDPOINT = "fal-ai/veo3.1/image-to-video"
+
+#: 时长档。**带 ``s`` 后缀的字符串**,与 kling 的 ``"5"``(无后缀)形状不同;
+#: 混用不会被立刻拒,而是走成另一个计费档。
+VEO_DURATIONS = ("4s", "6s", "8s")
+
+#: 上游默认 ``8s``,是最贵的一档。这里不取默认,取最便宜的一档做地板。
+VEO_CHEAPEST_DURATION = "4s"
+
+#: 只有横竖两档,**不吃 1:1**。首帧画布是方的时候必须有人做决定,不能让它落到上游去猜。
+VEO_ASPECT_RATIOS = ("16:9", "9:16")
+
+VEO_RESOLUTIONS = ("720p", "1080p", "4k")
+
+
+class VeoSpendGuardError(ValueError):
+    """请求体没把烧钱的那几项显式写死。
+
+    单列一个错误类型是为了让它在测试与日志里认得出来:这三项漏掉的代价不是报错,
+    是**静默走贵档**——上游默认 ``duration=8s`` + ``generate_audio=true``,
+    合起来是 4s 无声那档的 4 倍价,而任务照常成功、没有任何一道会红。
+    """
+
+
+def veo_duration(seconds: int) -> str:
+    """秒数 → 允许的时长档,**向下取**。
+
+    向下不向上:向上取是我们替用户多花钱。上游只认这三档,而调用方给的 ``seconds``
+    是通用参数(当前链上恒为 5),落不到档位上时取比它小的那一档而不是拒绝——
+    拒绝会让"换个视频型号"变成一次要改调用方的改动。
+    """
+    allowed = sorted(VEO_DURATIONS, key=lambda d: int(d.rstrip("s")))
+    fits = [d for d in allowed if int(d.rstrip("s")) <= seconds]
+    return fits[-1] if fits else VEO_CHEAPEST_DURATION
+
+
+def veo_aspect_ratio(size: str) -> str:
+    """首帧画布尺寸 → 画幅枚举。
+
+    跟着首帧走而不是写死:``fit_first_frame`` 已经把首帧补边成了 ``size``,画幅与它
+    不一致的话上游要么裁掉角色、要么再补一次边,而这两种都得等成片出来才看得见。
+    正方形画布在这里就炸——veo 没有 1:1,让它去猜等于用一次已计费的生成来试错。
+    """
+    w, h = (int(x) for x in size.split("x"))
+    if w == h:
+        raise VeoSpendGuardError(
+            f"veo 画幅只有 {VEO_ASPECT_RATIOS},没有 1:1;首帧画布 {size} 是方的,"
+            "请把首帧尺寸改成横或竖"
+        )
+    return "9:16" if h > w else "16:9"
+
+
+class VeoQueueVideoProtocol(FalQueueVideoProtocol):
+    """veo3.1 专用面:比通用 FAL 面多**四个必填项**,少一条 base64 退路。
+
+    单独一个类而不是给通用面加参数:这四项只对 veo 成立(kling 系连 ``resolution``
+    字段都没有),写进通用面就得每家一个分支,而分支写错的代价是一次已计费的错档。
+    """
+
+    def __init__(self, api_key: str, *, base_url: str) -> None:
+        super().__init__(api_key, VEO_ENDPOINT, base_url=base_url)
+
+    def build_submit(self, req: VideoRequest) -> HttpCall:
+        """首帧只走公网 URL;三个烧钱项在这里显式落地并当场自检。"""
+        url = (req.first_frame_url or "").strip()
+        if not url.startswith(("http://", "https://")):
+            raise VeoSpendGuardError(
+                f"veo 首帧必须是公网 URL,收到 {url[:32]!r};"
+                "base64 会在建单后到生成阶段才 failed,而费用可能已经产生"
+            )
+        body: dict[str, object] = {
+            "prompt": req.prompt,
+            FAL_I2V_ENDPOINTS[VEO_ENDPOINT]: url,
+            "duration": veo_duration(req.seconds),
+            # 有声 $0.40/秒、无声 $0.20/秒,而本仓的产物是序列帧,音轨最后会被丢掉。
+            # 付了钱买一条没人听的音轨,是这里唯一会发生的事。
+            "generate_audio": False,
+            "aspect_ratio": veo_aspect_ratio(req.size),
+            "resolution": "720p",
+        }
+        _assert_spend_pinned(body)
+        return HttpCall(
+            method="POST",
+            path=f"{self._root}/queue/{VEO_ENDPOINT}",
+            headers=self._headers,
+            body=body,
+        )
+
+
+def _assert_spend_pinned(body: dict[str, object]) -> None:
+    """发出去之前再数一遍这四项。
+
+    上面刚写完为什么还要查:这四项的共同点是**漏了不会报错**,上游拿默认值照样出片。
+    一次重构把某一行删掉,没有任何一条既有测试会红——除了这里。
+    """
+    duration = body.get("duration")
+    if duration not in VEO_DURATIONS:
+        raise VeoSpendGuardError(
+            f"duration 必须显式取 {VEO_DURATIONS} 之一(上游默认 8s 是最贵档),收到 {duration!r}"
+        )
+    if body.get("generate_audio") is not False:
+        raise VeoSpendGuardError(
+            "generate_audio 必须显式关掉(上游默认 true,走 $0.40/秒 那档,是无声的 2 倍),"
+            f"收到 {body.get('generate_audio')!r}"
+        )
+    if body.get("aspect_ratio") not in VEO_ASPECT_RATIOS:
+        raise VeoSpendGuardError(
+            f"aspect_ratio 必须是 {VEO_ASPECT_RATIOS} 之一,收到 {body.get('aspect_ratio')!r}"
+        )
+    if body.get("resolution") not in VEO_RESOLUTIONS:
+        raise VeoSpendGuardError(
+            f"resolution 必须是 {VEO_RESOLUTIONS} 之一,收到 {body.get('resolution')!r}"
+        )
