@@ -78,9 +78,7 @@ function playtestFrames(
   const playbackFrames = ordered.map((frame) => ({
     imageUrl: frame.imageUrl,
     durationMs:
-      action.type === 'idle'
-        ? IDLE_FRAME_DURATION_MS
-        : frameDuration(frame.durationMs, action.fps),
+      action.type === 'idle' ? IDLE_FRAME_DURATION_MS : frameDuration(frame.durationMs, action.fps),
   }))
   const denseTiming =
     action.type === 'walk' || action.type === 'run'
