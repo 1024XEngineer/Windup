@@ -74,3 +74,103 @@ def test_every_selectable_provider_survives_the_bootstrap_warmup_call(monkeypatc
             "共享实例失效,进程里会装多份 ONNX 会话"
         )
         assert callable(getattr(provider, "cutout", None))
+
+
+# ── 内存闸 ───────────────────────────────────────────────────────────────
+#
+# 上面几条钉的是"选哪个",这几条钉的是"选了但机器扛不住"。两者的失败长相完全不同:
+# 前者拿到的是跑得起来的 provider,后者拿到的是一个会在第一帧推理时被 OOM killer
+# 杀掉的进程 —— 而现场只看得到 worker 无声重启、任务卡在 RUNNING。
+
+
+def _no_cgroup(monkeypatch, host_gib: float | None):
+    """把内存探测换成一台指定大小的机器;None = 判不出(非 Linux 开发机)。"""
+    from windup_framework.providers import matte_factory as f
+
+    monkeypatch.setattr(
+        f, "memory_budget_bytes",
+        lambda: None if host_gib is None else int(host_gib * 1024**3),
+    )
+
+
+def test_birefnet_on_the_production_worker_falls_back_instead_of_being_oom_killed(
+    monkeypatch, caplog
+):
+    """拦的坏例:在生产 worker 上把这个变量设成 birefnet。
+
+    5GiB 是线上实测值(``/sys/fs/cgroup/memory.max`` = 5368709120),而 BiRefNet 单帧
+    峰值 6.85GB。没有这道闸时,进程一路跑到第一帧推理才被杀,没有任何一行提到内存。
+    """
+    monkeypatch.setenv(ENV, "birefnet")
+    _no_cgroup(monkeypatch, 5.0)
+    with caplog.at_level("ERROR"):
+        provider = make_matte_provider()
+    assert isinstance(provider, OnnxU2NetMatteProvider)
+    # 光回落不够 —— 得说清是内存不够,否则运维只会看到"抠图怎么还是旧的"。
+    assert any("内存上限" in r.getMessage() for r in caplog.records), caplog.text
+
+
+def test_a_developer_laptop_still_gets_birefnet(monkeypatch):
+    """反方向:16GiB 的本机必须拿得到它。
+
+    闸门只该拦扛不住的机器。把组员本机也一起拦掉,这个 provider 就又变回死代码 ——
+    而 #823 存在的全部理由就是让它别是死代码。
+    """
+    pytest.importorskip("onnxruntime")
+    from windup_framework.providers.matte_birefnet import BiRefNetMatteProvider
+
+    monkeypatch.setenv(ENV, "birefnet")
+    _no_cgroup(monkeypatch, 16.0)
+    assert isinstance(make_matte_provider(), BiRefNetMatteProvider)
+
+
+def test_an_unmeasurable_machine_is_not_blocked(monkeypatch):
+    """判不出内存时放行。
+
+    macOS 上没有 cgroup 也没有 /proc/meminfo。因为量不到就把功能关掉,是拿"我不知道"
+    当"不行"用。
+    """
+    pytest.importorskip("onnxruntime")
+    from windup_framework.providers.matte_birefnet import BiRefNetMatteProvider
+
+    monkeypatch.setenv(ENV, "birefnet")
+    _no_cgroup(monkeypatch, None)
+    assert isinstance(make_matte_provider(), BiRefNetMatteProvider)
+
+
+def test_the_gate_reads_the_cgroup_limit_not_just_host_memory(monkeypatch, tmp_path):
+    """拦的坏例:只读 ``/proc/meminfo`` 就下结论。
+
+    容器里那个文件报的是**宿主**的总量:生产宿主 7.7GiB、worker 容器上限 5GiB。
+    只看宿主会得出"7.7 也不够、正好也拦住了"——碰巧对,但换一台 32GiB 宿主 + 5GiB
+    容器的机器就会放行,然后被 OOM kill。取两者较小值才是对的。
+    """
+    from windup_framework.providers import matte_factory as f
+
+    cg = tmp_path / "memory.max"
+    cg.write_text("5368709120")          # 容器 5GiB —— 线上实测值
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal:       33554432 kB\n")   # 宿主 32GiB
+    monkeypatch.setattr(f, "_CGROUP_MAX", (str(cg),))
+    monkeypatch.setattr(f.pathlib, "Path", f.pathlib.Path)  # 保持真实实现
+    orig = f.pathlib.Path
+
+    def _fake(arg):
+        return orig(str(meminfo)) if str(arg) == "/proc/meminfo" else orig(arg)
+
+    monkeypatch.setattr(f.pathlib, "Path", _fake)
+    assert f.memory_budget_bytes() == 5368709120, "取的不是较小值"
+
+
+@pytest.mark.parametrize("sentinel", ["max", "9223372036854771712"])
+def test_an_unlimited_cgroup_is_not_read_as_a_tiny_limit(monkeypatch, tmp_path, sentinel):
+    """拦的坏例:把"不限"的哨兵值当成真上限。
+
+    cgroup v2 用字面量 ``max``,v1 用一个接近 2^63 的数。前者解析失败会拿到 None
+    (碰巧安全),后者会得出一个天文数字的"上限"然后放行 —— 而真正该看的是宿主总量。
+    """
+    from windup_framework.providers import matte_factory as f
+
+    cg = tmp_path / "memory.max"
+    cg.write_text(sentinel)
+    assert f._read_int(str(cg)) is None
