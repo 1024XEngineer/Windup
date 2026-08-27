@@ -13,6 +13,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -21,6 +22,8 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
+from windup_app.server.project.model import Project
+from windup_common.models import CharacterStance
 from windup_app.server.orchestrator import client_bake, task_repo
 from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.character.service import service as character_service
@@ -29,6 +32,16 @@ from windup_app.web.api.character import get_character_with_auth
 logger = logging.getLogger("windup.render3d.api")
 
 router = APIRouter(prefix="/render3d", tags=["render3d"])
+
+
+class BuildAssetRequest(BaseModel):
+    """建 3D 资产的入参。
+
+    ``stance`` 必填、无默认:自动绑骨只支持双足,而四足/无肢从模型几何判不出来
+    (实测归档模型的包围盒比例完全重叠)。给默认值等于把「没声明」当成「双足」放行。
+    """
+
+    stance: CharacterStance
 
 
 class MasterPrecheckRequest(BaseModel):
@@ -53,6 +66,36 @@ def _precheck(request: Request):
     if precheck is None:
         raise BizException("母版预检服务未装配", code=BizCode.INTERNAL_ERROR)
     return precheck
+
+
+#: 每个用户最多同时持有的 3D 资产数。
+#:
+#: 这条是**产品限额**不是技术限制:一个 3D 资产 = 图生 3D 20 积分 + 绑骨 10 积分,
+#: 且后续动作全部复用它,所以它是这条路线上唯一的重成本点。
+MAX_ASSETS_PER_USER = 2
+
+
+def _owned_asset_count(session: Session, user_id: int) -> int:
+    """该用户名下已经建成的 3D 资产数。
+
+    数的是**当前持有**而不是历史建过多少次 —— 弃掉一个就释放一个名额。理由是混元的
+    模型生成即最终、改不动,不合格只能弃掉重建;名额若不释放,两个坏模型就把用户永久
+    卡死在这条路线外面。
+
+    只数已落 ``model_3d_url`` 的。建造中的不计入:那需要逐造型去问资产存储,而并发建多个
+    的代价本来就由积分挡着(每个都真金白银扣),不值得为它多打一圈存储。
+    """
+    rows = session.execute(
+        select(Character.character_data)
+        .join(Project, Character.project_id == Project.id)
+        .where(Project.user_id == user_id)
+    ).scalars().all()
+    owned = 0
+    for data in rows:
+        for outfit in (data or {}).get("outfits", []):
+            if outfit.get("model_3d_url"):
+                owned += 1
+    return owned
 
 
 def _asset_key(character_id: int, outfit_id: str) -> str:
@@ -142,6 +185,7 @@ def get_outfit_asset(
 def build_outfit_asset(
     character_id: int,
     outfit_id: str,
+    body: BuildAssetRequest,
     request: Request,
     session: Session = Depends(get_session),
 ) -> Response[dict]:
@@ -149,11 +193,18 @@ def build_outfit_asset(
     user_id = request.state.current_user.id
     character = get_character_with_auth(session, character_id, user_id)
     outfit = _outfit_or_raise(character, outfit_id)
+    owned = _owned_asset_count(session, user_id)
+    if owned >= MAX_ASSETS_PER_USER:
+        raise BizException(
+            f"每个账号最多同时持有 {MAX_ASSETS_PER_USER} 个 3D 角色，你已经有 {owned} 个。"
+            "弃掉其中一个就能再建。",
+            code=BizCode.BAD_REQUEST,
+        )
     operations = _operations(request)
     try:
         return Response.success(
             operations.build(_asset_key(character_id, outfit_id),
-                             _master_url_or_raise(outfit)),
+                             _master_url_or_raise(outfit), body.stance),
             message="已开始生成 3D 模型",
         )
     except ValueError as exc:

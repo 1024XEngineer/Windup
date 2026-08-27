@@ -106,3 +106,25 @@ describe('出帧任务的网络边界', () => {
     expect(calls[0].json).toEqual({ reason: 'WebGL 起不来' })
   })
 })
+
+describe('建 3D 资产的体型入参', () => {
+  it('把 stance 放进请求体 —— 后端必填，前端不能省', async () => {
+    const { api, calls } = client(() => ({
+      state: 'building',
+      model_3d_url: null,
+      review_model_url: null,
+      error: null,
+      cost: {
+        model3d_credits: 20,
+        autorig_credits: 10,
+        total_credits: 30,
+        billing: 'postpaid',
+        scope: 'per_outfit_once',
+      },
+    }))
+    await createRender3DApis(api).buildOutfitAsset('7', 'outfit-default', 'quadruped')
+    expect(calls[0].path).toBe('/render3d/characters/7/outfits/outfit-default/build')
+    expect(calls[0].method).toBe('POST')
+    expect(calls[0].json).toEqual({ stance: 'quadruped' })
+  })
+})

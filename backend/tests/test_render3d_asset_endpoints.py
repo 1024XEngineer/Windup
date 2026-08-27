@@ -26,6 +26,8 @@ from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
 
 MASTER_URL = "https://cdn.windup.test/media/reference-image/master.png"
+# 建资产必填体型：自动绑骨只支持双足，且几何上判不出来，只能声明。
+BIPED = {"stance": "biped"}
 OUTFIT_ID = "outfit-default"
 
 
@@ -180,7 +182,7 @@ def test_cost_numbers_come_from_the_billing_implementation(api):
 
 def test_build_stops_at_the_review_gate_without_rigging(api, render3d):
     """建完 ① 就停。**绑骨一次都不许调** —— 这道闸的全部价值就在这里。"""
-    data = _data(api.post(f"{_base()}/build"))
+    data = _data(api.post(f"{_base()}/build", json=BIPED))
     assert data["state"] == "awaiting_review"
     assert render3d.test_model3d.calls == 1
     assert render3d.test_autorig.calls == 0
@@ -190,7 +192,7 @@ def test_build_stops_at_the_review_gate_without_rigging(api, render3d):
 def test_waiting_at_the_gate_forever_never_auto_approves(api, render3d):
     """反复查状态不会把闸熬开。超时自动放行的闸等于没有闸,只是把"没人看"伪装成
     "看过了"。"""
-    api.post(f"{_base()}/build")
+    api.post(f"{_base()}/build", json=BIPED)
     for _ in range(10):
         assert _data(api.get(_base()))["state"] == "awaiting_review"
     assert render3d.test_autorig.calls == 0
@@ -199,18 +201,18 @@ def test_waiting_at_the_gate_forever_never_auto_approves(api, render3d):
 def test_awaiting_review_hands_out_a_link_to_the_model(api):
     """待审模型必须能取到。只躺在服务器磁盘上的话,人点"通过"时其实一眼都没看到,
     闸就退化成一个必须点的按钮 —— 比没有闸更糟,它制造了"已经审过"的假象。"""
-    data = _data(api.post(f"{_base()}/build"))
+    data = _data(api.post(f"{_base()}/build", json=BIPED))
     assert data["review_model_url"], "待审模型没有可打开的地址"
     assert data["model_3d_url"] is None, "还没绑骨,不该有可用的绑骨模型"
 
 
 def test_discarding_also_drops_the_review_link(api):
-    api.post(f"{_base()}/build")
+    api.post(f"{_base()}/build", json=BIPED)
     assert _data(api.post(f"{_base()}/discard"))["review_model_url"] is None
 
 
 def test_approve_is_what_starts_rigging(api, render3d):
-    api.post(f"{_base()}/build")
+    api.post(f"{_base()}/build", json=BIPED)
     data = _data(api.post(f"{_base()}/approve"))
     assert data["state"] == "ready"
     assert render3d.test_autorig.calls == 1
@@ -225,11 +227,11 @@ def test_approving_before_there_is_a_model_is_refused(api, render3d):
 
 def test_discard_sends_it_back_to_absent_and_the_next_build_regenerates(api, render3d):
     """不合格 → 丢弃 → 重新生成。混元的模型改不动,这是唯一的补救。"""
-    api.post(f"{_base()}/build")
+    api.post(f"{_base()}/build", json=BIPED)
     assert _data(api.post(f"{_base()}/discard"))["state"] == "absent"
     assert render3d.test_autorig.calls == 0
 
-    assert _data(api.post(f"{_base()}/build"))["state"] == "awaiting_review"
+    assert _data(api.post(f"{_base()}/build", json=BIPED))["state"] == "awaiting_review"
     assert render3d.test_model3d.calls == 2      # 重新生成要再付一次图生 3D
 
 
@@ -240,14 +242,14 @@ def test_discard_after_a_failed_rig_clears_the_approval_marker(api, render3d):
         render3d.test_autorig.calls += 1
         raise RuntimeError("绑骨服务 500")
 
-    api.post(f"{_base()}/build")
+    api.post(f"{_base()}/build", json=BIPED)
     render3d.test_autorig.rig = _boom
     api.post(f"{_base()}/approve")
     assert render3d.test_autorig.calls == 1
 
     assert _data(api.post(f"{_base()}/discard"))["state"] == "absent"
     render3d.test_autorig.rig = _FakeAutoRig().rig.__get__(render3d.test_autorig)
-    assert _data(api.post(f"{_base()}/build"))["state"] == "awaiting_review", (
+    assert _data(api.post(f"{_base()}/build", json=BIPED))["state"] == "awaiting_review", (
         "新模型被旧的批准标记放行了"
     )
 
@@ -256,15 +258,15 @@ def test_discard_after_a_failed_rig_clears_the_approval_marker(api, render3d):
 
 
 def test_building_twice_is_refused_instead_of_paying_again(api, render3d):
-    api.post(f"{_base()}/build")
-    assert api.post(f"{_base()}/build").json()["code"] == 400
+    api.post(f"{_base()}/build", json=BIPED)
+    assert api.post(f"{_base()}/build", json=BIPED).json()["code"] == 400
     assert render3d.test_model3d.calls == 1
 
 
 def test_ready_asset_is_not_rebuilt(api, render3d):
-    api.post(f"{_base()}/build")
+    api.post(f"{_base()}/build", json=BIPED)
     api.post(f"{_base()}/approve")
-    assert api.post(f"{_base()}/build").json()["code"] == 400
+    assert api.post(f"{_base()}/build", json=BIPED).json()["code"] == 400
     assert render3d.test_model3d.calls == 1
     assert render3d.test_autorig.calls == 1
 
@@ -272,7 +274,7 @@ def test_ready_asset_is_not_rebuilt(api, render3d):
 def test_ready_asset_writes_the_url_back_onto_the_outfit(api, engine):
     """不回写的话,三渲二的判据(``outfits[].model_3d_url``)永远是 None ——
     资产建好了,前端依旧显示"该造型暂无绑骨 3D 模型",钱白花。"""
-    api.post(f"{_base()}/build")
+    api.post(f"{_base()}/build", json=BIPED)
     api.post(f"{_base()}/approve")
     api.get(_base())                              # 回写发生在读状态这一步
 
@@ -295,7 +297,7 @@ def test_unusable_master_is_refused_before_any_paid_call(api, render3d):
     blank.save(buf, "PNG")
     render3d.test_source["master"] = buf.getvalue()
 
-    assert api.post(f"{_base()}/build").json()["code"] == 400
+    assert api.post(f"{_base()}/build", json=BIPED).json()["code"] == 400
     assert render3d.test_model3d.calls == 0
 
 
@@ -303,7 +305,7 @@ def test_a_warned_but_usable_master_still_builds(api, render3d):
     """警告不拦路:两条警告判据都会在合法母版上误报(侧视角色两腿必然重叠),
     拿它们挡路等于把误报变成挡住用户的钱。"""
     render3d.test_source["master"] = _master_png(legs_apart=False)
-    assert _data(api.post(f"{_base()}/build"))["state"] == "awaiting_review"
+    assert _data(api.post(f"{_base()}/build", json=BIPED))["state"] == "awaiting_review"
     assert render3d.test_model3d.calls == 1
 
 
@@ -355,7 +357,7 @@ def test_other_users_character_is_not_reachable(auth_client_b, api):
 def test_asset_key_is_namespaced_by_character(api, render3d, engine):
     """``outfit-default`` 是工作流写死给首个造型的 id。只用它当落点键的话,
     全站每个角色的默认造型会共用同一个 3D 模型,且没有任何报错。"""
-    api.post(f"{_base()}/build")
+    api.post(f"{_base()}/build", json=BIPED)
     from sqlalchemy.orm import sessionmaker
 
     session = sessionmaker(bind=engine)()
@@ -372,3 +374,102 @@ def test_asset_key_is_namespaced_by_character(api, render3d, engine):
 
     other = api.get(f"/render3d/characters/8/outfits/{OUTFIT_ID}")
     assert _data(other)["state"] == "absent", "另一个角色的默认造型不该套用这一个的模型"
+
+
+# ── 体型闸:非双足不给建 ────────────────────────────────────────────────────
+
+
+def test_quadruped_is_refused_before_any_spend(api, render3d):
+    """四足角色在**花钱之前**就被拦下,且拒绝理由说得出改法。
+
+    为什么必须拦而不是建了再说:自动绑骨对非双足**不报错**,它漏认被遮挡的肢体,那条
+    肢体每帧同姿势,而 motion_scale、死帧数、loop_seam、帧数时长成色全部正常 ——
+    一道闸都不会红,用户拿到"有条腿是柱子"的动画且不知情。
+    """
+    body = api.post(f"{_base()}/build", json={"stance": "quadruped"}).json()
+    assert body["code"] == 400, body
+    assert "无法绑定骨骼" in body["message"]
+    assert render3d.test_model3d.calls == 0, "四足被拦下却已经调过图生 3D"
+
+
+def test_serpentine_is_refused_too(api, render3d):
+    body = api.post(f"{_base()}/build", json={"stance": "serpentine"}).json()
+    assert body["code"] == 400, body
+    assert render3d.test_model3d.calls == 0
+
+
+def test_stance_has_no_default(api, render3d):
+    """不带 stance 直接拒。给默认值等于把「没声明」当成「双足」放行 —— 而这条链路上
+    「没声明」最可能出现在非双足角色上(调用方没意识到有这个字段)。"""
+    body = api.post(f"{_base()}/build", json={}).json()
+    assert body["code"] != 200, body
+    assert render3d.test_model3d.calls == 0
+
+
+def test_biped_still_builds(api, render3d):
+    """闸不能把正常路径也挡了 —— 控制样本。"""
+    data = _data(api.post(f"{_base()}/build", json=BIPED))
+    assert data["state"] in {"building", "awaiting_review"}
+    assert render3d.test_model3d.calls == 1
+
+
+# ── 每用户限额 ────────────────────────────────────────────────────────────
+
+
+def _give_user_assets(engine, count: int) -> None:
+    """给 user 1 名下塞 count 个已建成的 3D 资产（另起角色，不碰被测那个造型）。"""
+    from sqlalchemy.orm import sessionmaker
+
+    session = sessionmaker(bind=engine)()
+    for index in range(count):
+        session.add(Character(
+            id=100 + index, project_id=1, workflow_run_id=100 + index, name=f"已有{index}",
+            character_data={"version": 1, "outfits": [
+                {"id": "outfit-default", "name": "常态", "description": None,
+                 "preview_url": MASTER_URL,
+                 "model_3d_url": f"https://cdn.windup.test/media/model-3d/{index}.glb",
+                 "actions": []},
+            ]},
+            status=0,
+        ))
+    session.commit()
+    session.close()
+
+
+def test_third_asset_is_refused(api, engine, render3d):
+    """名额用满就不给建，且**在花钱之前**拒。"""
+    _give_user_assets(engine, 2)
+    body = api.post(f"{_base()}/build", json=BIPED).json()
+    assert body["code"] == 400, body
+    assert "最多同时持有 2 个" in body["message"]
+    assert render3d.test_model3d.calls == 0, "名额满了却已经调过图生 3D"
+
+
+def test_second_asset_still_allowed(api, engine, render3d):
+    """闸不能把正常路径挡了 —— 控制样本：已有 1 个时第 2 个必须能建。"""
+    _give_user_assets(engine, 1)
+    data = _data(api.post(f"{_base()}/build", json=BIPED))
+    assert data["state"] in {"building", "awaiting_review"}
+    assert render3d.test_model3d.calls == 1
+
+
+def test_discarding_frees_a_slot(api, engine, render3d):
+    """弃掉一个要能再建。
+
+    混元的模型生成即最终、改不动，不合格只能弃掉重建；名额若不释放，两个坏模型就把
+    用户永久卡死在这条路线外面。
+    """
+    _give_user_assets(engine, 2)
+    assert api.post(f"{_base()}/build", json=BIPED).json()["code"] == 400
+
+    from sqlalchemy.orm import sessionmaker
+    session = sessionmaker(bind=engine)()
+    stale = session.get(Character, 100)
+    data = dict(stale.character_data)
+    data["outfits"] = [{**o, "model_3d_url": None} for o in data["outfits"]]
+    stale.character_data = data
+    session.commit()
+    session.close()
+
+    data = _data(api.post(f"{_base()}/build", json=BIPED))
+    assert data["state"] in {"building", "awaiting_review"}

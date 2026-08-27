@@ -39,6 +39,10 @@ def user_message(exc: BaseException) -> str:
         return f"动作描述没通过检查：{detail}" if detail else "动作描述没通过检查，换一种说法再试。"
     if name == "FetchNotAllowed":
         return "参考图地址不被接受，请重新上传图片后再试。"
+    if name == "StanceNotRiggable":
+        # 体型不在绑骨能力范围内。这条**不能抹成通用文案**：通用那句让用户去重试，
+        # 而重试一万次也不会变 —— 四足永远绑不了。原文里只有体型和路线名，无内部信息。
+        return str(exc)
     if name == "QualityBlocked":
         # 判官给的是产品级原因,不是基础设施信息 —— 翻成人话交给用户,
         # 抹成"没通过检查"会让用户不知道改什么,那是脱敏脱过头。

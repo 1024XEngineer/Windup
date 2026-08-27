@@ -141,6 +141,7 @@ export { createRender3DApis, render3DApis, Render3DContractError } from './rende
 export type {
   BakeCompletion,
   BakeJob,
+  CharacterStance,
   MasterFacts,
   MasterPrecheckReport,
   MasterRejectCode,

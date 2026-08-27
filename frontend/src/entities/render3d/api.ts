@@ -202,10 +202,11 @@ export function createRender3DApis(client: ApiClient = defaultClient()): Render3
       return parseAsset(await client.request<unknown>(outfitPath(characterId, outfitId)))
     },
 
-    async buildOutfitAsset(characterId, outfitId) {
+    async buildOutfitAsset(characterId, outfitId, stance) {
       return parseAsset(
         await client.request<unknown>(`${outfitPath(characterId, outfitId)}/build`, {
           method: 'POST',
+          json: { stance },
         }),
       )
     },
@@ -274,8 +275,8 @@ export const render3DApis: Render3DApis = {
   precheckMaster: (imageUrl, canvas) => createRender3DApis().precheckMaster(imageUrl, canvas),
   getOutfitAsset: (characterId, outfitId) =>
     createRender3DApis().getOutfitAsset(characterId, outfitId),
-  buildOutfitAsset: (characterId, outfitId) =>
-    createRender3DApis().buildOutfitAsset(characterId, outfitId),
+  buildOutfitAsset: (characterId, outfitId, stance) =>
+    createRender3DApis().buildOutfitAsset(characterId, outfitId, stance),
   approveOutfitAsset: (characterId, outfitId) =>
     createRender3DApis().approveOutfitAsset(characterId, outfitId),
   discardOutfitAsset: (characterId, outfitId) =>
