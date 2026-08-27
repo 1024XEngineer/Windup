@@ -2322,20 +2322,15 @@
         "type": "object"
       },
       "ProjectCreate": {
-        "description": "创建项目请求。",
+        "description": "创建项目请求。\n\n``character_perspective`` 已退役(#664):旧客户端多传该字段会被忽略,\n方向规格只认 ``directional_movement``。",
         "properties": {
           "auto_pixelate": {
             "default": true,
             "title": "Auto Pixelate",
             "type": "boolean"
           },
-          "character_perspective": {
-            "maximum": 3.0,
-            "minimum": 1.0,
-            "title": "Character Perspective",
-            "type": "integer"
-          },
           "directional_movement": {
+            "description": "1=单向 2=四向 3=八向",
             "maximum": 3.0,
             "minimum": 1.0,
             "title": "Directional Movement",
@@ -2413,7 +2408,6 @@
           }
         },
         "required": [
-          "character_perspective",
           "directional_movement",
           "sprite_width",
           "sprite_height"
@@ -2429,6 +2423,8 @@
             "type": "boolean"
           },
           "character_perspective": {
+            "description": "与朝向 1:1:单向→横版、四向→俯视、八向→2.5D。",
+            "readOnly": true,
             "title": "Character Perspective",
             "type": "integer"
           },
@@ -2511,7 +2507,6 @@
           "id",
           "workflow_id",
           "project_name",
-          "character_perspective",
           "directional_movement",
           "sprite_width",
           "sprite_height",
@@ -2520,19 +2515,22 @@
           "sprite_sample_url",
           "create_at",
           "update_at",
-          "preview_url"
+          "preview_url",
+          "character_perspective"
         ],
         "title": "ProjectListOut",
         "type": "object"
       },
       "ProjectOut": {
-        "description": "项目响应。",
+        "description": "项目响应。\n\n``character_perspective`` 不再落库,由 ``directional_movement`` 派生,\n让尚未对齐的前端读列表/详情时不至于映射失败。",
         "properties": {
           "auto_pixelate": {
             "title": "Auto Pixelate",
             "type": "boolean"
           },
           "character_perspective": {
+            "description": "与朝向 1:1:单向→横版、四向→俯视、八向→2.5D。",
+            "readOnly": true,
             "title": "Character Perspective",
             "type": "integer"
           },
@@ -2604,7 +2602,6 @@
           "id",
           "workflow_id",
           "project_name",
-          "character_perspective",
           "directional_movement",
           "sprite_width",
           "sprite_height",
@@ -2612,7 +2609,8 @@
           "auto_pixelate",
           "sprite_sample_url",
           "create_at",
-          "update_at"
+          "update_at",
+          "character_perspective"
         ],
         "title": "ProjectOut",
         "type": "object"

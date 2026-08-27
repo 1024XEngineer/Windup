@@ -115,7 +115,7 @@ def api(auth_client, engine, render3d):
     from sqlalchemy.orm import sessionmaker
 
     session = sessionmaker(bind=engine)()
-    session.add(Project(id=1, user_id=1, project_name="p", character_perspective=1,
+    session.add(Project(id=1, user_id=1, project_name="p",
                         directional_movement=1, sprite_width=64, sprite_height=64))
     # 先落 project 再插 character:两者在同一 session 里时 SQLAlchemy 不保证插入顺序,
     # 而 character.project_id 有真外键 —— 顺序反了就是 FOREIGN KEY constraint failed。

@@ -34,7 +34,6 @@ _EVENT_KEYS = {
 def _create_project(client, name: str = "SSE 项目") -> dict:
     return client.post("/projects", json={
         "project_name": name,
-        "character_perspective": 1,
         "directional_movement": 2,
         "sprite_width": 64,
         "sprite_height": 64,

@@ -70,8 +70,8 @@ def test_action_spec_restricted_fields_reject_typos(field, bad, good, member):
     assert getattr(ActionSpec(action=ActionType.WALK, **{field: good}), field) is member
 
 
-def test_character_view_rejects_typos_and_matches_perspective_mapping():
-    """view 固定映射 perspective：1 side / 2 top-down / 3 isometric。
+def test_character_view_rejects_typos_and_matches_movement_mapping():
+    """view 固定映射朝向规格：1 side / 2 top-down / 3 isometric。
 
     字符串必须逐字一致，免得将来做 int↔str 映射时出现
     topdown / top_down / top-down 三种写法。

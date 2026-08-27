@@ -279,7 +279,7 @@ def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, d
     db_session.commit()
 
     project = auth_client.post("/projects", json={
-        "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,
+        "project_name": "三渲二", "directional_movement": 2,
         "sprite_width": 64, "sprite_height": 64,
     }).json()["data"]
     character = auth_client.post("/characters", json={
@@ -317,7 +317,7 @@ def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, db_s
     db_session.commit()
 
     project = auth_client.post("/projects", json={
-        "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,
+        "project_name": "三渲二", "directional_movement": 2,
         "sprite_width": 64, "sprite_height": 64,
     }).json()["data"]
     character = auth_client.post("/characters", json={
@@ -347,7 +347,7 @@ def test_unknown_outfit_id_is_rejected_not_ignored(auth_client):
     """造型 id 对不上要报错。静默当成"没有资产"会让用户以为三渲二不可用,
     实际是他把 id 打错了。"""
     project = auth_client.post("/projects", json={
-        "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,
+        "project_name": "三渲二", "directional_movement": 2,
         "sprite_width": 64, "sprite_height": 64,
     }).json()["data"]
     character = auth_client.post("/characters", json={

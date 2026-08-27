@@ -112,8 +112,8 @@ class Facing(str, Enum):
     - ``FRONT``:身体正对观者(俯视与 2.5D 都归此)。
 
     与 :class:`CharacterView` 的对应关系:SIDE→SIDE;TOP_DOWN / ISOMETRIC→FRONT。
-    两者不合并成一个枚举:view 是项目级美术视角(对应 ``Project.character_perspective``,
-    决定母版怎么画),facing 是提示词模板的二选一(只区分"看得到侧面"和"正对镜头")。
+    两者不合并成一个枚举:view 是项目级美术视角(由 ``Project.directional_movement``
+    派生,决定母版怎么画),facing 是提示词模板的二选一(只区分"看得到侧面"和"正对镜头")。
     """
 
     SIDE = "side"
@@ -121,15 +121,15 @@ class Facing(str, Enum):
 
 
 class CharacterView(str, Enum):
-    """角色美术视角 —— 与 ``Project.character_perspective``(1/2/3)一一对应。
+    """角色美术视角 —— 与 ``Project.directional_movement``(1/2/3)一一对应。
 
     映射固定为 1→side、2→top-down、3→isometric。字符串取值必须逐字一致,
     免得调用方再造一套别名(如 topdown / top_down / top-down 三写)。
     """
 
-    SIDE = "side"  # perspective=1 横版
-    TOP_DOWN = "top-down"  # perspective=2 俯视
-    ISOMETRIC = "isometric"  # perspective=3 2.5D
+    SIDE = "side"  # directional_movement=1 单向/横版
+    TOP_DOWN = "top-down"  # directional_movement=2 四向/俯视
+    ISOMETRIC = "isometric"  # directional_movement=3 八向/2.5D
 
 
 class Stylize(str, Enum):
@@ -216,7 +216,7 @@ class ActionSpec(BaseModel):
     #   于是"我要 1 色"拿到 2 色且无任何提示 —— 正是本项目最忌讳的静默纠正。
     pixel_h: int = Field(default=100, ge=1)  # 像素化目标高(角色像素行数)
     palette_size: int = Field(default=32, ge=2)  # 色板色数(1 色的像素画不存在)
-    # 生成提示词的朝向,**必须与母版朝向一致**(对应 Project.perspective)。
+    # 生成提示词的朝向,**必须与母版朝向一致**(由 Project.directional_movement 派生)。
     facing: Facing = Facing.SIDE
     # 项目方向集合中的一个真实源方向。镜像方向不会进入 ActionSpec，因为它不应
     # 调用模型；前端/编排层会为每个源方向创建独立 GenerationTask。
