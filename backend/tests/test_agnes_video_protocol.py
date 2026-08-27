@@ -141,6 +141,26 @@ def test_agnes_completed_result_reads_metadata_url():
     assert result.result_url == "https://cdn.agnes-ai.com/out.mp4"
 
 
+def test_agnes_flash_completed_result_reads_top_level_url():
+    response = httpx.Response(
+        200,
+        json={
+            "id": "video-flash-1",
+            "status": "completed",
+            "progress": 100,
+            "url": "https://cdn.agnes-ai.com/flash-out.mp4",
+        },
+    )
+
+    result = AgnesVideoProtocol(
+        "agnes-secret", model=AGNES_VIDEO_25_FLASH
+    ).parse_poll(response, "video-flash-1")
+
+    assert result.ok
+    assert result.job_status == "completed"
+    assert result.result_url == "https://cdn.agnes-ai.com/flash-out.mp4"
+
+
 def test_agnes_completed_without_metadata_url_remains_pollable():
     response = httpx.Response(
         200,

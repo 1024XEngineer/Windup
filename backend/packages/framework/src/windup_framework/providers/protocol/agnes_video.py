@@ -158,9 +158,12 @@ class AgnesVideoProtocol:
         status = str(payload.get("status") or "").lower()
         if status == "completed":
             metadata = payload.get("metadata")
-            url = metadata.get("url") if isinstance(metadata, dict) else None
+            metadata_url = metadata.get("url") if isinstance(metadata, dict) else None
+            # Agnes Video 2.5 Flash 的线上完成响应会把成片地址直接放在
+            # 顶层 url；标准模型仍使用文档约定的 metadata.url。
+            url = metadata_url or payload.get("url")
             if not url:
-                # 线上偶尔先把状态推进到 completed，随后才回填 metadata.url。
+                # 线上偶尔先把状态推进到 completed，随后才回填成片地址。
                 # 官方交付条件要求两者同时存在，因此这里继续轮询同一任务；若立即
                 # 判 INVALID_RESPONSE，已经生成成功的任务将无法恢复且兜底会重复建单。
                 return AdapterResult(
