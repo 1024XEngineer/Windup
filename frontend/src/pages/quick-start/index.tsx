@@ -2726,7 +2726,7 @@ function QuickStartRun({
     readonly (readonly [string, string])[]
   >([])
   const [failedDirections, setFailedDirections] = useState<readonly QuickStartFailedDirection[]>([])
-  const [retryingDirection, setRetryingDirection] = useState<string | null>(null)
+  const [retryingDirectionsForNode, setRetryingDirectionsForNode] = useState<string | null>(null)
   const [exportModel, setExportModel] = useState<ExportPackageModel | null>(null)
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
@@ -3439,22 +3439,34 @@ function QuickStartRun({
     }
   }
 
-  async function retryFailedDirection(item: QuickStartFailedDirection) {
+  async function retryFailedDirections(items: readonly QuickStartFailedDirection[]) {
     const targetSession = session
-    if (!targetSession || workflowConflictRef.current) return
-    const key = `${item.nodeId}:${item.direction}`
-    setRetryingDirection(key)
+    const nodeId = items[0]?.nodeId
+    if (!targetSession || !nodeId || workflowConflictRef.current) return
+    setRetryingDirectionsForNode(nodeId)
     clearWorkflowError()
+    let latestRun: WorkflowRun | null = null
+    let firstFailure: unknown = null
     try {
-      const updated = await targetSession.retryGenerationDirection(item.nodeId, item.direction)
+      for (const item of items) {
+        try {
+          latestRun = await targetSession.retryGenerationDirection(item.nodeId, item.direction)
+        } catch (cause) {
+          firstFailure ??= cause
+        }
+      }
       if (!mountedRef.current || activeSessionRef.current !== targetSession) return
-      setRun(updated)
-    } catch (cause) {
-      if (!mountedRef.current || activeSessionRef.current !== targetSession) return
-      reportWorkflowError(cause, `重试${DIRECTION_LABELS[item.direction]}方向失败`)
+      if (latestRun) setRun(latestRun)
+      if (firstFailure) {
+        const fallback =
+          items.length === 1
+            ? `重试${DIRECTION_LABELS[items[0]!.direction]}方向失败`
+            : '重试失败方向时仍有任务未能恢复'
+        reportWorkflowError(firstFailure, fallback)
+      }
     } finally {
       if (mountedRef.current && activeSessionRef.current === targetSession) {
-        setRetryingDirection(null)
+        setRetryingDirectionsForNode(null)
       }
     }
   }
@@ -3462,25 +3474,18 @@ function QuickStartRun({
   function DirectionRetryButtons({ nodeId }: { nodeId: string }) {
     const items = failedDirections.filter((item) => item.nodeId === nodeId)
     if (items.length === 0) return null
+    const retrying = retryingDirectionsForNode === nodeId
+    const label =
+      items.length === 1 ? `重试${DIRECTION_LABELS[items[0]!.direction]}方向` : '重试失败方向'
     return (
-      <div className="flex flex-wrap gap-2">
-        {items.map((item) => {
-          const key = `${item.nodeId}:${item.direction}`
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => void retryFailedDirection(item)}
-              disabled={retryingDirection !== null || workflowConflict}
-              className="rounded-lg border border-current px-3 py-1.5 text-xs font-bold text-app-danger disabled:opacity-50"
-            >
-              {retryingDirection === key
-                ? `正在重试${DIRECTION_LABELS[item.direction]}方向…`
-                : `重试${DIRECTION_LABELS[item.direction]}方向`}
-            </button>
-          )
-        })}
-      </div>
+      <button
+        type="button"
+        onClick={() => void retryFailedDirections(items)}
+        disabled={retryingDirectionsForNode !== null || workflowConflict}
+        className="rounded-lg border border-current px-3 py-1.5 text-xs font-bold text-app-danger disabled:opacity-50"
+      >
+        {retrying ? `正在${label}…` : label}
+      </button>
     )
   }
 
@@ -3949,7 +3954,7 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         tone="danger"
-                        lines={['动作首帧生成失败', '内容还在，可以在下面修改要求后重试。']}
+                        lines={['动作首帧生成失败', '已完成的方向会保留，点击下方可重试失败方向。']}
                       />
                       <DirectionRetryButtons nodeId={firstFrameStep.id} />
                     </>
@@ -4065,7 +4070,7 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         tone="danger"
-                        lines={['动作生成失败', '内容还在，可以在下面修改要求后重试。']}
+                        lines={['动作生成失败', '已完成的方向会保留，点击下方可重试失败方向。']}
                       />
                       <DirectionRetryButtons nodeId={actionStep.id} />
                     </>
