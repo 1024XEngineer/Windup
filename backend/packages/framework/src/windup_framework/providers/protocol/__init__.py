@@ -1,4 +1,10 @@
-from .fal_queue import FAL_I2V_ENDPOINTS, FalQueueVideoProtocol, UnknownFalEndpointError
+from .fal_queue import (
+    FAL_I2V_ENDPOINTS,
+    FalQueueVideoProtocol,
+    UnknownFalEndpointError,
+    VeoQueueVideoProtocol,
+    VeoSpendGuardError,
+)
 from .image_faces import (
     FAL_IMAGE_ENDPOINTS,
     FalQueueImageFace,
@@ -20,5 +26,7 @@ __all__ = [
     "OpenAIVideoProtocol",
     "UnknownFalEndpointError",
     "UnknownFalImageModelError",
+    "VeoQueueVideoProtocol",
+    "VeoSpendGuardError",
     "VideoRequest",
 ]

@@ -41,6 +41,15 @@ class AIProviderSettings(BaseSettings):
     # ``GET /models`` 去核对。
     judge_model: str = "gemini-2.5-flash"
 
+    # veo 走 FAL 队列面,与 kling 的 OpenAI 面是两套请求形状与两条计费档。默认关的理由
+    # 不是"没实现",而是**开着就会被选中**:它一旦进链,兜底那一跳就可能落到它身上,
+    # 而它最贵的一档(8s + 有声)是最便宜一档的 4 倍。关着时它不进链,
+    # ``_resolve_video_model`` 也就选不到它 —— 对客户不可见,出事随时能关回去。
+    # veo3.1 只对**逐个列出的用户**开放,不是部署级开关。它按秒计费且比 kling 贵,
+    # 用途是组内做高质量素材,不面向客户。空值 = 没有任何人可用(默认)。
+    # 逗号分隔的用户 id,如 "1,7,12"。
+    video_veo_user_ids: str = ""
+
     chat_fallbacks: str = ""
     image_fallbacks: str = "gemini-3.1-flash-image-preview"
     video_fallbacks: str = ""

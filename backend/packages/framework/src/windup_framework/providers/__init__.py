@@ -7,6 +7,7 @@ from windup_framework.providers.image import create_image_client
 from windup_framework.providers.judge import JudgeResponseError, SufyJudgeProvider
 from windup_framework.providers.interfaces import (
     ImageProvider,
+    FirstFrameUploader,
     MatteProvider,
     VideoProvider,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "ImageProvider",
     "VideoProvider",
     "MatteProvider",
+    "FirstFrameUploader",
     # 实现
     "SufyVideoProvider",
     # FAL 队列面的 i2v(现役接口形态);首帧要公网 URL,故与 uploader 成对出现

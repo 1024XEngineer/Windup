@@ -155,7 +155,9 @@ class CharacterGenerator(CharacterGeneratorPort):
             card, action, master, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
         )
 
-    def poll_video(self, job_id: str, *, route_id: str | None = None) -> bytes | None:
+    def poll_video(
+        self, job_id: str, *, route_id: str | None = None, model: str | None = None
+    ) -> bytes | None:
         """walk/idle/attack/custom 共用 VIDEO_I2V 桶,按 job 探一次。"""
         strategy = self._by_route.get(GenRoute.VIDEO_I2V)
         if strategy is None:
@@ -163,7 +165,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         poll_job = getattr(strategy, "poll_job", None)
         if poll_job is None:
             raise TypeError("视频路线不支持 poll_job")
-        return poll_job(job_id, route_id=route_id)
+        return poll_job(job_id, route_id=route_id, model=model)
 
     def finish_video(
         self,

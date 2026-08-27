@@ -73,8 +73,14 @@ class VideoGateway:
             return result
         raise RuntimeError("video gateway start_i2v 未返回 job")
 
-    def poll_i2v(self, job_id: str, *, route_id: str | None = None) -> AdapterResult:
-        """单次探活。进行中 ``ok=False`` 且 ``error_type is None``;完成则带 mp4。"""
+    def poll_i2v(
+        self, job_id: str, *, route_id: str | None = None, model: str | None = None
+    ) -> AdapterResult:
+        """单次探活。进行中 ``ok=False`` 且 ``error_type is None``;完成则带 mp4。
+
+        ``model`` 与 ``route_id`` 一样是**建单时那一跳的身份**,必须由调用方随 job 存下来
+        再带回来:单据地址是按协议面拼的,面认错就查不到这张单,而单已经建了、钱已经花了。
+        """
         adapter = self._adapter
         if route_id:
             for route in self._routes:
@@ -86,12 +92,12 @@ class VideoGateway:
                 if mapped is not None:
                     adapter = mapped
         if hasattr(adapter, "inspect_job"):
-            snap = adapter.inspect_job(job_id)
+            snap = adapter.inspect_job(job_id, model=model)
             if snap.ok and snap.job_status == "completed" and snap.edge_fingerprint:
                 if hasattr(adapter, "download_completed"):
                     return adapter.download_completed(job_id, snap.edge_fingerprint)
             return snap
-        return adapter.follow_job(job_id)
+        return adapter.follow_job(job_id, model=model)
 
     def i2v(
         self,
@@ -232,7 +238,7 @@ class VideoGateway:
                         if result.ok and result.job_id:
                             bound_job_id = result.job_id
                             if follow:
-                                result = adapter.follow_job(bound_job_id)
+                                result = adapter.follow_job(bound_job_id, model=model)
                         elif result.ok:
                             result = replace(
                                 result,
@@ -241,7 +247,7 @@ class VideoGateway:
                                 body=b"",
                             )
                     elif follow:
-                        result = adapter.follow_job(bound_job_id)
+                        result = adapter.follow_job(bound_job_id, model=model)
                     else:
                         result = AdapterResult(
                             ok=True, job_id=bound_job_id, maybe_billed=True
@@ -539,7 +545,10 @@ class VideoGateway:
         emit(trace)
 
 
-def build_video_gateway(config=None, *, adapter=None, circuit=None) -> VideoGateway:
+def build_video_gateway(
+    config=None, *, adapter=None, circuit=None, uploader=None
+) -> VideoGateway:
+    """``uploader`` 只有走 FAL 队列面的型号(veo)才用得上,故可选;缺它时 veo 在建单前被拒。"""
     cfg: AIProviderSettings = config or default_settings
     route_adapters = None
     if adapter is None:
@@ -547,7 +556,9 @@ def build_video_gateway(config=None, *, adapter=None, circuit=None) -> VideoGate
 
         routes = routes_from_settings(cfg, route_group=Scene.CHARACTER_ACTION.value)
         route_adapters = {
-            route.route_id: SufyVideoProvider(config=config_for_route(cfg, route))
+            route.route_id: SufyVideoProvider(
+                config=config_for_route(cfg, route), uploader=uploader
+            )
             for route in routes
         }
         adapter = route_adapters[routes[0].route_id]
