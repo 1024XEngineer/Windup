@@ -111,6 +111,33 @@ def test_list_other_users_project_returns_404(auth_client, auth_client_b):
     )
     assert resp.json()["code"] == 404
 
+def test_list_without_project_returns_only_current_users_recent_runs(
+    auth_client,
+    auth_client_b,
+):
+    """Quick Start 历史栏能一次读取当前用户跨项目的最近运行记录。"""
+    first_project = _create_project(auth_client, "像素骑士")
+    second_project = _create_project(auth_client, "森林法师")
+    other_project = _create_project(auth_client_b, "别人的角色")
+
+    first = auth_client.post(
+        "/workflow-runs",
+        json=_payload(first_project["id"], nodes=[{"id": "first"}]),
+    ).json()["data"]
+    second = auth_client.post(
+        "/workflow-runs",
+        json=_payload(second_project["id"], nodes=[{"id": "second"}]),
+    ).json()["data"]
+    auth_client_b.post("/workflow-runs", json=_payload(other_project["id"]))
+
+    resp = auth_client.get("/workflow-runs", params={"page": 1, "page_size": 20})
+
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["total"] == 2
+    assert [item["id"] for item in body["data"]] == [second["id"], first["id"]]
+    assert all(item["created_at"] for item in body["data"])
+
 
 # -- GET /workflow-runs/{id} ---------------------------------------------------
 

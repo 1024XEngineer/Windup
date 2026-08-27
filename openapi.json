@@ -3832,6 +3832,11 @@
       "WorkflowRunOut": {
         "description": "执行记录响应。",
         "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -3859,7 +3864,8 @@
           "id",
           "project_id",
           "status",
-          "version"
+          "version",
+          "created_at"
         ],
         "title": "WorkflowRunOut",
         "type": "object"
@@ -6319,17 +6325,24 @@
     },
     "/workflow-runs": {
       "get": {
-        "description": "分页查询项目下的执行记录。",
+        "description": "分页查询项目记录；未指定项目时返回当前用户的跨项目历史。",
         "operationId": "list_runs_workflow_runs_get",
         "parameters": [
           {
             "in": "query",
             "name": "project_id",
-            "required": true,
+            "required": false,
             "schema": {
-              "exclusiveMinimum": 0,
-              "title": "Project Id",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
             }
           },
           {

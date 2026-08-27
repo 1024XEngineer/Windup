@@ -533,4 +533,32 @@ describe('workflowRunApis', () => {
       'https://api.windup.test/workflow-runs?project_id=42&page=2&page_size=10',
     )
   })
+
+  it('lists the current users recent runs without a project filter', async () => {
+    let requestUrl = ''
+    const apis = await loadWorkflowRunApis(async (input) => {
+      requestUrl = String(input)
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: [workflowRunDto],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+
+    const recentApis = apis as typeof apis & {
+      listRecent(query?: { page?: number; pageSize?: number }): Promise<unknown>
+    }
+
+    await expect(recentApis.listRecent()).resolves.toMatchObject({
+      items: [{ id: '17', projectId: '42' }],
+      total: 1,
+    })
+    expect(requestUrl).toBe('https://api.windup.test/workflow-runs?page=1&page_size=20')
+  })
 })
