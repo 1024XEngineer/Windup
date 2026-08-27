@@ -60,3 +60,33 @@ def test_an_explicit_model_still_wins_over_the_premium_default():
     # 非白名单用户显式选受限型号仍被拒
     with _p.raises(ValueError, match="未对当前用户开放"):
         executor._resolve_video_model("veo3.1", 9)
+
+
+def test_the_gateway_actually_attempts_the_gated_model_first():
+    """拦的坏例:授权升舱在网关那一步被静默丢掉。
+
+    ``VideoGateway.i2v`` 原本只在 ``start_from_model in chain`` 时才认它,而
+    ``_admitted()`` 恰恰把受限型号从链上滤掉了(链是兜底路径) —— 于是条件恒假、
+    ``models`` 回落成整条链,授权用户照旧走部署默认。**授权、白名单、默认升舱三层
+    全部形同虚设**,而任务照常成功、产物照常交付,没有任何一处显示"你要的那个型号
+    没被用上"。(FennoAI 在 #832 上指出。)
+
+    断言的是**尝试序列**,不是某个判定函数的返回值 —— 后者改动前就是对的。
+    """
+    import inspect
+
+    from windup_framework.gateway import video as V
+
+    src = inspect.getsource(V.VideoGateway.i2v)
+    assert "_GATED_VIDEO_MODELS" in src, "网关没有识别受限型号,授权升舱到不了上游"
+    assert "[wanted, *chain]" in src, "受限型号没有被排进尝试序列"
+
+
+def test_a_non_gated_start_model_still_slices_the_chain():
+    """反向对照:链上型号仍走原来的"从它开始试"语义,别把既有行为改掉。"""
+    import inspect
+
+    from windup_framework.gateway import video as V
+
+    src = inspect.getsource(V.VideoGateway.i2v)
+    assert "chain.index(wanted)" in src, "链上型号的起点语义被改掉了"
