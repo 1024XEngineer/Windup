@@ -232,6 +232,12 @@ class ActionSpec(BaseModel):
     # 身份描述再写一遍会和母版打架(见 ports.CharacterGeneratorPort)。
     custom_action: str | None = None
 
+    # 用户写的那句动作细节,叠在写死动作的模板之上(#838)。
+    # 与 ``custom_action`` 的分工:那个是**整个**动作的内容(action=custom 时必填,
+    # 此时没有模板);这个是对模板动作的补充说明,模板仍然定运动拓扑。
+    # 前端两半一起发:action_type 选管线、custom_prompt 说这次具体要什么。
+    detail: str | None = None
+
     # 必须显式给,不按描述关键词猜:猜错会把一次性动作强行首尾闭环,末帧接回首帧抽搐,
     # 而帧数、时长、成色全正常。名字不叫 loop 是因为它有真实消费方——决定 slicing 走
     # pick_cycle 还是 pick_oneshot、出参要不要量 loop_seam。
@@ -270,6 +276,11 @@ class ActionSpec(BaseModel):
                 raise ValueError(
                     "action=custom 必须显式给 cyclic(是否循环播放)。不猜 —— "
                     "猜错会把一次性动作强行首尾闭环,而帧数/时长/成色全部正常、没有任何一道会红"
+                )
+            if self.detail is not None:
+                raise ValueError(
+                    "action=custom 不该带 detail;custom 没有模板可叠,动作内容整条走 "
+                    "custom_action。两个字段都填会让同一段描述进两次提示词"
                 )
         else:
             if self.custom_action is not None:

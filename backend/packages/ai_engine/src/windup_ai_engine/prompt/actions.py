@@ -13,17 +13,18 @@ from windup_ai_engine.prompt._md import load_section
 __all__ = ["build_idle_prompt", "build_attack_prompt"]
 
 
-def build_idle_prompt(facing: Facing | str = Facing.SIDE) -> str:
+def build_idle_prompt(facing: Facing | str = Facing.SIDE, *, detail: str = "") -> str:
     """待机正文(循环类)。``facing`` 须与母版朝向一致。
 
     """
-    return with_framing(load_section("idle.md", Facing(facing).value))
+    return with_framing(load_section("idle.md", Facing(facing).value), detail)
 
 
 def build_attack_prompt(
     facing: Facing | str = Facing.SIDE,
     *,
     archetype: AttackArchetype | str = AttackArchetype.THRUST,
+    detail: str = "",
 ) -> str:
     """攻击正文(一次性类)。``facing`` 须与母版朝向一致。
 
@@ -31,4 +32,4 @@ def build_attack_prompt(
     """
     # 两个枚举都过一遍构造:非法值要炸,不能静默落到某一节。
     section = f"{AttackArchetype(archetype).value}.{Facing(facing).value}"
-    return with_framing(load_section("attack.md", section))
+    return with_framing(load_section("attack.md", section), detail)

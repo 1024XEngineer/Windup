@@ -162,6 +162,7 @@ class PromptAdapterPort(Protocol):
         kind: Kind,
         facing: Facing,
         stance: CharacterStance,
+        on_template: bool = False,
     ) -> AdaptedPrompt: ...
 
 

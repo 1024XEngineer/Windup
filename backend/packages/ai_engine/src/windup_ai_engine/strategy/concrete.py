@@ -85,11 +85,12 @@ class VideoFrameStrategy(DerivationStrategy):
         # attack 同样进不了那张表:它还要按运动拓扑选提示词分支。archetype 缺省时不在这里
         # 兜一个默认值 —— 缺省只由 build_attack_prompt 定义一次,写两处会各自漂移。
         if action.action is ActionType.ATTACK:
+            detail = self._detail_clause(action, stance)
             if action.archetype is None:
-                body = build_attack_prompt(facing=action.facing)
+                body = build_attack_prompt(facing=action.facing, detail=detail)
             else:
                 body = build_attack_prompt(
-                    facing=action.facing, archetype=action.archetype
+                    facing=action.facing, archetype=action.archetype, detail=detail
                 )
             return with_direction_lock(body, action.direction)
         builders = {
@@ -97,7 +98,47 @@ class VideoFrameStrategy(DerivationStrategy):
             ActionType.IDLE: build_idle_prompt,
         }
         build = builders.get(action.action, build_walk_prompt)
-        return with_direction_lock(build(facing=action.facing), action.direction)
+        body = build(
+            facing=action.facing, detail=self._detail_clause(action, stance)
+        )
+        return with_direction_lock(body, action.direction)
+
+    def _detail_clause(self, action: ActionSpec, stance: CharacterStance) -> str:
+        """用户写的那句动作细节,过一遍适配器后交给模板。
+
+        前端把用户的一句自由文本拆成两半发过来:``action_type`` 选哪条已调好的管线
+        (走路要腿交替、跳跃要腾空 —— 这些运动拓扑是模板挣来的,也正是分类到这个类型
+        的理由),``custom_prompt`` 说这次具体要什么。本层原先只读前一半,后一半连派生
+        入口都没进,而任务照常成功、照常扣费、帧数时长成色全对(生产 124/124 条非 custom
+        任务全中,见 #838)。
+
+        叠加而不是二选一:替换模板会丢掉运动拓扑,丢掉它就等于把这次生成降级成 custom;
+        丢掉细节则是本 issue 要修的那个静默丢弃。
+
+        Raises:
+            PromptRejected: 这段描述送进模型必然出坏产物(如给无肢角色写"手臂")
+                → server 映射 4xx 让用户改。下一步就是付费调用,不能带着它往下走。
+        """
+        clause = (action.detail or "").strip()
+        if not clause:
+            return ""
+        try:
+            adapted = self._adapter.adapt(
+                clause,
+                kind="i2v",
+                facing=action.facing,
+                stance=stance,
+                on_template=True,
+            )
+        except PromptRejected:
+            # 与下面那条分得很清:这不是组件不可用,是这段描述本身跑不出可用产物。
+            # 顺序也是约束:它是 ValueError 的子类,放到宽兜底后面就永远轮不上。
+            raise
+        except Exception:
+            # 适配器坏掉只该丢掉那层改写,不该把用户这句话一起丢掉 ——
+            # 丢掉就退化回本 issue 要修的那个静默丢弃。
+            return clause
+        return adapted.text
 
     def _custom_prompt(self, action: ActionSpec, stance: CharacterStance) -> str:
         """用户那句话先过适配器,再按声明的循环性收尾。
