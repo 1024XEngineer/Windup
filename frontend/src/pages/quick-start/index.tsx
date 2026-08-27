@@ -3949,7 +3949,10 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         tone="danger"
-                        lines={['动作首帧生成失败', '内容还在，可以在下面修改要求后重试。']}
+                        lines={[
+                          '动作首帧生成失败',
+                          firstFrameStep.error?.trim() || '内容还在，可以在下面修改要求后重试。',
+                        ]}
                       />
                       <DirectionRetryButtons nodeId={firstFrameStep.id} />
                     </>
@@ -4065,7 +4068,10 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         tone="danger"
-                        lines={['动作生成失败', '内容还在，可以在下面修改要求后重试。']}
+                        lines={[
+                          '动作生成失败',
+                          actionStep.error?.trim() || '内容还在，可以在下面修改要求后重试。',
+                        ]}
                       />
                       <DirectionRetryButtons nodeId={actionStep.id} />
                     </>
