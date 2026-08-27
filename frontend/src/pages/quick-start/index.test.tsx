@@ -3864,6 +3864,37 @@ describe('QuickStartPage', () => {
     )
   })
 
+  it('一次补跑同一节点当前所有失败方向并保留进行中反馈', async () => {
+    const run = actionWorkflow({ fullStatus: 'failed', error: '多个方向失败' })
+    const firstRetry = deferred<WorkflowRun>()
+    const service = serviceFor(run, {
+      getFailedGenerationDirections: vi.fn(async () => [
+        { nodeId: 'action-full', direction: 'east' as const },
+        { nodeId: 'action-full', direction: 'north' as const },
+        { nodeId: 'action-full', direction: 'south' as const },
+      ]),
+      retryGenerationDirection: vi
+        .fn()
+        .mockImplementationOnce(() => firstRetry.promise)
+        .mockResolvedValue(run),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    expect(
+      await screen.findByLabelText('动作生成失败 已完成的方向会保留，点击下方可重试失败方向。'),
+    ).toBeTruthy()
+    const retry = await screen.findByRole('button', { name: '重试失败方向' })
+    fireEvent.click(retry)
+
+    const retrying = await screen.findByRole('button', { name: '正在重试失败方向…' })
+    expect((retrying as HTMLButtonElement).disabled).toBe(true)
+    firstRetry.resolve(run)
+    await waitFor(() => expect(service.retryGenerationDirection).toHaveBeenCalledTimes(3))
+    expect(service.retryGenerationDirection).toHaveBeenNthCalledWith(1, 'action-full', 'east')
+    expect(service.retryGenerationDirection).toHaveBeenNthCalledWith(2, 'action-full', 'north')
+    expect(service.retryGenerationDirection).toHaveBeenNthCalledWith(3, 'action-full', 'south')
+  })
+
   it('角色母版失败时也提供定向重试入口', async () => {
     const run = workflow(
       setupAndTemplate({
