@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 os.environ.setdefault("JWT_SECRET", "openapi-export-only-secret-32chars")
+os.environ.setdefault("ADMIN_JWT_SECRET", "openapi-admin-secret-only-32chars")
 os.environ.setdefault("POSTGRES_PASSWORD", "openapi-export-only-password")
 
 from windup_app.bootstrap.app import create_app

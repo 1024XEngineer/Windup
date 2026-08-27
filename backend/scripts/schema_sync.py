@@ -14,6 +14,7 @@ import os
 import sys
 
 os.environ.setdefault("JWT_SECRET", "schema-sync-only-secret-32-characters")
+os.environ.setdefault("ADMIN_JWT_SECRET", "schema-sync-admin-secret-only-32chars")
 os.environ.setdefault("POSTGRES_PASSWORD", "schema-sync-only-password")
 
 from sqlalchemy import inspect, text  # noqa: E402
@@ -35,6 +36,8 @@ def _load_models() -> None:
     没有应用上下文的部署机上跑。
     """
     import windup_app.server.character.model  # noqa: F401
+    import windup_app.server.admin.audit  # noqa: F401
+    import windup_app.server.admin.model  # noqa: F401
     import windup_app.server.project.model  # noqa: F401
     import windup_app.server.quota.model  # noqa: F401
     import windup_app.server.sensitive_word.model  # noqa: F401
