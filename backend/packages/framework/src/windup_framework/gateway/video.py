@@ -60,6 +60,20 @@ class VideoGateway:
     def _adapter_for(self, route: GatewayRoute):
         return lookup_adapter(self._route_adapters, route, self._adapter)
 
+    def _open_circuit_scope(self, route: GatewayRoute, model: str) -> str | None:
+        """返回会阻止本次型号提交的熔断层；Agnes 不受 Modelink 共享层影响。"""
+        isolated = self._registry.family_of(model) is Family.VIDEO_AGNES
+        if not isolated:
+            if self._circuit.is_open("aggregator"):
+                return "aggregator"
+            if self._circuit.is_open("base_url:" + route.base_url_id):
+                return "base_url"
+            if self._circuit.is_open(key_circuit_id(route)):
+                return "key"
+        if self._circuit.is_open("model:" + model):
+            return "model"
+        return None
+
     def start_i2v(
         self,
         first_frame: bytes,
@@ -141,50 +155,13 @@ class VideoGateway:
                 f"http_status={http_status} error_type={err}"
             )
 
-        if self._circuit.is_open("aggregator"):
-            model = models[0] if models else ""
-            route = routes[0]
-            self._emit(
-                AttemptTrace(
-                    request_id=request_id,
-                    scene=Scene.CHARACTER_ACTION,
-                    model=model,
-                    route=route,
-                    attempt_index=seq.next_index(),
-                    retry_count=0,
-                    route_reason="skip_circuit_open",
-                    outcome="failed",
-                    circuit_scope="aggregator",
-                    total_latency_ms=total_ms(),
-                    maybe_billed=False,
-                    detail=AttemptDetail(
-                        input_hash=input_hash,
-                        policy_next_step="fail",
-                        upstream_reached="false",
-                    ),
-                )
-            )
-            fail(None)
-
         for route_index, route in enumerate(routes):
-            if self._circuit.is_open("base_url:" + route.base_url_id):
-                if route_index + 1 < len(routes):
-                    fallback_used = True
-                    route_reason_override = "base_url_unreached"
-                    continue
-                fail(last_http_status)
-            if self._circuit.is_open(key_circuit_id(route)):
-                if route_index + 1 < len(routes):
-                    fallback_used = True
-                    route_reason_override = "key_rate_limit"
-                    continue
-                fail(last_http_status)
-
             adapter = self._adapter_for(route)
             switch_to_next_route = False
             for i, model in enumerate(models):
                 model_index = start_i + i
-                if self._circuit.is_open("model:" + model):
+                open_scope = self._open_circuit_scope(route, model)
+                if open_scope is not None:
                     fallback_used = True
                     fallback_reason = "skip"
                     self._emit(
@@ -197,13 +174,15 @@ class VideoGateway:
                             retry_count=0,
                             route_reason="skip_circuit_open",
                             outcome="failed",
-                            circuit_scope="model",
+                            circuit_scope=open_scope,
                             fallback_used=fallback_used,
                             total_latency_ms=total_ms(),
                             maybe_billed=False,
                             detail=AttemptDetail(
                                 input_hash=input_hash,
-                                policy_next_step="fallback",
+                                policy_next_step=(
+                                    "fallback" if open_scope == "model" else "fail"
+                                ),
                                 upstream_reached="false",
                                 model_index=model_index,
                             ),

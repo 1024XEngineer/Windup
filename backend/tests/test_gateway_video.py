@@ -99,6 +99,52 @@ def test_agnes_unreached_falls_back_to_kling_after_safe_retry():
         "kling-v2-5-turbo",
     ]
 
+
+@pytest.mark.parametrize(
+    "shared_scope",
+    [
+        "aggregator",
+        "base_url:primary",
+        "key:primary:primary.key0",
+    ],
+)
+def test_agnes_bypasses_shared_modelink_circuits(shared_scope):
+    circuit = CircuitBreaker(cooldown_s=60)
+    circuit.open(shared_scope)
+    adapter = FakeVideoAdapter(
+        submits={
+            "agnes-video-2.5": [
+                AdapterResult(ok=True, job_id="agnes-job", maybe_billed=True)
+            ],
+            "kling-v2-5-turbo": [],
+            "kling-v2-6": [],
+        },
+        follows={"agnes-job": MP4},
+    )
+
+    assert _agnes_gw(adapter, circuit=circuit).i2v(b"frame", "walk") == MP4.body
+    assert adapter.submit_models == ["agnes-video-2.5"]
+
+
+def test_open_aggregator_still_blocks_kling_after_agnes_fails():
+    circuit = CircuitBreaker(cooldown_s=60)
+    circuit.open("aggregator")
+    adapter = FakeVideoAdapter(
+        submits={
+            "agnes-video-2.5": [UNREACHED, UNREACHED],
+            "kling-v2-5-turbo": [
+                AdapterResult(ok=True, job_id="must-not-submit", maybe_billed=True)
+            ],
+            "kling-v2-6": [],
+        },
+        follows={},
+    )
+
+    with pytest.raises(RuntimeError, match="unreached"):
+        _agnes_gw(adapter, circuit=circuit).i2v(b"frame", "walk")
+    assert adapter.submit_models == ["agnes-video-2.5", "agnes-video-2.5"]
+
+
 def test_submit_522_retries_once_does_not_open_second_job_on_fallback_model():
     ad = FakeVideoAdapter(
         submits={"kling-v2-5-turbo": [UNREACHED, UNREACHED], "kling-v2-6": [
