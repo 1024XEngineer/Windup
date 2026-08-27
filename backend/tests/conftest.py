@@ -30,6 +30,7 @@ from windup_app.server.quota.model import (
     InviteCode,
     InviteRecord,
 )
+from windup_app.server.sensitive_word.model import SensitiveWord
 from windup_app.server.user.model import User
 from windup_app.server.orchestrator.model import GenerationTaskRecord
 from windup_app.server.workflow_run.model import WorkflowRun
@@ -130,6 +131,7 @@ def engine():
             CreditTransaction.__table__,
             InviteCode.__table__,
             InviteRecord.__table__,
+            SensitiveWord.__table__,
             GenerationTaskRecord.__table__,
             MqMessage.__table__,
         ],

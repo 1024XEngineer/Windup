@@ -37,6 +37,7 @@ def _load_models() -> None:
     import windup_app.server.character.model  # noqa: F401
     import windup_app.server.project.model  # noqa: F401
     import windup_app.server.quota.model  # noqa: F401
+    import windup_app.server.sensitive_word.model  # noqa: F401
     import windup_app.server.user.model  # noqa: F401
     import windup_framework.gateway.models  # noqa: F401
 
