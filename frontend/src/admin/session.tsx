@@ -69,8 +69,11 @@ export function AdminSessionProvider({ apis, children }: { apis: AdminApis; chil
   )
 
   const logout = useCallback(async () => {
-    await apis.logout()
-    setState({ status: 'guest', admin: null, error: null })
+    try {
+      await apis.logout()
+    } finally {
+      setState({ status: 'guest', admin: null, error: null })
+    }
   }, [apis])
 
   const value = useMemo(() => ({ state, login, logout }), [login, logout, state])

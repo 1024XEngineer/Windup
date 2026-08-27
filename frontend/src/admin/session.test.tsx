@@ -38,7 +38,7 @@ function SessionProbe() {
       >
         登录
       </button>
-      <button type="button" onClick={() => void session.logout()}>
+      <button type="button" onClick={() => void session.logout().catch(() => undefined)}>
         退出
       </button>
     </div>
@@ -120,5 +120,21 @@ describe('AdminSessionProvider', () => {
     await act(async () => screen.getByRole('button', { name: '退出' }).click())
     expect(screen.getByTestId('state').textContent).toBe('guest')
     expect(apis.logout).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([401, 403])('退出请求返回 %s 时仍清理本地管理会话', async (code) => {
+    const apis = createApis({
+      logout: vi.fn(async () => {
+        throw new AdminApiError('管理会话已失效', code)
+      }),
+    })
+    renderSession(apis)
+    await waitFor(() =>
+      expect(screen.getByTestId('state').textContent).toBe('authenticated:owner@windup.xin'),
+    )
+
+    await act(async () => screen.getByRole('button', { name: '退出' }).click())
+
+    await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('guest'))
   })
 })
