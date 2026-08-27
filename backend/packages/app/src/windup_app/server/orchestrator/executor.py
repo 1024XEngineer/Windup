@@ -50,6 +50,8 @@ from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.orchestrator.i2v_poll import ActionAwaitingVideo
 from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_media, is_own_media
 from windup_app.server.orchestrator.client_bake import ActionAwaitingClientBake
+from windup_app.server.orchestrator.signals import ActionRateLimited
+from windup_framework.gateway.errors import UpstreamExhaustedError
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
@@ -374,6 +376,20 @@ class ActionTaskExecutor:
                 task_repo.fail_task(s, task_id, error_message=error_message)
 
             generation_io.using_session(session, self._make_session, _reject)
+        except UpstreamExhaustedError as exc:
+            if not exc.is_free_retryable:
+                raise
+            # 限流被拒:上游没建单、没扣配额。把任务放回 PENDING 让消费层稍后重投,
+            # 不判失败也不结算积分 —— 结算了就等于这次尝试真的花掉了什么。
+            logger.warning("动作任务 %s 撞上游限流,放回队列稍后重试", task_id)
+            if session is not None:
+                session.rollback()
+
+            def _requeue(s: Session) -> None:
+                task_repo.update_status(s, task_id, TaskStatus.PENDING)
+
+            generation_io.using_session(session, self._make_session, _requeue)
+            raise ActionRateLimited(str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
             if session is not None:

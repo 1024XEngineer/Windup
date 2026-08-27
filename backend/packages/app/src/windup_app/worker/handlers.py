@@ -16,6 +16,7 @@ from windup_app.server.mq.catalog import (
     MSG_TYPE_VERIFICATION_CODE,
 )
 from windup_app.server.orchestrator import billing, task_repo
+from windup_app.server.orchestrator.signals import ActionRateLimited
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
@@ -196,7 +197,14 @@ def handle_generation(
             project_id,
         )
     elif task_type == GenerationType.CHARACTER_ACTION.value:
-        run_action_task(task_id, _action_input(input_payload), project_id)
+        try:
+            run_action_task(task_id, _action_input(input_payload), project_id)
+        except ActionRateLimited as exc:
+            # 上游限流,而这次一分钱没花:让消息留在 PEL 稍后重认领,而不是判任务失败。
+            # 翻成 HandlerDeferred 是因为重投的预算与节奏由消费层统一管
+            # (MAX_CONSUME_ATTEMPTS × PEL_CLAIM_INTERVAL_SECONDS),在这里自己 sleep
+            # 会把 action worker 占住,而限流期间恰恰是它最该去干别的活的时候。
+            raise HandlerDeferred(f"task {task_id} rate limited upstream") from exc
     else:
         raise ValueError(f"未知生成任务类型: {task_type}")
 
