@@ -22,6 +22,17 @@ export type {
   QuotaTransactionPageQuery,
 } from './quota'
 
+/* 管理员积分兑换码 —— 生成明文仅在内存中交付，核验严格只读 */
+export { adminRedemptionApis, createAdminRedemptionApis } from './admin-redemption'
+export type {
+  AdminRedemptionApis,
+  CodeValidation,
+  CreateAdminRedemptionApisOptions,
+  GeneratedCodes,
+  GenerateCodesInput,
+  RedemptionCodeStatus,
+} from './admin-redemption'
+
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
 export {
   ART_STYLE,
