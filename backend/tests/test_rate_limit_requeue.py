@@ -68,3 +68,48 @@ def test_the_signal_module_pulls_in_nothing():
     ]
     assert all(m == "__future__" for m in imported), f"信号模块引入了依赖: {imported}"
     assert issubclass(ActionRateLimited, Exception)
+
+
+def test_deferral_also_honors_the_consume_attempt_limit(monkeypatch):
+    """拦的坏例:延后路径绕开 ``MAX_CONSUME_ATTEMPTS``,消息被无限重认领。
+
+    ``HandlerDeferred`` 走的是 ``_defer_message``,而上限原本只在 ``_handle_failure``
+    里查;``try_claim_for_consume`` 也没有上限守卫。所以持续限流下那条消息会一直被
+    XAUTOCLAIM 捡回来重跑,任务永远停在 PENDING、永远不终结 —— 这条路径上既没有失败
+    也没有成功,监控上看不出任何异常。(FennoAI 在 #828 上指出。)
+
+    断言的是**行为**不是源码文本:第一版用 ``inspect.getsource`` 查关键字,把常量换成
+    ``False`` 之后它照样绿 —— 那种写法测的是"代码里提没提这个名字",不是"到了上限会不会
+    终结消息"。
+    """
+    import uuid as _uuid
+
+    from windup_app.worker import consumer as C
+
+    acked, consumed, released = [], [], []
+
+    class _Row:
+        consume_attempts = 999            # 远超上限
+
+    class _Repo:
+        get_by_id = staticmethod(lambda s, mid: _Row())
+        mark_consumed = staticmethod(lambda s, mid, st, error=None: consumed.append(st))
+        release_processing_claim = staticmethod(lambda s, mid: released.append(mid))
+
+    class _Sess:
+        def commit(self): pass
+        def close(self): pass
+
+    monkeypatch.setattr(C, "mq_repo", _Repo)
+    monkeypatch.setattr(C, "SessionLocal", lambda: _Sess())
+    monkeypatch.setattr(C, "get_redis", lambda: object())
+    monkeypatch.setattr(C.mq_client, "xack", lambda *a, **k: acked.append(a))
+
+    consumer = C.StreamConsumer.__new__(C.StreamConsumer)
+    consumer._config = type("C", (), {"stream": "s", "group": "g"})()
+    consumer._defer_message(_uuid.uuid4(), stream_id="1-1",
+                            reason=RuntimeError("持续限流"))
+
+    assert consumed == ["failed"], "到上限后没有终结消息,会被无限重认领"
+    assert acked, "终结了 DB 记录却没 XACK,消息仍留在 PEL 里"
+    assert not released, "到上限还释放认领 = 又放回去让人重认领一次"

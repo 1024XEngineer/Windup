@@ -235,14 +235,14 @@ class StreamConsumer:
                 self._config.group,
                 stream_id,
             )
-        except HandlerDeferred:
+        except HandlerDeferred as deferred:
             logger.info(
                 "消息延后重试 | stream=%s stream_id=%s message_id=%s",
                 self._config.stream,
                 stream_id,
                 message_id,
             )
-            self._defer_message(message_id)
+            self._defer_message(message_id, stream_id=stream_id, reason=deferred)
         except Exception as exc:
             logger.exception(
                 "消息处理失败 | stream=%s stream_id=%s",
@@ -259,12 +259,39 @@ class StreamConsumer:
     def _semaphore_for(self, msg_type: str) -> threading.Semaphore | None:
         return self._semaphores.get(msg_type)
 
-    def _defer_message(self, message_id: uuid.UUID | None) -> None:
-        """释放 processing 认领但不 XACK，留 PEL 待 XAUTOCLAIM 重投。"""
+    def _defer_message(
+        self,
+        message_id: uuid.UUID | None,
+        *,
+        stream_id: str | None = None,
+        reason: BaseException | None = None,
+    ) -> None:
+        """释放 processing 认领但不 XACK，留 PEL 待 XAUTOCLAIM 重投。
+
+        **延后也要吃 ``MAX_CONSUME_ATTEMPTS``。** 只释放认领而不查上限的话,一条持续
+        延后的消息会被无限重认领 —— 任务永远停在 PENDING、永远不终结,而这条路径上
+        既没有失败也没有成功,监控上看不出任何异常。上限走的是与 ``_handle_failure``
+        同一个计数与同一个终结动作,免得两条路各有一套"到底算不算重试"的口径。
+        """
         if message_id is None:
             return
         session = SessionLocal()
         try:
+            row = mq_repo.get_by_id(session, message_id)
+            if (
+                row is not None
+                and row.consume_attempts >= MAX_CONSUME_ATTEMPTS
+                and stream_id is not None
+            ):
+                mq_repo.mark_consumed(
+                    session, message_id, "failed",
+                    error=f"延后重试已达上限 {MAX_CONSUME_ATTEMPTS} 次: {reason}",
+                )
+                session.commit()
+                mq_client.xack(
+                    get_redis(), self._config.stream, self._config.group, stream_id
+                )
+                return
             mq_repo.release_processing_claim(session, message_id)
             session.commit()
         finally:
