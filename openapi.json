@@ -56,6 +56,20 @@
         "title": "ActionType",
         "type": "string"
       },
+      "AdminAccessOut": {
+        "description": "管理页访问探针响应。",
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allowed"
+        ],
+        "title": "AdminAccessOut",
+        "type": "object"
+      },
       "ArtStyle": {
         "description": "项目的美术风格。\n\n只有 ``PIXEL`` 改变管线行为(出帧吸附母版像素网格、颜色吸回母版色板),其余取值\n只进提示词。像素网格密度不在这一维 —— 它由目标分辨率定,两处各定一遍会打架。",
         "enum": [
@@ -1586,6 +1600,81 @@
         "title": "FunctionDefinition",
         "type": "object"
       },
+      "GenerateCodesIn": {
+        "description": "批量生成兑换码参数。",
+        "properties": {
+          "amount": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "count": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "required": [
+          "count",
+          "amount"
+        ],
+        "title": "GenerateCodesIn",
+        "type": "object"
+      },
+      "GeneratedCodesOut": {
+        "description": "明文只随本次响应返回。",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Codes",
+            "type": "array"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "required": [
+          "count",
+          "amount",
+          "expires_at",
+          "codes"
+        ],
+        "title": "GeneratedCodesOut",
+        "type": "object"
+      },
       "GenerationTaskOut": {
         "description": "生成任务响应。",
         "properties": {
@@ -2704,6 +2793,48 @@
         "title": "ResetPasswordRequest",
         "type": "object"
       },
+      "Response_AdminAccessOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminAccessOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[AdminAccessOut]",
+        "type": "object"
+      },
       "Response_CharacterOut_": {
         "properties": {
           "code": {
@@ -2786,6 +2917,48 @@
           }
         },
         "title": "Response[CreditAccountOut]",
+        "type": "object"
+      },
+      "Response_GeneratedCodesOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeneratedCodesOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[GeneratedCodesOut]",
         "type": "object"
       },
       "Response_GenerationTaskOut_": {
@@ -3116,6 +3289,48 @@
           }
         },
         "title": "Response[UserOut]",
+        "type": "object"
+      },
+      "Response_ValidateCodeOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValidateCodeOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[ValidateCodeOut]",
         "type": "object"
       },
       "Response_WorkflowRunOut_": {
@@ -3466,6 +3681,80 @@
         "title": "UserView",
         "type": "object"
       },
+      "ValidateCodeIn": {
+        "description": "待核验的兑换码。",
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "ValidateCodeIn",
+        "type": "object"
+      },
+      "ValidateCodeOut": {
+        "description": "兑换码只读核验结果。",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "redeemed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redeemed At"
+          },
+          "status": {
+            "enum": [
+              "valid",
+              "redeemed",
+              "expired",
+              "not_found",
+              "invalid_format"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "amount",
+          "expires_at",
+          "redeemed_at"
+        ],
+        "title": "ValidateCodeOut",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3636,6 +3925,112 @@
         "summary": "List Action Presets",
         "tags": [
           "action-presets"
+        ]
+      }
+    },
+    "/admin/quota/redemption-codes": {
+      "post": {
+        "description": "批量生成兑换码；数据库只保存摘要，明文只返回一次。",
+        "operationId": "generate_redemption_codes_admin_quota_redemption_codes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateCodesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_GeneratedCodesOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Redemption Codes",
+        "tags": [
+          "admin-quota"
+        ]
+      }
+    },
+    "/admin/quota/redemption-codes/access": {
+      "get": {
+        "description": "供管理页加载时确认当前会话是否具备管理员权限。",
+        "operationId": "check_admin_access_admin_quota_redemption_codes_access_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_AdminAccessOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Check Admin Access",
+        "tags": [
+          "admin-quota"
+        ]
+      }
+    },
+    "/admin/quota/redemption-codes/validate": {
+      "post": {
+        "description": "核验兑换码状态，不消费兑换码，也不修改积分数据。",
+        "operationId": "validate_redemption_code_admin_quota_redemption_codes_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateCodeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_ValidateCodeOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Redemption Code",
+        "tags": [
+          "admin-quota"
         ]
       }
     },
