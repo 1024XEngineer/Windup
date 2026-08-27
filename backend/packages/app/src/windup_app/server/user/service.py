@@ -35,6 +35,7 @@ from windup_app.server.user.model import (
     LoginResult,
     RegisterInput,
     ResetPasswordInput,
+    SetPasswordInput,
     UpdateNicknameInput,
     User,
     UserStatus,
@@ -61,8 +62,15 @@ def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
+def _has_password(hashed: str) -> bool:
+    """判断用户是否已设置有效 bcrypt 密码哈希。"""
+    return bool(hashed) and hashed.startswith("$2") and len(hashed) == 60
+
+
 def _verify_password(password: str, hashed: str) -> bool:
     """验证密码。"""
+    if not _has_password(hashed):
+        return False
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
@@ -104,6 +112,7 @@ def _to_view(user: User) -> UserView:
         email_verified_at=user.email_verified_at,
         status=UserStatus(user.status),
         last_login_at=user.last_login_at,
+        has_password=_has_password(user.password_hash),
         create_at=user.create_at,
         update_at=user.update_at,
     )
@@ -253,6 +262,13 @@ class SqlAlchemyUserService(UserService):
         if user is None:
             self._record_login_failure(input.email)
             raise BizException("邮箱或密码错误", code=BizCode.BAD_REQUEST)
+
+        if not _has_password(user.password_hash):
+            self._record_login_failure(input.email)
+            raise BizException(
+                "该账号未设置密码，请使用邮箱验证码登录",
+                code=BizCode.BAD_REQUEST,
+            )
 
         if not _verify_password(input.password, user.password_hash):
             self._record_login_failure(input.email)
@@ -470,6 +486,9 @@ class SqlAlchemyUserService(UserService):
         if user is None:
             raise BizException("用户不存在", code=BizCode.NOT_FOUND)
 
+        if not _has_password(user.password_hash):
+            raise BizException("尚未设置密码", code=BizCode.BAD_REQUEST)
+
         if not _verify_password(input.old_password, user.password_hash):
             raise BizException("旧密码错误", code=BizCode.BAD_REQUEST)
 
@@ -479,6 +498,23 @@ class SqlAlchemyUserService(UserService):
         # 修改密码后撤销该用户所有 refresh_token
         self._revoke_all_user_tokens(user_id)
         logger.info("[WINDUP] 密码已修改 | user_id=%s", user_id)
+
+    def set_password(
+        self, session: Session, user_id: int, input: SetPasswordInput
+    ) -> None:
+        """设置初始密码（仅未设密码用户）。"""
+        user = session.get(User, user_id)
+        if user is None:
+            raise BizException("用户不存在", code=BizCode.NOT_FOUND)
+
+        if _has_password(user.password_hash):
+            raise BizException("密码已设置，请使用修改密码", code=BizCode.BAD_REQUEST)
+
+        user.password_hash = _hash_password(input.new_password)
+        session.flush()
+
+        self._revoke_all_user_tokens(user_id)
+        logger.info("[WINDUP] 密码已设置 | user_id=%s", user_id)
 
     def reset_password(self, session: Session, input: ResetPasswordInput) -> None:
         """邮箱+验证码重置密码（忘记密码场景）。"""

@@ -10,6 +10,7 @@ export const testUser: User = {
   nickname: 'Reader',
   emailVerifiedAt: '2026-08-07T01:02:03Z',
   statusCode: 0,
+  hasPassword: true,
 }
 
 function tokens(): AuthTokens {
@@ -30,6 +31,7 @@ export function createAuthenticatedTestApis(): UserApis {
     logout: async () => undefined,
     me: async () => testUser,
     updateNickname: async () => testUser,
+    setPassword: async () => undefined,
     changePassword: async () => undefined,
   }
 }
@@ -43,6 +45,7 @@ const guestApis: UserApis = {
   logout: async () => undefined,
   me: async () => Promise.reject(new Error('guest test session has no current user')),
   updateNickname: async () => Promise.reject(new Error('guest test session cannot update profile')),
+  setPassword: async () => Promise.reject(new Error('guest test session cannot set password')),
   changePassword: async () =>
     Promise.reject(new Error('guest test session cannot change password')),
 }

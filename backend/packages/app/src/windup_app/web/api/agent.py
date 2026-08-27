@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
@@ -21,6 +21,8 @@ from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from windup_app.server.sensitive_word.service import service as sensitive_word_service
+from windup_common.exceptions import BizException
 from windup_framework.config.provider import settings as provider_settings
 from windup_framework.gateway import bind_call_context
 
@@ -206,6 +208,23 @@ class ChatRequest(BaseModel):
     stream: Literal[False] = False
 
 
+def _sensitive_texts(body: ChatRequest) -> Iterator[tuple[str, str]]:
+    for index, message in enumerate(body.messages):
+        if isinstance(message.content, str):
+            yield f"message[{index}].content", message.content
+        elif isinstance(message.content, list):
+            for part_index, part in enumerate(message.content):
+                if isinstance(part, ChatTextContentPart):
+                    yield (
+                        f"message[{index}].content[{part_index}].text",
+                        part.text,
+                    )
+    for index, tool in enumerate(body.tools or []):
+        yield f"tool[{index}].name", tool.function.name
+        if tool.function.description:
+            yield f"tool[{index}].description", tool.function.description
+
+
 class FunctionCallResponse(BaseModel):
     name: str
     arguments: str
@@ -357,6 +376,7 @@ def _serialize_completion(result: Any, fallback_model: str) -> ChatCompletionRes
     "/chat",
     response_model=ChatCompletionResponse,
     responses={
+        400: {"model": OpenAIErrorResponse},
         401: {"model": OpenAIErrorResponse},
         413: {"model": OpenAIErrorResponse},
         422: {"model": OpenAIErrorResponse},
@@ -372,6 +392,35 @@ async def chat(
     """Call the configured model once and return a non-streaming completion."""
     request_id = _request_id_for(request)
     user_id = request.state.current_user.id
+    try:
+        for source, text in _sensitive_texts(body):
+            sensitive_word_service.assert_clean(
+                text,
+                user_id=user_id,
+                source=f"ai.chat.{source}",
+            )
+    except BizException:
+        return _error_response(
+            400,
+            message="请求包含不允许的内容",
+            error_type="invalid_request_error",
+            code="content_policy_violation",
+            request_id=request_id,
+        )
+    except Exception:
+        logger.exception(
+            "AI chat sensitive filter failed request_id=%s user_id=%s",
+            request_id,
+            user_id,
+        )
+        return _error_response(
+            400,
+            message="请求包含不允许的内容",
+            error_type="invalid_request_error",
+            code="content_policy_violation",
+            request_id=request_id,
+        )
+
     proxy_settings = provider_settings.model_copy(update={"max_retries": 0})
     model_kwargs: dict[str, Any] = {"max_tokens": MAX_OUTPUT_TOKENS}
     if body.temperature is not None:

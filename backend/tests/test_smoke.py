@@ -39,16 +39,36 @@ def test_lifespan_stops_sse_subscriber(monkeypatch):
     create_all = Mock()
     monkeypatch.setattr(app_module.Base.metadata, "create_all", create_all)
     monkeypatch.setattr(app_module, "relay_pending_messages", Mock())
+    session = Mock()
+    monkeypatch.setattr(app_module, "SessionLocal", Mock(return_value=session))
+    monkeypatch.setattr(
+        app_module,
+        "seed_sensitive_words",
+        Mock(return_value=False),
+    )
+    reload_words = Mock()
+    monkeypatch.setattr(app_module.sensitive_word_service, "reload", reload_words)
 
     subscriber = Mock()
     monkeypatch.setattr(app_module, "RedisTaskEventSubscriber", Mock(return_value=subscriber))
+    word_subscriber = Mock()
+    monkeypatch.setattr(
+        app_module,
+        "SensitiveWordReloadSubscriber",
+        Mock(return_value=word_subscriber),
+    )
 
     app = create_app()
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
         subscriber.start.assert_called_once()
+        word_subscriber.start.assert_called_once()
         subscriber.stop.assert_not_called()
 
     create_all.assert_called_once_with(app_module.engine)
+    session.commit.assert_called_once_with()
+    reload_words.assert_called_once_with(session, prefer_cache=True)
+    session.close.assert_called_once_with()
+    word_subscriber.stop.assert_called_once_with()
     subscriber.stop.assert_called_once_with()

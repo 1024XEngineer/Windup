@@ -1627,6 +1627,11 @@
             ],
             "title": "Project Id"
           },
+          "queue_ahead": {
+            "default": 0,
+            "title": "Queue Ahead",
+            "type": "integer"
+          },
           "result": {
             "anyOf": [
               {
@@ -3220,6 +3225,22 @@
         "title": "SendCodeRequest",
         "type": "object"
       },
+      "SetPasswordRequest": {
+        "description": "设置初始密码请求。",
+        "properties": {
+          "new_password": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "New Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_password"
+        ],
+        "title": "SetPasswordRequest",
+        "type": "object"
+      },
       "TokenResponse": {
         "description": "登录/注册/刷新成功响应。",
         "properties": {
@@ -3320,6 +3341,11 @@
             ],
             "title": "Email Verified At"
           },
+          "has_password": {
+            "default": false,
+            "title": "Has Password",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -3387,6 +3413,11 @@
               }
             ],
             "title": "Email Verified At"
+          },
+          "has_password": {
+            "default": false,
+            "title": "Has Password",
+            "type": "boolean"
           },
           "id": {
             "anyOf": [
@@ -3632,6 +3663,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -4090,6 +4131,48 @@
           }
         },
         "summary": "Send Code",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/set-password": {
+      "post": {
+        "description": "设置初始密码（仅未设密码用户）。",
+        "operationId": "set_password_auth_set_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Password",
         "tags": [
           "auth"
         ]

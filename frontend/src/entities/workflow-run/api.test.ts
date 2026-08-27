@@ -362,6 +362,44 @@ describe('workflowRunApis', () => {
     })
   })
 
+  it('拒绝为镜像方向持久化独立动作首帧描述', async () => {
+    const invalidNodes = structuredClone(nodes)
+    const firstFrame = invalidNodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') {
+      throw new Error('测试缺少动作首帧节点')
+    }
+    Object.assign(firstFrame.input, { directionPrompts: { west: '向左行走' } })
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: invalidNodes }),
+    )
+
+    await expect(apis.get('17')).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+    })
+  })
+
+  it('恢复真实源方向各自持久化的动作首帧描述', async () => {
+    const directionalNodes = structuredClone(nodes)
+    const firstFrame = directionalNodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') {
+      throw new Error('测试缺少动作首帧节点')
+    }
+    firstFrame.input.directionPrompts = {
+      east: '向右行走',
+      north: '背向镜头行走',
+      south: '面向镜头行走',
+    }
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: directionalNodes }),
+    )
+
+    const restored = await apis.get('17')
+    expect(restored.nodes.find((node) => node.id === firstFrame.id)).toMatchObject({
+      input: { directionPrompts: firstFrame.input.directionPrompts },
+    })
+  })
+
   it('rejects a dependency that points outside the persisted graph', async () => {
     const apis = await loadWorkflowRunApis(async () =>
       jsonResponse({

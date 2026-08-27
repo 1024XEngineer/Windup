@@ -488,6 +488,7 @@ export function AccountPage() {
   const session = useAuthSession()
   const {
     changePassword: changeSessionPassword,
+    setPassword: setSessionPassword,
     logout,
     refreshCurrentUser,
     updateNickname,
@@ -506,6 +507,7 @@ export function AccountPage() {
   const nicknameId = useId()
   const oldPasswordId = useId()
   const newPasswordId = useId()
+  const confirmPasswordId = useId()
 
   useEffect(() => {
     let active = true
@@ -551,10 +553,13 @@ export function AccountPage() {
     }
   }
 
-  async function changePassword(event: FormEvent<HTMLFormElement>) {
+  async function submitSecurityForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (security.isChanging) return
-    if (!security.oldPassword) {
+
+    const hasPassword = currentUser?.hasPassword ?? true
+
+    if (hasPassword && !security.oldPassword) {
       dispatchSecurity({ type: 'validationFailed', error: '请输入当前密码' })
       return
     }
@@ -562,13 +567,21 @@ export function AccountPage() {
       dispatchSecurity({ type: 'validationFailed', error: '新密码需为 8–128 位' })
       return
     }
+    if (!hasPassword && security.newPassword !== security.confirmPassword) {
+      dispatchSecurity({ type: 'validationFailed', error: '两次输入的密码不一致' })
+      return
+    }
 
     dispatchSecurity({ type: 'changeStarted' })
     try {
-      await changeSessionPassword({
-        oldPassword: security.oldPassword,
-        newPassword: security.newPassword,
-      })
+      if (hasPassword) {
+        await changeSessionPassword({
+          oldPassword: security.oldPassword,
+          newPassword: security.newPassword,
+        })
+      } else {
+        await setSessionPassword({ newPassword: security.newPassword })
+      }
     } catch (error) {
       dispatchSecurity({ type: 'changeFailed', error: errorMessage(error) })
     }
@@ -586,6 +599,7 @@ export function AccountPage() {
 
   if (!currentUser) return null
 
+  const hasPassword = currentUser.hasPassword
   const displayName = currentUser.nickname || currentUser.email.split('@')[0]
   const initial = Array.from(displayName)[0]?.toUpperCase() ?? 'W'
 
@@ -768,36 +782,40 @@ export function AccountPage() {
               <div>
                 <header>
                   <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">
-                    登录安全
+                    {hasPassword ? '登录安全' : '设置密码'}
                   </h2>
                   <p className="mt-1.5 text-sm leading-6 text-app-muted">
-                    修改密码后，当前会话会退出。
+                    {hasPassword
+                      ? '修改密码后，当前会话会退出。'
+                      : '设置密码后，当前会话会退出，之后可使用密码登录。'}
                   </p>
                 </header>
 
-                <form className="mt-5 grid max-w-xl gap-4" onSubmit={changePassword} noValidate>
-                  <label
-                    htmlFor={oldPasswordId}
-                    className="grid gap-1.5 text-sm font-medium text-app-ink-soft"
-                  >
-                    当前密码
-                    <input
-                      id={oldPasswordId}
-                      type="password"
-                      autoComplete="current-password"
-                      value={security.oldPassword}
-                      disabled={security.isChanging}
-                      onChange={(event) =>
-                        dispatchSecurity({
-                          type: 'oldPasswordChanged',
-                          password: event.target.value,
-                        })
-                      }
-                      className="account-field"
-                    />
-                  </label>
+                <form className="mt-5 grid max-w-xl gap-4" onSubmit={submitSecurityForm} noValidate>
+                  {hasPassword && (
+                    <label
+                      htmlFor={oldPasswordId}
+                      className="grid gap-1.5 text-sm font-medium text-app-ink-soft"
+                    >
+                      当前密码
+                      <input
+                        id={oldPasswordId}
+                        type="password"
+                        autoComplete="current-password"
+                        value={security.oldPassword}
+                        disabled={security.isChanging}
+                        onChange={(event) =>
+                          dispatchSecurity({
+                            type: 'oldPasswordChanged',
+                            password: event.target.value,
+                          })
+                        }
+                        className="account-field"
+                      />
+                    </label>
+                  )}
                   <div className="grid gap-1.5 text-sm font-medium text-app-ink-soft">
-                    <label htmlFor={newPasswordId}>新密码</label>
+                    <label htmlFor={newPasswordId}>{hasPassword ? '新密码' : '密码'}</label>
                     <input
                       id={newPasswordId}
                       type="password"
@@ -820,6 +838,28 @@ export function AccountPage() {
                       8–128 位
                     </span>
                   </div>
+                  {!hasPassword && (
+                    <label
+                      htmlFor={confirmPasswordId}
+                      className="grid gap-1.5 text-sm font-medium text-app-ink-soft"
+                    >
+                      确认密码
+                      <input
+                        id={confirmPasswordId}
+                        type="password"
+                        autoComplete="new-password"
+                        value={security.confirmPassword}
+                        disabled={security.isChanging}
+                        onChange={(event) =>
+                          dispatchSecurity({
+                            type: 'confirmPasswordChanged',
+                            password: event.target.value,
+                          })
+                        }
+                        className="account-field"
+                      />
+                    </label>
+                  )}
                   {security.error && (
                     <p
                       role="alert"
@@ -833,7 +873,13 @@ export function AccountPage() {
                     disabled={security.isChanging}
                     className="account-primary-button justify-self-start"
                   >
-                    {security.isChanging ? '正在修改…' : '修改密码'}
+                    {security.isChanging
+                      ? hasPassword
+                        ? '正在修改…'
+                        : '正在设置…'
+                      : hasPassword
+                        ? '修改密码'
+                        : '设置密码'}
                   </button>
                 </form>
               </div>
