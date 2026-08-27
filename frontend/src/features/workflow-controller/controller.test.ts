@@ -2171,6 +2171,78 @@ describe('WorkflowController', () => {
     ])
   })
 
+  it('一个方向进入重试后仍允许补跑同节点的其它失败方向', async () => {
+    const run = createRun([
+      setupNode({
+        status: 'passed',
+        phase: 'completed',
+        input: { prompt: '像素骑士', referenceMedia: [], characterId: 'character-1' },
+      }),
+      templateNode({ status: 'passed', phase: 'completed', selectedImageUrl: 'east-template.png' }),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'east-frame.png',
+        selectedFirstFrameUrls: {
+          east: 'east-frame.png',
+          north: 'north-frame.png',
+          south: 'south-frame.png',
+        },
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({
+        status: 'active',
+        phase: 'generating',
+        input: { prompt: '向前挥拳、击中后自然收势' },
+        generations: [
+          { taskId: 'retry-east', role: 'complete_animation' },
+          { taskId: 'failed-north', role: 'complete_animation', direction: 'north' },
+          { taskId: 'failed-south', role: 'complete_animation', direction: 'south' },
+        ],
+        error: null,
+      }),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+    generation.snapshots.set('retry-east', {
+      id: 'retry-east',
+      projectId: '1',
+      type: 'complete_animation',
+      status: 'pending',
+      result: null,
+      error: null,
+    })
+    for (const direction of ['north', 'south'] as const) {
+      generation.snapshots.set(`failed-${direction}`, {
+        id: `failed-${direction}`,
+        projectId: '1',
+        type: 'complete_animation',
+        status: 'failed',
+        result: null,
+        error: `${direction} provider failed`,
+      })
+    }
+
+    await controller.retryGenerationDirection('action-walk:action-full-frame', 'north', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    await controller.retryGenerationDirection('action-walk:action-full-frame', 'south', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(2)
+    expect(generation.apis.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ direction: 'north' }),
+    )
+    expect(generation.apis.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ direction: 'south' }),
+    )
+  })
+
   it('重试东向时只清空对应的兼容选择字段', async () => {
     const templateRetry = createController(
       createRun([
