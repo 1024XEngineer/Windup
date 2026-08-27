@@ -15,6 +15,8 @@ from .openai_video import http_error, json_object
 from .types import HttpCall, VideoRequest
 
 AGNES_VIDEO_25 = "agnes-video-2.5"
+AGNES_VIDEO_25_FLASH = "agnes-video-2.5-flash"
+AGNES_VIDEO_MODELS = frozenset({AGNES_VIDEO_25, AGNES_VIDEO_25_FLASH})
 AGNES_OUTPUT_SIZE = "720P"
 _RATIO_BY_REDUCED = {
     (7, 3): "21:9",  # 文档给出的 720P 像素是 1680x720，约分后为 7:3。
@@ -70,8 +72,13 @@ class AgnesVideoProtocol:
         self,
         api_key: str,
         base_url: str = "https://apihub.agnes-ai.com/v1",
+        *,
+        model: str = AGNES_VIDEO_25,
     ) -> None:
+        if model not in AGNES_VIDEO_MODELS:
+            raise ValueError(f"Agnes 视频型号无效：{model!r}")
         self._key = api_key
+        self._model = model
         parsed = urlparse(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError(f"Agnes Base URL 无效：{base_url!r}")
@@ -82,14 +89,14 @@ class AgnesVideoProtocol:
         return {"Authorization": f"Bearer {self._key}"}
 
     def build_submit(self, req: VideoRequest) -> HttpCall:
-        if req.model != AGNES_VIDEO_25:
+        if req.model != self._model:
             raise ValueError(
-                f"Agnes 协议只接受模型 {AGNES_VIDEO_25}，收到 {req.model!r}"
+                f"Agnes 协议当前绑定模型 {self._model}，收到 {req.model!r}"
             )
         if not 4 <= req.seconds <= 12:
             raise ValueError(f"Agnes 视频时长必须在 4 到 12 秒之间，收到 {req.seconds}")
         body = {
-            "model": AGNES_VIDEO_25,
+            "model": self._model,
             "prompt": req.prompt,
             "seconds": str(req.seconds),
             "mode": "keyframe",
@@ -128,7 +135,7 @@ class AgnesVideoProtocol:
         )
 
     def build_poll(self, job_id: str) -> HttpCall:
-        query = urlencode({"video_id": job_id, "model_name": AGNES_VIDEO_25})
+        query = urlencode({"video_id": job_id, "model_name": self._model})
         return HttpCall(
             method="GET",
             path=f"{self._poll_root}/agnesapi?{query}",

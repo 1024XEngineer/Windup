@@ -1,4 +1,9 @@
-from .agnes_video import AGNES_VIDEO_25, AgnesVideoProtocol
+from .agnes_video import (
+    AGNES_VIDEO_25,
+    AGNES_VIDEO_25_FLASH,
+    AGNES_VIDEO_MODELS,
+    AgnesVideoProtocol,
+)
 from .fal_queue import (
     FAL_I2V_ENDPOINTS,
     FalQueueVideoProtocol,
@@ -17,6 +22,8 @@ from .types import HttpCall, JobProtocol, VideoRequest
 
 __all__ = [
     "AGNES_VIDEO_25",
+    "AGNES_VIDEO_25_FLASH",
+    "AGNES_VIDEO_MODELS",
     "AgnesVideoProtocol",
     "FAL_I2V_ENDPOINTS",
     "FAL_IMAGE_ENDPOINTS",

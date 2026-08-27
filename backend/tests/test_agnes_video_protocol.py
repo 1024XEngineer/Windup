@@ -6,12 +6,16 @@ import pytest
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings
-from windup_framework.providers.protocol.agnes_video import AgnesVideoProtocol
+from windup_framework.providers.protocol.agnes_video import (
+    AGNES_VIDEO_25_FLASH,
+    AgnesVideoProtocol,
+)
 from windup_framework.providers.protocol.types import VideoRequest
 from windup_framework.providers.sufy import SufyVideoProvider
 
 
 MODEL = "agnes-video-2.5"
+FLASH_MODEL = "agnes-video-2.5-flash"
 PUBLIC_FRAME = "https://media.windup.xin/i2v/frame.jpg"
 
 
@@ -107,6 +111,18 @@ def test_agnes_poll_always_includes_model_name():
     )
 
 
+def test_token_plan_flash_uses_flash_model_for_submit_and_poll():
+    protocol = AgnesVideoProtocol("agnes-secret", model=AGNES_VIDEO_25_FLASH)
+
+    submit = protocol.build_submit(_request(model=FLASH_MODEL))
+    poll = protocol.build_poll("video-flash-1")
+
+    assert submit.body["model"] == FLASH_MODEL
+    assert poll.path.endswith(
+        "?video_id=video-flash-1&model_name=agnes-video-2.5-flash"
+    )
+
+
 def test_agnes_completed_result_reads_metadata_url():
     response = httpx.Response(
         200,
@@ -159,24 +175,26 @@ def _jpeg() -> bytes:
     return buf.getvalue()
 
 
-def _provider(handler, *, api_key="agnes-secret", uploader=None) -> SufyVideoProvider:
+def _provider(
+    handler, *, api_key="agnes-secret", uploader=None, model=MODEL
+) -> SufyVideoProvider:
     cfg = AIProviderSettings(
         base_url="https://api.modelink.ai/v1",
         api_key="modelink-secret",
-        video_model=MODEL,
+        video_model=model,
         video_agnes_base_url="https://apihub.agnes-ai.com/v1",
         video_agnes_api_key=api_key,
     )
     provider = SufyVideoProvider(
         config=cfg,
-        model=MODEL,
+        model=model,
         uploader=uploader,
         poll_interval=0.01,
         first_poll_after=0.01,
     )
 
     def client(model=None):
-        agnes = model == MODEL
+        agnes = model in {MODEL, FLASH_MODEL}
         return httpx.Client(
             base_url=(
                 "https://apihub.agnes-ai.com/v1"
@@ -216,6 +234,28 @@ def test_provider_uses_agnes_credentials_and_uploads_fitted_first_frame():
     assert uploader.seen[0][1] == "image/jpeg"
 
 
+def test_token_plan_flash_provider_uses_agnes_credentials():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={"video_id": "video-flash-1", "status": "queued"},
+        )
+
+    result = _provider(
+        handler,
+        uploader=_Uploader(),
+        model=FLASH_MODEL,
+    ).submit_video(_jpeg(), "向右走", 5, "1280x720", FLASH_MODEL)
+
+    assert result.ok and result.job_id == "video-flash-1"
+    assert str(seen[0].url) == "https://apihub.agnes-ai.com/v1/videos"
+    assert seen[0].headers["Authorization"] == "Bearer agnes-secret"
+    assert json.loads(seen[0].content)["model"] == FLASH_MODEL
+
+
 def test_provider_keeps_kling_on_modelink_credentials_and_data_uri():
     seen: list[httpx.Request] = []
 
@@ -235,7 +275,8 @@ def test_provider_keeps_kling_on_modelink_credentials_and_data_uri():
     )
 
 
-def test_missing_agnes_key_is_rejected_before_upload_or_network():
+@pytest.mark.parametrize("model", [MODEL, FLASH_MODEL])
+def test_missing_agnes_key_is_rejected_before_upload_or_network(model):
     sent: list[httpx.Request] = []
     uploader = _Uploader()
 
@@ -243,7 +284,8 @@ def test_missing_agnes_key_is_rejected_before_upload_or_network():
         lambda request: sent.append(request) or httpx.Response(500),
         api_key="",
         uploader=uploader,
-    ).submit_video(_jpeg(), "向右走", 5, "1280x720", MODEL)
+        model=model,
+    ).submit_video(_jpeg(), "向右走", 5, "1280x720", model)
 
     assert sent == []
     assert uploader.seen == []

@@ -13,6 +13,7 @@ FAMILIES: dict[str, Family] = {
     "kling-video-o1": Family.VIDEO_IMAGE_LIST,  # 登记但不允许进 chain
     "veo3.1": Family.VIDEO_FAL_QUEUE,  # 登记≠放行,还要在 USER_GATED_MODELS 的白名单里
     "agnes-video-2.5": Family.VIDEO_AGNES,
+    "agnes-video-2.5-flash": Family.VIDEO_AGNES,
 }
 
 

@@ -44,7 +44,7 @@ from windup_framework.gateway.types import AdapterResult
 
 from .interfaces import FirstFrameUploader, ImageProvider, VideoProvider
 from .protocol import HttpCall, VideoRequest
-from .protocol.agnes_video import AGNES_VIDEO_25, AgnesVideoProtocol
+from .protocol.agnes_video import AGNES_VIDEO_MODELS, AgnesVideoProtocol
 from .protocol.fal_queue import VeoQueueVideoProtocol
 from .protocol.image_faces import FalQueueImageFace, OpenAIImagesFace
 from .protocol.openai_video import OpenAIVideoProtocol, fit_first_frame
@@ -128,6 +128,7 @@ class SufyVideoProvider(VideoProvider):
             return AgnesVideoProtocol(
                 self._cfg.video_agnes_api_key,
                 base_url=self._cfg.video_agnes_base_url,
+                model=model or "",
             )
         return OpenAIVideoProtocol(self._cfg.api_key)
 
@@ -162,7 +163,7 @@ class SufyVideoProvider(VideoProvider):
 
     def _client_for(self, model: str | None):
         """Agnes 取专属凭证；其余型号保留既有无参 ``_client()`` 调用契约。"""
-        if model == AGNES_VIDEO_25:
+        if model in AGNES_VIDEO_MODELS:
             return self._client(model)
         return self._client()
 
@@ -175,7 +176,7 @@ class SufyVideoProvider(VideoProvider):
         model: str,
     ) -> AdapterResult:
         """一次 POST 建单。成功: ok=True, job_id, body=b"", maybe_billed=True。"""
-        if model == AGNES_VIDEO_25 and not self._cfg.video_agnes_api_key.strip():
+        if model in AGNES_VIDEO_MODELS and not self._cfg.video_agnes_api_key.strip():
             return AdapterResult(
                 ok=False,
                 error_type=ModelErrorType.UNREACHED,

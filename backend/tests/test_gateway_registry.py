@@ -35,6 +35,24 @@ def test_agnes_primary_can_fallback_to_kling():
     assert r.family_of("agnes-video-2.5") is Family.VIDEO_AGNES
 
 
+def test_token_plan_agnes_flash_primary_can_fallback_to_kling():
+    r = ModelRegistry.from_settings(
+        AIProviderSettings(
+            image_model="gemini-2.5-flash-image",
+            image_fallbacks="",
+            video_model="agnes-video-2.5-flash",
+            video_fallbacks="kling-v2-5-turbo,kling-v2-6",
+        )
+    )
+
+    assert r.chain(Scene.CHARACTER_ACTION) == (
+        "agnes-video-2.5-flash",
+        "kling-v2-5-turbo",
+        "kling-v2-6",
+    )
+    assert r.family_of("agnes-video-2.5-flash") is Family.VIDEO_AGNES
+
+
 def test_shipped_image_chain_is_gpt_image_2_then_gemini_flash():
     """出厂默认必须是这两个型号,且它们分属两个协议面。
 
