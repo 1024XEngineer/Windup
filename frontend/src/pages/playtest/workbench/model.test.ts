@@ -62,7 +62,6 @@ describe('createPlaytestModel', () => {
       name: '待机',
       type: 'idle',
       loop: true,
-      // durationMs 为 null 时按所属动作的 fps 换算，不用前端常量顶上。
       frames: [{ imageUrl: '/idle-01.png', durationMs: 125 }],
       sequences: {
         east: {
@@ -223,6 +222,7 @@ describe('createPlaytestModel', () => {
   it('preserves authored timing for non-locomotion actions with dense frames', () => {
     const denseCharacter = structuredClone(character)
     const idle = denseCharacter.outfits[0]!.actions[0]!
+    idle.type = 'attack'
     idle.frameCount = 32
     idle.frames = Array.from({ length: 32 }, (_, index) => ({
       index,
@@ -237,6 +237,33 @@ describe('createPlaytestModel', () => {
 
     expect(mappedIdle?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(4000)
   })
+
+  it.each([
+    { type: 'idle', frameCount: 12, sourceDurationMs: 125 },
+    { type: 'idle', frameCount: 12, sourceDurationMs: 450 },
+    { type: 'jump', frameCount: 32, sourceDurationMs: 110 },
+    { type: 'attack', frameCount: 32, sourceDurationMs: 90 },
+  ])(
+    'matches the walk cycle for dense generated $type playback',
+    ({ type, frameCount, sourceDurationMs }) => {
+      const denseCharacter = structuredClone(character)
+      const action = denseCharacter.outfits[0]!.actions[0]!
+      action.type = type
+      action.frameCount = frameCount
+      action.frames = Array.from({ length: frameCount }, (_, index) => ({
+        index,
+        imageUrl: `/${type}-${index}.png`,
+        durationMs: sourceDurationMs,
+      }))
+
+      const result = createPlaytestModel(denseCharacter, 'outfit-default')
+      const mappedAction = result.ok ? result.model.actions[0] : undefined
+
+      expect(
+        mappedAction?.frames.reduce((total, frame) => total + frame.durationMs, 0),
+      ).toBeCloseTo(1000)
+    },
+  )
 
   it('优先播放全部真实八向序列，不对任何方向应用镜像', () => {
     const directionalCharacter = structuredClone(character)
@@ -311,6 +338,7 @@ describe('createPlaytestModel', () => {
 
   it('clamps an unusably short frame duration before it reaches the animation loop', () => {
     const tinyDurationCharacter = structuredClone(character)
+    tinyDurationCharacter.outfits[0]!.actions[0]!.type = 'attack'
     tinyDurationCharacter.outfits[0]!.actions[0]!.frames[0]!.durationMs = 0.001
 
     const result = createPlaytestModel(tinyDurationCharacter, 'outfit-default')
