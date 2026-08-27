@@ -41,6 +41,10 @@ function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): Workfl
       const items = [...runs.values()].filter((run) => run.projectId === projectId)
       return { items: structuredClone(items), total: items.length, page: 1, pageSize: 100 }
     },
+    async listRecent() {
+      const items = [...runs.values()].reverse()
+      return { items: structuredClone(items), total: items.length, page: 1, pageSize: 20 }
+    },
     async get(id) {
       const run = runs.get(id)
       if (!run) throw new Error('not found')
@@ -350,6 +354,30 @@ function actionRun(firstFramePending = false): WorkflowRun {
 }
 
 describe('createQuickStartService', () => {
+  it('把最近运行记录映射为可恢复的 Quick Start 历史项', async () => {
+    const first = actionRun()
+    first.id = 'run-first'
+    const second = actionRun()
+    second.id = 'run-second'
+    const secondSetup = second.nodes.find((node) => node.type === 'character-setup')
+    if (!secondSetup || secondSetup.type !== 'character-setup') throw new Error('fixture invalid')
+    secondSetup.input.prompt = '森林里的蓝发弓箭手'
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([first, second]),
+      generationApis: pendingGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const historyService = service as typeof service & {
+      listHistory(): Promise<readonly { runId: string; title: string }[]>
+    }
+
+    await expect(historyService.listHistory()).resolves.toEqual([
+      { runId: 'run-second', title: '森林里的蓝发弓箭手' },
+      { runId: 'run-first', title: '像素骑士' },
+    ])
+  })
+
   it('读取当前活跃生成步骤前方的任务数', async () => {
     const run: WorkflowRun = {
       id: 'run-queued',

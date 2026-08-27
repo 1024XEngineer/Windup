@@ -79,6 +79,11 @@ export interface QuickStartResumeOptions {
   automaticActionAdvance?: boolean
 }
 
+export interface QuickStartHistoryItem {
+  runId: WorkflowRun['id']
+  title: string
+}
+
 export interface QuickStartMediaApis {
   upload(file: File, category: 'reference-image', signal?: AbortSignal): Promise<MediaReference>
 }
@@ -148,6 +153,8 @@ export interface QuickStartSession {
 
 export interface QuickStartEntryService {
   readonly unavailableReason: string | null
+  /** 当前用户最近创建的 Quick Start 会话，按新到旧排序。 */
+  listHistory?(): Promise<readonly QuickStartHistoryItem[]>
   /** 上传为 Agent 与角色母版 Generation 共用的原始参考，不创建 WorkflowRun。 */
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   start(
@@ -1460,6 +1467,16 @@ export function createQuickStartService({
 
   return {
     unavailableReason: null,
+
+    async listHistory() {
+      if (!workflowRunApis.listRecent) return []
+      const result = await workflowRunApis.listRecent({ page: 1, pageSize: 50 })
+      return result.items.map((run) => {
+        const setup = run.nodes.find((node) => node.type === 'character-setup')
+        const title = setup?.type === 'character-setup' ? setup.input.prompt.trim() : ''
+        return { runId: run.id, title: title || '未命名创作' }
+      })
+    },
 
     async uploadReferenceImage(file, signal) {
       if (!mediaApis) throw new Error('媒体上传服务尚未配置，不能使用角色参考图')

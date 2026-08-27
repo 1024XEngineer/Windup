@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -54,3 +56,4 @@ class WorkflowRunOut(BaseModel):
     nodes: list = Field(default_factory=list, description="节点树（前端自定义结构）")
     status: str = Field(description="active / soft_deleted")
     version: int = Field(description="乐观锁版本号，从 1 递增")
+    created_at: datetime

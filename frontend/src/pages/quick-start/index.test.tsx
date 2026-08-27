@@ -729,6 +729,39 @@ function renderStateFixture(
 }
 
 describe('QuickStartPage', () => {
+  it('从左侧历史栏回到所选 run 的原 Quick Start 会话', async () => {
+    const run = workflow(setupAndTemplate(), 'run-current')
+    const service = serviceFor(run, {
+      listHistory: vi.fn(async () => [
+        { runId: 'run-old', title: '森林里的蓝发弓箭手' },
+        { runId: 'run-current', title: '像素骑士' },
+      ]),
+    })
+    window.localStorage.setItem(
+      'windup.quick-start.agent-chat.v2:run:7:run-old',
+      JSON.stringify({
+        turns: [
+          { role: 'user', content: '保留蓝色斗篷' },
+          { role: 'assistant', content: '上次保留的对话', kind: 'reply' },
+        ],
+      }),
+    )
+
+    renderAt('/quick-start/run-current', service)
+
+    const history = await screen.findByRole('navigation', { name: '创作历史' })
+    expect(
+      within(history).getByRole('link', { name: '像素骑士' }).getAttribute('aria-current'),
+    ).toBe('page')
+    fireEvent.click(within(history).getByRole('link', { name: '森林里的蓝发弓箭手' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location-probe').textContent).toBe('/quick-start/run-old'),
+    )
+    expect(await screen.findByText('上次保留的对话')).toBeTruthy()
+    expect(service.open).toHaveBeenLastCalledWith('run-old')
+  })
+
   it('keeps the main export capability available in the conversation UI', async () => {
     const run = workflow(setupAndTemplate({ selectedImageUrl: '/master.png' }))
     const model: ExportPackageModel = {

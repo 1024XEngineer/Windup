@@ -35,6 +35,7 @@ import {
 import Markdown, { compiler } from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { InlineArrowAction } from './inline-arrow-action'
+import { QuickStartHistorySidebar } from './history-sidebar'
 import { PixelPerfectVersionSwitch, type PixelPerfectVersion } from './pixel-perfect-version-switch'
 
 import {
@@ -589,26 +590,36 @@ export function QuickStartPage({
     setCreatedSession((current) => (current === consumed ? null : current))
   }, [])
 
-  return runId ? (
-    <QuickStartRun
-      key={runId}
-      service={activeService}
-      runId={runId}
-      initialSession={createdSession?.runId === runId ? createdSession : null}
-      onSessionCreated={setCreatedSession}
-      onInitialSessionConsumed={consumeCreatedSession}
-      activeRunUserId={activeRunUserId}
-      agent={agent}
-    />
-  ) : (
-    <QuickStartInput
-      key={`${location.key}:${activeRunUserId ?? 'local'}`}
-      service={activeService}
-      agent={agent}
-      activeRunUserId={activeRunUserId}
-      projectApis={projectApis}
-      characterApis={characterApis}
-    />
+  return (
+    <div
+      data-layout="quick-start-with-history"
+      className="relative min-h-screen bg-app-canvas lg:pl-72"
+    >
+      <QuickStartHistorySidebar service={activeService} activeRunId={runId} />
+      <div className="min-w-0">
+        {runId ? (
+          <QuickStartRun
+            key={runId}
+            service={activeService}
+            runId={runId}
+            initialSession={createdSession?.runId === runId ? createdSession : null}
+            onSessionCreated={setCreatedSession}
+            onInitialSessionConsumed={consumeCreatedSession}
+            activeRunUserId={activeRunUserId}
+            agent={agent}
+          />
+        ) : (
+          <QuickStartInput
+            key={`${location.key}:${activeRunUserId ?? 'local'}`}
+            service={activeService}
+            agent={agent}
+            activeRunUserId={activeRunUserId}
+            projectApis={projectApis}
+            characterApis={characterApis}
+          />
+        )}
+      </div>
+    </div>
   )
 }
 

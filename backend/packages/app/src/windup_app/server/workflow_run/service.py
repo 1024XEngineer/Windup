@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
 
+from windup_app.server.project.model import Project
 from windup_app.server.workflow_run.interface import WorkflowRunService
 from windup_app.server.workflow_run.model import RunStatus, WorkflowRun
 
@@ -76,6 +77,36 @@ class SqlAlchemyWorkflowRunService(WorkflowRunService):
         total = session.scalar(count_stmt) or 0
         items = list(session.scalars(stmt))
         return items, total
+
+    def list_user_runs(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[WorkflowRun], int]:
+        """按最近创建顺序查询当前用户跨项目的运行记录。"""
+        conditions = (
+            Project.user_id == user_id,
+            WorkflowRun.status != RunStatus.SOFT_DELETED.value,
+        )
+        count_stmt = (
+            select(func.count())
+            .select_from(WorkflowRun)
+            .join(Project, Project.id == WorkflowRun.project_id)
+            .where(*conditions)
+        )
+        stmt = (
+            select(WorkflowRun)
+            .join(Project, Project.id == WorkflowRun.project_id)
+            .where(*conditions)
+            .order_by(WorkflowRun.created_at.desc(), WorkflowRun.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        total = session.scalar(count_stmt) or 0
+        return list(session.scalars(stmt)), total
 
     def update_run(
         self,
