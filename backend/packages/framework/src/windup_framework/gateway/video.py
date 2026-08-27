@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings as default_settings
+from windup_framework.gateway.errors import UpstreamExhaustedError
 from windup_framework.gateway.billing import billing_flags, upstream_reached_label
 from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.context import current_call_context
@@ -111,6 +112,9 @@ class VideoGateway:
         input_hash = hash_image_input(prompt, [first_frame])
         last_http_status: int | None = None
         last_error: ModelErrorType | None = None
+        # 这次请求有没有在任何一跳上绑过单。``bound_job_id`` 是循环内的局部量,fail() 看不到,
+        # 而"绑过单"正是"可能已计费"的判据 —— 判错的方向是拿钱重投,所以宁可多记不可漏记。
+        ever_bound_job = False
         fallback_used = False
         fallback_reason: str | None = None
         route_reason_override: str | None = None
@@ -131,9 +135,11 @@ class VideoGateway:
 
         def fail(http_status: int | None) -> None:
             err = last_error.value if last_error is not None else None
-            raise RuntimeError(
+            raise UpstreamExhaustedError(
                 f"video gateway failed request_id={request_id} "
-                f"http_status={http_status} error_type={err}"
+                f"http_status={http_status} error_type={err}",
+                error_type=last_error,
+                maybe_billed=ever_bound_job,
             )
 
         if self._circuit.is_open("aggregator"):
@@ -234,6 +240,7 @@ class VideoGateway:
                         submit_ms = int((time.monotonic() - submit_t0) * 1000)
                         if result.ok and result.job_id:
                             bound_job_id = result.job_id
+                            ever_bound_job = True
                             if follow:
                                 result = adapter.follow_job(bound_job_id, model=model)
                         elif result.ok:
