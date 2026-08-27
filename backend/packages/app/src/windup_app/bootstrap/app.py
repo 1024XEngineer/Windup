@@ -23,6 +23,9 @@ from windup_app.server.character.model import Character  # noqa: F401
 from windup_app.server.character.service import service as character_service
 from windup_app.server.project.model import Project  # noqa: F401
 from windup_app.server.project.service import service as project_service
+from windup_app.server.quick_start_conversation.model import (  # noqa: F401
+    QuickStartAgentConversation,
+)
 from windup_app.server.quota import model as quota_model  # noqa: F401
 from windup_app.server.sensitive_word.model import SensitiveWord  # noqa: F401
 from windup_app.server.sensitive_word.seed import seed_sensitive_words

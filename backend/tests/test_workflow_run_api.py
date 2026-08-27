@@ -173,6 +173,144 @@ def test_get_other_users_run_returns_404(auth_client, auth_client_b):
     assert resp.json()["code"] == 404
 
 
+# -- GET/PUT /workflow-runs/{id}/agent-conversation --------------------------
+
+
+def _conversation_turns() -> list[dict]:
+    return [
+        {"role": "user", "content": "创建一个像素骑士"},
+        {
+            "role": "assistant",
+            "content": "我整理了一版生成方案。",
+            "kind": "proposal",
+            "proposalId": "proposal-1",
+            "optimizedPrompt": "像素骑士，银色盔甲",
+            "optimizationSummary": "补充了材质和轮廓",
+            "proposalStatus": "confirmed",
+        },
+    ]
+
+
+def test_get_missing_agent_conversation_returns_empty_snapshot(auth_client):
+    project = _create_project(auth_client)
+    run = auth_client.post(
+        "/workflow-runs",
+        json=_payload(project["id"]),
+    ).json()["data"]
+
+    resp = auth_client.get(f"/workflow-runs/{run['id']}/agent-conversation")
+
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {
+        "run_id": run["id"],
+        "turns": [],
+        "schema_version": 2,
+        "version": 0,
+        "updated_at": None,
+    }
+
+
+def test_put_agent_conversation_persists_full_snapshot(auth_client):
+    project = _create_project(auth_client)
+    run = auth_client.post(
+        "/workflow-runs",
+        json=_payload(project["id"]),
+    ).json()["data"]
+    turns = _conversation_turns()
+
+    saved = auth_client.put(
+        f"/workflow-runs/{run['id']}/agent-conversation",
+        json={"turns": turns, "schema_version": 2, "version": 0},
+    )
+    loaded = auth_client.get(f"/workflow-runs/{run['id']}/agent-conversation")
+
+    assert saved.status_code == 200
+    assert saved.json()["data"]["version"] == 1
+    assert saved.json()["data"]["updated_at"]
+    assert loaded.json()["data"]["turns"] == turns
+    assert loaded.json()["data"]["version"] == 1
+
+
+def test_put_agent_conversation_replays_the_same_snapshot_idempotently(auth_client):
+    project = _create_project(auth_client)
+    run = auth_client.post(
+        "/workflow-runs",
+        json=_payload(project["id"]),
+    ).json()["data"]
+    url = f"/workflow-runs/{run['id']}/agent-conversation"
+    payload = {"turns": _conversation_turns(), "schema_version": 2, "version": 0}
+
+    created = auth_client.put(url, json=payload)
+    replayed = auth_client.put(url, json=payload)
+
+    assert created.status_code == 200
+    assert replayed.status_code == 200
+    assert replayed.json()["data"]["turns"] == payload["turns"]
+    assert replayed.json()["data"]["version"] == 1
+
+
+def test_put_agent_conversation_rejects_stale_version(auth_client):
+    project = _create_project(auth_client)
+    run = auth_client.post(
+        "/workflow-runs",
+        json=_payload(project["id"]),
+    ).json()["data"]
+    url = f"/workflow-runs/{run['id']}/agent-conversation"
+    auth_client.put(
+        url,
+        json={"turns": _conversation_turns(), "schema_version": 2, "version": 0},
+    )
+
+    resp = auth_client.put(
+        url,
+        json={
+            "turns": [{"role": "user", "content": "覆盖为旧数据"}],
+            "schema_version": 2,
+            "version": 0,
+        },
+    )
+
+    assert resp.json()["code"] == 409
+    assert "冲突" in resp.json()["message"]
+
+
+def test_agent_conversation_is_hidden_from_other_users(auth_client, auth_client_b):
+    project = _create_project(auth_client)
+    run = auth_client.post(
+        "/workflow-runs",
+        json=_payload(project["id"]),
+    ).json()["data"]
+    url = f"/workflow-runs/{run['id']}/agent-conversation"
+
+    assert auth_client_b.get(url).json()["code"] == 404
+    assert (
+        auth_client_b.put(
+            url,
+            json={"turns": _conversation_turns(), "schema_version": 2, "version": 0},
+        ).json()["code"]
+        == 404
+    )
+
+
+def test_agent_conversation_rejects_oversized_content(auth_client):
+    project = _create_project(auth_client)
+    run = auth_client.post(
+        "/workflow-runs",
+        json=_payload(project["id"]),
+    ).json()["data"]
+
+    resp = auth_client.put(
+        f"/workflow-runs/{run['id']}/agent-conversation",
+        json={
+            "turns": [{"role": "user", "content": "x" * 8_001}],
+            "schema_version": 2,
+            "version": 0,
+        },
+    )
+
+    assert resp.json()["code"] == 400
+
+
 # -- PATCH /workflow-runs/{id} -------------------------------------------------
 
 

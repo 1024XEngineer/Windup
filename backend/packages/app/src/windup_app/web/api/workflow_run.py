@@ -5,6 +5,8 @@
 POST   /workflow-runs                     创建执行记录
 GET    /workflow-runs?project_id=...      分页列表
 GET    /workflow-runs/{id}                获取执行记录（含 nodes）
+GET    /workflow-runs/{id}/agent-conversation  获取 Quick Start 对话
+PUT    /workflow-runs/{id}/agent-conversation  保存 Quick Start 对话
 PATCH  /workflow-runs/{id}                全量更新（含 nodes）
 DELETE /workflow-runs/{id}                软删除
 
@@ -16,11 +18,13 @@ nodes 字段由前端自定义，后端只做全量读写，不校验 nodes 内�
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -29,6 +33,10 @@ from windup_common.result import ListResponse, Response
 from windup_framework.db import get_session
 
 from windup_app.server.project.model import Project
+from windup_app.server.quick_start_conversation.model import QuickStartAgentConversation
+from windup_app.server.quick_start_conversation.service import (
+    service as conversation_service,
+)
 from windup_app.server.workflow_run.model import RunStatus
 from windup_app.server.workflow_run.service import service
 
@@ -75,6 +83,73 @@ class WorkflowRunOut(BaseModel):
     status: str
     version: int
     created_at: datetime
+
+
+class AgentConversationTurn(BaseModel):
+    """服务端只约束稳定外壳，proposal 等扩展字段保持前端原样。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=8_000)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content 不能为空")
+        return value
+
+
+class AgentConversationUpdate(BaseModel):
+    """完整替换一条运行记录的 Agent 对话。"""
+
+    version: int = Field(ge=0)
+    schema_version: Literal[2] = 2
+    turns: list[AgentConversationTurn] = Field(max_length=256)
+
+    @model_validator(mode="after")
+    def payload_must_fit_snapshot_limit(self):
+        payload = [
+            turn.model_dump(mode="json", exclude_none=True) for turn in self.turns
+        ]
+        encoded = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        ).encode()
+        if len(encoded) > 256 * 1_024:
+            raise ValueError("Agent 对话快照不能超过 256 KiB")
+        return self
+
+
+class AgentConversationOut(BaseModel):
+    """Quick Start Agent 对话快照响应。"""
+
+    run_id: int
+    turns: list[dict[str, Any]]
+    schema_version: int
+    version: int
+    updated_at: datetime | None
+
+
+def _conversation_out(
+    run_id: int,
+    conversation: QuickStartAgentConversation | None,
+) -> AgentConversationOut:
+    if conversation is None:
+        return AgentConversationOut(
+            run_id=run_id,
+            turns=[],
+            schema_version=2,
+            version=0,
+            updated_at=None,
+        )
+    return AgentConversationOut(
+        run_id=run_id,
+        turns=conversation.turns,
+        schema_version=conversation.schema_version,
+        version=conversation.version,
+        updated_at=conversation.updated_at,
+    )
 
 
 # ── 归属校验 ─────────────────────────────────────────────────────────────────
@@ -156,6 +231,46 @@ def get_run(
     user_id = request.state.current_user.id
     run = _get_run_with_auth(session, run_id, user_id)
     return Response.success(WorkflowRunOut.model_validate(run))
+
+
+@router.get(
+    "/{run_id}/agent-conversation",
+    response_model=Response[AgentConversationOut],
+)
+def get_agent_conversation(
+    run_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[AgentConversationOut]:
+    """读取运行记录的 Agent 对话；尚未保存时返回空快照。"""
+    user_id = request.state.current_user.id
+    _get_run_with_auth(session, run_id, user_id)
+    conversation = conversation_service.get(session, run_id)
+    return Response.success(_conversation_out(run_id, conversation))
+
+
+@router.put(
+    "/{run_id}/agent-conversation",
+    response_model=Response[AgentConversationOut],
+)
+def save_agent_conversation(
+    run_id: int,
+    body: AgentConversationUpdate,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[AgentConversationOut]:
+    """以独立乐观锁保存完整 Agent 对话，不修改 WorkflowRun 版本。"""
+    user_id = request.state.current_user.id
+    _get_run_with_auth(session, run_id, user_id)
+    turns = [turn.model_dump(mode="json", exclude_none=True) for turn in body.turns]
+    conversation = conversation_service.save(
+        session,
+        run_id,
+        expected_version=body.version,
+        schema_version=body.schema_version,
+        turns=turns,
+    )
+    return Response.success(_conversation_out(run_id, conversation), message="保存成功")
 
 
 @router.patch("/{run_id}", response_model=Response[WorkflowRunOut])

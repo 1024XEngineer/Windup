@@ -59,8 +59,11 @@ import {
   type WorkflowRun,
   WorkflowRunConflictError,
   projectApis as defaultProjectApis,
+  quickStartConversationApis as defaultQuickStartConversationApis,
   type Project,
   type ProjectApis,
+  type QuickStartConversationApis,
+  type QuickStartConversationTurn,
 } from '@/entities'
 import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
 import { useOptionalAuthSession } from '@/features/auth-session'
@@ -234,6 +237,9 @@ type AgentConversationTurn =
 
 type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
+  /** 最近一次已确认的服务端版本；dirty=true 时 turns 仍含待同步内容。 */
+  serverVersion?: number
+  dirty?: boolean
   /** 入口处选的画风；不随草稿存住的话，刷新后画风选择器已隐藏而值悄悄回到不指定。 */
   gameStyle?: ArtStyle
   /** 默认开启；关闭时保留像素风提示词，只跳过自动像素后处理。 */
@@ -342,113 +348,189 @@ function createAgentDraftId(): string {
   return draftId
 }
 
-function readAgentConversation(
-  storageName: AgentConversationStorageName,
-  key: string,
+function normalizeAgentConversationTurns(
+  turns: readonly unknown[],
 ): readonly AgentConversationTurn[] {
-  try {
-    const stored = window[storageName].getItem(key)
-    if (!stored) return []
-    const parsed: unknown = JSON.parse(stored)
-    if (typeof parsed !== 'object' || parsed === null || !('turns' in parsed)) return []
-    if (!Array.isArray(parsed.turns)) return []
-    return parsed.turns.flatMap((turn): AgentConversationTurn[] => {
-      if (
-        typeof turn !== 'object' ||
-        turn === null ||
-        !('role' in turn) ||
-        !('content' in turn) ||
-        typeof turn.content !== 'string' ||
-        !turn.content.trim()
-      ) {
-        return []
-      }
-      const scope =
-        'scope' in turn && (turn.scope === 'workflow' || turn.scope === 'add-action')
-          ? turn.scope
-          : undefined
-      if (turn.role === 'user') {
-        const referenceMedia =
-          'referenceMedia' in turn &&
+  return turns.flatMap((turn): AgentConversationTurn[] => {
+    if (
+      typeof turn !== 'object' ||
+      turn === null ||
+      !('role' in turn) ||
+      !('content' in turn) ||
+      typeof turn.content !== 'string' ||
+      !turn.content.trim()
+    ) {
+      return []
+    }
+    const scope =
+      'scope' in turn && (turn.scope === 'workflow' || turn.scope === 'add-action')
+        ? turn.scope
+        : undefined
+    if (turn.role === 'user') {
+      const referenceMedia =
+        'referenceMedia' in turn &&
+        Array.isArray(turn.referenceMedia) &&
+        turn.referenceMedia.every(
+          (value: unknown) =>
+            typeof value === 'string' && value.length <= 2_048 && /^https?:\/\//u.test(value),
+        )
+          ? turn.referenceMedia
+          : []
+      return [
+        {
+          role: 'user',
+          content: turn.content,
+          ...(referenceMedia.length ? { referenceMedia } : {}),
+          ...(scope ? { scope } : {}),
+        },
+      ]
+    }
+    if (turn.role !== 'assistant') return []
+
+    if (
+      'kind' in turn &&
+      turn.kind === 'proposal' &&
+      'proposalId' in turn &&
+      typeof turn.proposalId === 'string' &&
+      'optimizedPrompt' in turn &&
+      typeof turn.optimizedPrompt === 'string' &&
+      'optimizationSummary' in turn &&
+      typeof turn.optimizationSummary === 'string' &&
+      'proposalStatus' in turn &&
+      (turn.proposalStatus === 'pending' ||
+        turn.proposalStatus === 'superseded' ||
+        turn.proposalStatus === 'adopted' ||
+        turn.proposalStatus === 'confirmed')
+    ) {
+      return [
+        {
+          role: 'assistant',
+          content: turn.content,
+          kind: 'proposal',
+          proposalId: turn.proposalId,
+          optimizedPrompt: turn.optimizedPrompt,
+          ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
+            ? { actionPrompt: turn.actionPrompt }
+            : {}),
+          ...('actionType' in turn &&
+          (turn.actionType === 'idle' ||
+            turn.actionType === 'walk' ||
+            turn.actionType === 'attack' ||
+            turn.actionType === 'jump')
+            ? { actionType: turn.actionType }
+            : {}),
+          ...('locomotion' in turn && turn.locomotion === true
+            ? { locomotion: true as const }
+            : {}),
+          optimizationSummary: turn.optimizationSummary,
+          suggestPixelPerfect: 'suggestPixelPerfect' in turn && turn.suggestPixelPerfect === true,
+          ...('referenceMedia' in turn &&
           Array.isArray(turn.referenceMedia) &&
           turn.referenceMedia.every(
             (value: unknown) =>
               typeof value === 'string' && value.length <= 2_048 && /^https?:\/\//u.test(value),
           )
-            ? turn.referenceMedia
-            : []
-        return [
-          {
-            role: 'user',
-            content: turn.content,
-            ...(referenceMedia.length ? { referenceMedia } : {}),
-            ...(scope ? { scope } : {}),
-          },
-        ]
-      }
-      if (turn.role !== 'assistant') return []
+            ? { referenceMedia: turn.referenceMedia }
+            : {}),
+          proposalStatus: turn.proposalStatus,
+          ...(scope ? { scope } : {}),
+        },
+      ]
+    }
 
-      if (
-        'kind' in turn &&
-        turn.kind === 'proposal' &&
-        'proposalId' in turn &&
-        typeof turn.proposalId === 'string' &&
-        'optimizedPrompt' in turn &&
-        typeof turn.optimizedPrompt === 'string' &&
-        'optimizationSummary' in turn &&
-        typeof turn.optimizationSummary === 'string' &&
-        'proposalStatus' in turn &&
-        (turn.proposalStatus === 'pending' ||
-          turn.proposalStatus === 'superseded' ||
-          turn.proposalStatus === 'adopted' ||
-          turn.proposalStatus === 'confirmed')
-      ) {
-        return [
-          {
-            role: 'assistant',
-            content: turn.content,
-            kind: 'proposal',
-            proposalId: turn.proposalId,
-            optimizedPrompt: turn.optimizedPrompt,
-            ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
-              ? { actionPrompt: turn.actionPrompt }
-              : {}),
-            ...('actionType' in turn &&
-            (turn.actionType === 'idle' ||
-              turn.actionType === 'walk' ||
-              turn.actionType === 'attack' ||
-              turn.actionType === 'jump')
-              ? { actionType: turn.actionType }
-              : {}),
-            ...('locomotion' in turn && turn.locomotion === true
-              ? { locomotion: true as const }
-              : {}),
-            optimizationSummary: turn.optimizationSummary,
-            suggestPixelPerfect: 'suggestPixelPerfect' in turn && turn.suggestPixelPerfect === true,
-            ...('referenceMedia' in turn &&
-            Array.isArray(turn.referenceMedia) &&
-            turn.referenceMedia.every(
-              (value: unknown) =>
-                typeof value === 'string' && value.length <= 2_048 && /^https?:\/\//u.test(value),
-            )
-              ? { referenceMedia: turn.referenceMedia }
-              : {}),
-            proposalStatus: turn.proposalStatus,
-            ...(scope ? { scope } : {}),
-          },
-        ]
-      }
+    const kind =
+      'kind' in turn &&
+      (turn.kind === 'reply' || turn.kind === 'clarification' || turn.kind === 'blocked')
+        ? turn.kind
+        : 'reply'
+    return [{ role: 'assistant', content: turn.content, kind, ...(scope ? { scope } : {}) }]
+  })
+}
 
-      const kind =
-        'kind' in turn &&
-        (turn.kind === 'reply' || turn.kind === 'clarification' || turn.kind === 'blocked')
-          ? turn.kind
-          : 'reply'
-      return [{ role: 'assistant', content: turn.content, kind, ...(scope ? { scope } : {}) }]
-    })
-  } catch {
-    return []
+function conversationTurnsEqual(
+  left: readonly AgentConversationTurn[],
+  right: readonly AgentConversationTurn[],
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+const PROPOSAL_STATUS_RANK = {
+  pending: 0,
+  superseded: 1,
+  adopted: 2,
+  confirmed: 3,
+} as const
+
+/** 合并并发标签页或结果不明的全量快照，保留两边唯一消息与更先进的 proposal 状态。 */
+function mergeAgentConversationTurns(
+  remote: readonly AgentConversationTurn[],
+  local: readonly AgentConversationTurn[],
+): readonly AgentConversationTurn[] {
+  if (conversationTurnsEqual(remote, local)) return remote
+  const sharedLength = Math.min(remote.length, local.length)
+  const sharedPrefix = Array.from({ length: sharedLength }).every((_, index) =>
+    conversationTurnsEqual([remote[index]], [local[index]]),
+  )
+  if (sharedPrefix) return remote.length >= local.length ? remote : local
+  const merged = [...remote]
+  for (const localTurn of local) {
+    if (localTurn.role === 'assistant' && localTurn.kind === 'proposal') {
+      const matchingIndex = merged.findIndex(
+        (remoteTurn) =>
+          remoteTurn.role === 'assistant' &&
+          remoteTurn.kind === 'proposal' &&
+          remoteTurn.proposalId === localTurn.proposalId,
+      )
+      if (matchingIndex >= 0) {
+        const remoteTurn = merged[matchingIndex]
+        if (
+          remoteTurn.role === 'assistant' &&
+          remoteTurn.kind === 'proposal' &&
+          PROPOSAL_STATUS_RANK[localTurn.proposalStatus] >=
+            PROPOSAL_STATUS_RANK[remoteTurn.proposalStatus]
+        ) {
+          merged[matchingIndex] = localTurn
+        }
+        continue
+      }
+    }
+    if (!merged.some((remoteTurn) => conversationTurnsEqual([remoteTurn], [localTurn]))) {
+      merged.push(localTurn)
+    }
   }
+  return merged
+}
+
+function readAgentConversationRecord(
+  storageName: AgentConversationStorageName,
+  key: string,
+): AgentConversationRecord | null {
+  try {
+    const stored = window[storageName].getItem(key)
+    if (!stored) return null
+    const parsed: unknown = JSON.parse(stored)
+    if (typeof parsed !== 'object' || parsed === null || !('turns' in parsed)) return null
+    if (!Array.isArray(parsed.turns)) return null
+    return {
+      turns: normalizeAgentConversationTurns(parsed.turns),
+      ...('serverVersion' in parsed &&
+      typeof parsed.serverVersion === 'number' &&
+      Number.isSafeInteger(parsed.serverVersion) &&
+      parsed.serverVersion >= 0
+        ? { serverVersion: parsed.serverVersion }
+        : {}),
+      ...('dirty' in parsed && parsed.dirty === true ? { dirty: true } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+function readAgentConversation(
+  storageName: AgentConversationStorageName,
+  key: string,
+): readonly AgentConversationTurn[] {
+  return readAgentConversationRecord(storageName, key)?.turns ?? []
 }
 
 function createAgentSeed(turns: readonly AgentConversationTurn[]): {
@@ -515,18 +597,18 @@ function removeAgentConversation(storageName: AgentConversationStorageName, key:
   }
 }
 
-function readAgentRunConversation(
+function readAgentRunConversationRecord(
   userId: string | null,
   runId: string,
-): readonly AgentConversationTurn[] {
+): AgentConversationRecord {
   const runKey = agentRunConversationStorageKey(userId, runId)
-  const currentTurns = readAgentConversation('localStorage', runKey)
-  if (currentTurns.length > 0) return currentTurns
+  const current = readAgentConversationRecord('localStorage', runKey)
+  if (current) return current
 
   const legacyKey = legacyAgentConversationStorageKey(userId)
   try {
     const stored = window.localStorage.getItem(legacyKey)
-    if (!stored) return []
+    if (!stored) return { turns: [], serverVersion: 0 }
     const parsed: unknown = JSON.parse(stored)
     if (
       typeof parsed !== 'object' ||
@@ -534,18 +616,19 @@ function readAgentRunConversation(
       !('runId' in parsed) ||
       parsed.runId !== runId
     ) {
-      return []
+      return { turns: [], serverVersion: 0 }
     }
 
     // v1 只有用户级 key；仅迁移已绑定当前运行的记录，避免复活未绑定的全局草稿。
     const legacyTurns = readAgentConversation('localStorage', legacyKey)
-    if (legacyTurns.length === 0) return []
-    if (writeAgentConversation('localStorage', runKey, { turns: legacyTurns })) {
+    if (legacyTurns.length === 0) return { turns: [], serverVersion: 0 }
+    const migrated = { turns: legacyTurns, serverVersion: 0, dirty: true }
+    if (writeAgentConversation('localStorage', runKey, migrated)) {
       removeAgentConversation('localStorage', legacyKey)
     }
-    return legacyTurns
+    return migrated
   } catch {
-    return []
+    return { turns: [], serverVersion: 0 }
   }
 }
 
@@ -566,6 +649,7 @@ export interface QuickStartPageProps {
   agent: CreateQuickStartAgentOptions
   projectApis?: Pick<ProjectApis, 'list' | 'get'>
   characterApis?: Pick<CharacterApis & CharacterSummaryApis, 'get' | 'listSummariesByProject'>
+  conversationApis?: QuickStartConversationApis
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
@@ -575,6 +659,7 @@ export function QuickStartPage({
   agent,
   projectApis = defaultProjectApis,
   characterApis = defaultCharacterApis,
+  conversationApis = defaultQuickStartConversationApis,
 }: QuickStartPageProps) {
   const { runId } = useParams()
   const location = useLocation()
@@ -607,6 +692,7 @@ export function QuickStartPage({
             onInitialSessionConsumed={consumeCreatedSession}
             activeRunUserId={activeRunUserId}
             agent={agent}
+            conversationApis={conversationApis}
           />
         ) : (
           <QuickStartInput
@@ -616,6 +702,7 @@ export function QuickStartPage({
             activeRunUserId={activeRunUserId}
             projectApis={projectApis}
             characterApis={characterApis}
+            conversationApis={conversationApis}
           />
         )}
       </div>
@@ -810,12 +897,14 @@ function QuickStartInput({
   activeRunUserId,
   projectApis,
   characterApis,
+  conversationApis,
 }: {
   service: QuickStartEntryService
   agent: CreateQuickStartAgentOptions
   activeRunUserId: string | null
   projectApis: Pick<ProjectApis, 'list' | 'get'>
   characterApis: Pick<CharacterApis & CharacterSummaryApis, 'get' | 'listSummariesByProject'>
+  conversationApis: QuickStartConversationApis
 }) {
   const navigate = useNavigate()
   const [entrySearchParams] = useSearchParams()
@@ -1058,11 +1147,12 @@ function QuickStartInput({
   const persistRunConversation = useCallback(
     (turns: readonly AgentConversationTurn[], runId: string) => {
       conversationTurnsRef.current = turns
-      const stored = writeAgentConversation(
-        'localStorage',
-        agentRunConversationStorageKey(activeRunUserId, runId),
-        { turns },
-      )
+      const runKey = agentRunConversationStorageKey(activeRunUserId, runId)
+      const stored = writeAgentConversation('localStorage', runKey, {
+        turns,
+        serverVersion: 0,
+        dirty: true,
+      })
       if (stored) {
         const draftId = draftIdRef.current
         if (draftId) {
@@ -1072,8 +1162,23 @@ function QuickStartInput({
           )
         }
       }
+      void conversationApis
+        .save(runId, {
+          turns: turns as readonly QuickStartConversationTurn[],
+          version: 0,
+        })
+        .then((saved) => {
+          const current = readAgentConversationRecord('localStorage', runKey)
+          if (current && conversationTurnsEqual(current.turns, turns)) {
+            writeAgentConversation('localStorage', runKey, {
+              turns,
+              serverVersion: saved.version,
+            })
+          }
+        })
+        .catch(() => undefined)
     },
-    [activeRunUserId],
+    [activeRunUserId, conversationApis],
   )
 
   const appendConversationTurn = useCallback(
@@ -2690,15 +2795,7 @@ function RestoringConversation({ turns }: { turns: readonly AgentConversationTur
   )
 }
 
-function QuickStartRun({
-  service,
-  runId,
-  initialSession,
-  onSessionCreated,
-  onInitialSessionConsumed,
-  activeRunUserId,
-  agent,
-}: {
+interface QuickStartRunProps {
   service: QuickStartEntryService
   runId: string
   initialSession: QuickStartSession | null
@@ -2706,7 +2803,128 @@ function QuickStartRun({
   onInitialSessionConsumed: (session: QuickStartSession) => void
   activeRunUserId: string | null
   agent: CreateQuickStartAgentOptions
-}) {
+  conversationApis: QuickStartConversationApis
+}
+
+interface LoadedAgentConversation {
+  turns: readonly AgentConversationTurn[]
+  version: number
+}
+
+function QuickStartRun(props: QuickStartRunProps) {
+  const { activeRunUserId, conversationApis, runId } = props
+  const localRecord = useRef(readAgentRunConversationRecord(activeRunUserId, runId)).current
+  const localTurns = localRecord.turns
+  const [conversation, setConversation] = useState<LoadedAgentConversation | null>(null)
+
+  useEffect(() => {
+    let active = true
+
+    async function loadConversation() {
+      try {
+        const remote = await conversationApis.get(runId)
+        if (!active) return
+        const remoteTurns = normalizeAgentConversationTurns(remote.turns)
+        if (localRecord.dirty) {
+          const mergedTurns = mergeAgentConversationTurns(remoteTurns, localTurns)
+          if (conversationTurnsEqual(mergedTurns, remoteTurns)) {
+            writeAgentConversation(
+              'localStorage',
+              agentRunConversationStorageKey(activeRunUserId, runId),
+              { turns: remoteTurns, serverVersion: remote.version },
+            )
+            setConversation({ turns: remoteTurns, version: remote.version })
+            return
+          }
+          try {
+            const reconciled = await conversationApis.save(runId, {
+              turns: mergedTurns as readonly QuickStartConversationTurn[],
+              version: remote.version,
+            })
+            if (!active) return
+            writeAgentConversation(
+              'localStorage',
+              agentRunConversationStorageKey(activeRunUserId, runId),
+              { turns: mergedTurns, serverVersion: reconciled.version },
+            )
+            setConversation({ turns: mergedTurns, version: reconciled.version })
+            return
+          } catch {
+            if (!active) return
+            writeAgentConversation(
+              'localStorage',
+              agentRunConversationStorageKey(activeRunUserId, runId),
+              { turns: mergedTurns, serverVersion: remote.version, dirty: true },
+            )
+            setConversation({ turns: mergedTurns, version: remote.version })
+            return
+          }
+        }
+        if (remote.version > 0 || remote.turns.length > 0) {
+          writeAgentConversation(
+            'localStorage',
+            agentRunConversationStorageKey(activeRunUserId, runId),
+            { turns: remoteTurns, serverVersion: remote.version },
+          )
+          setConversation({ turns: remoteTurns, version: remote.version })
+          return
+        }
+        if (localTurns.length > 0) {
+          try {
+            const migrated = await conversationApis.save(runId, {
+              turns: localTurns as readonly QuickStartConversationTurn[],
+              version: 0,
+            })
+            if (!active) return
+            writeAgentConversation(
+              'localStorage',
+              agentRunConversationStorageKey(activeRunUserId, runId),
+              { turns: localTurns, serverVersion: migrated.version },
+            )
+            setConversation({ turns: localTurns, version: migrated.version })
+            return
+          } catch {
+            // 旧浏览器缓存迁移失败时仍可继续本地会话，后续增量保存会再次尝试。
+          }
+        }
+        if (active) {
+          setConversation({
+            turns: localTurns,
+            version: localRecord.serverVersion ?? 0,
+          })
+        }
+      } catch {
+        // 服务端暂时不可用时回退到缓存，不能阻断已有工作流的恢复。
+        if (active) {
+          setConversation({
+            turns: localTurns,
+            version: localRecord.serverVersion ?? 0,
+          })
+        }
+      }
+    }
+
+    void loadConversation()
+    return () => {
+      active = false
+    }
+  }, [activeRunUserId, conversationApis, localRecord, localTurns, runId])
+
+  if (!conversation) return <RestoringConversation turns={localTurns} />
+  return <QuickStartRunContent {...props} initialConversation={conversation} />
+}
+
+function QuickStartRunContent({
+  service,
+  runId,
+  initialSession,
+  onSessionCreated,
+  onInitialSessionConsumed,
+  activeRunUserId,
+  agent,
+  conversationApis,
+  initialConversation,
+}: QuickStartRunProps & { initialConversation: LoadedAgentConversation }) {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -2744,9 +2962,13 @@ function QuickStartRun({
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
   const [addingAction, setAddingAction] = useState(false)
   const [promptCopied, setPromptCopied] = useState(false)
-  const initialAgentConversation = useRef(readAgentRunConversation(activeRunUserId, runId)).current
+  const initialAgentConversation = initialConversation.turns
   const [agentConversationTurns, setAgentConversationTurns] = useState(initialAgentConversation)
   const agentConversationTurnsRef = useRef(agentConversationTurns)
+  const conversationVersionRef = useRef(initialConversation.version)
+  const confirmedConversationTurnsRef = useRef(initialAgentConversation)
+  const pendingConversationTurnsRef = useRef<readonly AgentConversationTurn[] | null>(null)
+  const conversationSaveLoopRef = useRef(false)
   const initialWorkflowAgentSeed = useRef(
     createAgentSeed(initialAgentConversation.filter((turn) => turn.scope !== 'add-action')),
   ).current
@@ -2954,18 +3176,103 @@ function QuickStartRun({
     setSelectedFirstFrames((current) => keepAvailableSelections(current, firstFrameCandidates))
   }, [firstFrameCandidates])
 
+  const persistRunConversationSnapshot = useCallback(
+    (turns: readonly AgentConversationTurn[]) => {
+      const runKey = agentRunConversationStorageKey(activeRunUserId, runId)
+      writeAgentConversation('localStorage', runKey, {
+        turns,
+        serverVersion: conversationVersionRef.current,
+        dirty: true,
+      })
+      pendingConversationTurnsRef.current = pendingConversationTurnsRef.current
+        ? mergeAgentConversationTurns(pendingConversationTurnsRef.current, turns)
+        : turns
+      if (conversationSaveLoopRef.current) return
+      conversationSaveLoopRef.current = true
+
+      void (async () => {
+        try {
+          while (pendingConversationTurnsRef.current) {
+            const pending = pendingConversationTurnsRef.current
+            pendingConversationTurnsRef.current = null
+            let candidate = mergeAgentConversationTurns(
+              confirmedConversationTurnsRef.current,
+              pending,
+            )
+            let confirmed: readonly AgentConversationTurn[] | null = null
+
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              try {
+                const saved = await conversationApis.save(runId, {
+                  turns: candidate as readonly QuickStartConversationTurn[],
+                  version: conversationVersionRef.current,
+                })
+                conversationVersionRef.current = saved.version
+                confirmedConversationTurnsRef.current = candidate
+                confirmed = candidate
+                break
+              } catch {
+                try {
+                  const latest = await conversationApis.get(runId)
+                  const latestTurns = normalizeAgentConversationTurns(latest.turns)
+                  conversationVersionRef.current = latest.version
+                  confirmedConversationTurnsRef.current = latestTurns
+                  candidate = mergeAgentConversationTurns(latestTurns, candidate)
+                  if (conversationTurnsEqual(candidate, latestTurns)) {
+                    confirmed = latestTurns
+                    break
+                  }
+                } catch {
+                  break
+                }
+              }
+            }
+
+            if (!confirmed) {
+              const current = agentConversationTurnsRef.current
+              writeAgentConversation('localStorage', runKey, {
+                turns: current,
+                serverVersion: conversationVersionRef.current,
+                dirty: true,
+              })
+              continue
+            }
+
+            const visibleTurns = mergeAgentConversationTurns(
+              confirmed,
+              agentConversationTurnsRef.current,
+            )
+            if (!conversationTurnsEqual(visibleTurns, agentConversationTurnsRef.current)) {
+              agentConversationTurnsRef.current = visibleTurns
+              if (mountedRef.current) setAgentConversationTurns(visibleTurns)
+            }
+            if (!conversationTurnsEqual(visibleTurns, confirmed)) {
+              pendingConversationTurnsRef.current = pendingConversationTurnsRef.current
+                ? mergeAgentConversationTurns(pendingConversationTurnsRef.current, visibleTurns)
+                : visibleTurns
+            }
+            writeAgentConversation('localStorage', runKey, {
+              turns: visibleTurns,
+              serverVersion: conversationVersionRef.current,
+              ...(pendingConversationTurnsRef.current ? { dirty: true } : {}),
+            })
+          }
+        } finally {
+          conversationSaveLoopRef.current = false
+        }
+      })()
+    },
+    [activeRunUserId, conversationApis, runId],
+  )
+
   const appendRunConversationTurn = useCallback(
     (turn: AgentConversationTurn) => {
       const next = [...agentConversationTurnsRef.current, turn]
       agentConversationTurnsRef.current = next
       setAgentConversationTurns(next)
-      writeAgentConversation(
-        'localStorage',
-        agentRunConversationStorageKey(activeRunUserId, runId),
-        { turns: next },
-      )
+      persistRunConversationSnapshot(next)
     },
-    [activeRunUserId, runId],
+    [persistRunConversationSnapshot],
   )
 
   useEffect(() => {
@@ -3509,9 +3816,7 @@ function QuickStartRun({
     )
     agentConversationTurnsRef.current = next
     setAgentConversationTurns(next)
-    writeAgentConversation('localStorage', agentRunConversationStorageKey(activeRunUserId, runId), {
-      turns: next,
-    })
+    persistRunConversationSnapshot(next)
   }
 
   async function confirmAddActionProposal(proposalId: string) {

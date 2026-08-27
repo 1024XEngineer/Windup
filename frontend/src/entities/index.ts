@@ -192,3 +192,15 @@ export type {
   WorkflowRunStorageStatus,
   WorkflowRun,
 } from './workflow-run'
+
+/* Quick Start Agent 对话 —— 服务端快照为权威，本地存储只作恢复缓存。 */
+export {
+  QuickStartConversationConflictError,
+  quickStartConversationApis,
+} from './quick-start-conversation'
+export type {
+  QuickStartConversation,
+  QuickStartConversationApis,
+  QuickStartConversationTurn,
+  SaveQuickStartConversationInput,
+} from './quick-start-conversation'
