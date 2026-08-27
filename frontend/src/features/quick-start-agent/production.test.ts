@@ -98,6 +98,36 @@ describe('Quick Start Agent composition', () => {
     })
   })
 
+  it('turns a content-policy rejection into actionable safe guidance', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      Response.json(
+        {
+          error: {
+            message: '请求包含不允许的内容',
+            type: 'invalid_request_error',
+            code: 'content_policy_violation',
+          },
+        },
+        { status: 400 },
+      ),
+    )
+    const proxyFetch = createAgentProxyFetch({ fetchFn })
+
+    const response = await proxyFetch('https://windup.test/api/ai/chat/completions', {
+      method: 'POST',
+    })
+    const body = (await response.json()) as { error: { code: string; message: string } }
+
+    expect(body).toMatchObject({
+      error: {
+        code: 'content_policy_violation',
+        message: expect.stringContaining('已被安全检查拦截'),
+      },
+    })
+    expect(body.error.message).toContain('只保留角色外观或一个明确动作')
+  })
+
   it('forwards a tokenless GET response without invoking auth recovery', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ choices: [] }))
     const recoverUnauthorized = vi.fn(async () => true)

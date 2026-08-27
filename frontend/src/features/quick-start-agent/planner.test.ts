@@ -49,6 +49,14 @@ describe('quickStartPlannerInstructions', () => {
     expect(instructions).toContain('actionPrompt')
     expect(instructions).toContain('locomotion: true')
   })
+
+  it('blocks multiple requested actions and tells the user to keep one action', () => {
+    const instructions = quickStartPlannerInstructions(false)
+
+    expect(instructions).toContain('一次只生成一个动作')
+    expect(instructions).toContain('用 blocked')
+    expect(instructions).toContain('请用户选择并只保留其中一个动作')
+  })
 })
 
 describe('createAiSdkQuickStartPlanner', () => {
