@@ -56,6 +56,7 @@ describe('account security state', () => {
     expect(failed).toEqual({
       oldPassword: 'old-password',
       newPassword: 'new-password-123',
+      confirmPassword: '',
       isChanging: false,
       error: '当前密码错误',
     })
@@ -65,6 +66,7 @@ describe('account security state', () => {
     const populated = {
       oldPassword: 'old-password',
       newPassword: 'new-password-123',
+      confirmPassword: 'new-password-123',
       isChanging: true,
       error: '旧错误',
     }

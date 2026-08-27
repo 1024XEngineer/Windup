@@ -64,6 +64,7 @@ export function profileReducer(state: ProfileState, action: ProfileAction): Prof
 export type SecurityState = {
   oldPassword: string
   newPassword: string
+  confirmPassword: string
   isChanging: boolean
   error: string | null
 }
@@ -71,6 +72,7 @@ export type SecurityState = {
 export type SecurityAction =
   | { type: 'oldPasswordChanged'; password: string }
   | { type: 'newPasswordChanged'; password: string }
+  | { type: 'confirmPasswordChanged'; password: string }
   | { type: 'validationFailed'; error: string }
   | { type: 'changeStarted' }
   | { type: 'changeFailed'; error: string }
@@ -79,6 +81,7 @@ export type SecurityAction =
 export const initialSecurityState: SecurityState = {
   oldPassword: '',
   newPassword: '',
+  confirmPassword: '',
   isChanging: false,
   error: null,
 }
@@ -89,6 +92,8 @@ export function securityReducer(state: SecurityState, action: SecurityAction): S
       return { ...state, oldPassword: action.password }
     case 'newPasswordChanged':
       return { ...state, newPassword: action.password }
+    case 'confirmPasswordChanged':
+      return { ...state, confirmPassword: action.password }
     case 'validationFailed':
       return { ...state, error: action.error }
     case 'changeStarted':

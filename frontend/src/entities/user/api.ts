@@ -9,6 +9,7 @@ interface UserDto {
   nickname: string | null
   email_verified_at: string | null
   status: number
+  has_password?: boolean
   [key: string]: unknown
 }
 
@@ -51,6 +52,7 @@ function toUser(value: unknown): User {
     nickname: dto.nickname,
     emailVerifiedAt: dto.email_verified_at,
     statusCode: dto.status,
+    hasPassword: dto.has_password === true,
   }
 }
 
@@ -148,6 +150,13 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
       )
     },
 
+    async setPassword(input) {
+      await protectedClient.request<null>('/auth/set-password', {
+        method: 'POST',
+        json: { new_password: input.newPassword },
+      })
+    },
+
     async changePassword(input) {
       await protectedClient.request<null>('/auth/change-password', {
         method: 'POST',
@@ -174,5 +183,6 @@ export const userApis: UserApis = {
   logout: (refreshToken) => getDefaultApis().logout(refreshToken),
   me: () => getDefaultApis().me(),
   updateNickname: (nickname) => getDefaultApis().updateNickname(nickname),
+  setPassword: (input) => getDefaultApis().setPassword(input),
   changePassword: (input) => getDefaultApis().changePassword(input),
 }
