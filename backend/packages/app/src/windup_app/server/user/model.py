@@ -11,6 +11,7 @@ ORM 模型
     ├── id                BigInteger PK: 自增主键
     ├── email             String(255) UNIQUE: 邮箱
     ├── password_hash     String(255): bcrypt 哈希
+    ├── auth_version      Integer: 账号会话版本
     ├── nickname           String(50) NULL: 昵称
     ├── email_verified_at DateTime(tz) NULL: 邮箱验证时间
     ├── status            SmallInteger: 0=正常, 1=封禁
@@ -44,6 +45,9 @@ class User(Base):
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    auth_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     nickname: Mapped[str | None] = mapped_column(String(50), nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -147,6 +151,14 @@ class ChangePasswordInput:
 class SetPasswordInput:
     """设置初始密码入参（仅未设密码用户）。"""
 
+    new_password: str
+
+
+@dataclass
+class EmailChangePasswordInput:
+    """已登录用户通过当前邮箱验证码修改密码。"""
+
+    code: str
     new_password: str
 
 

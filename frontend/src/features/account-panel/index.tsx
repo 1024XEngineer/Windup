@@ -236,6 +236,7 @@ function AccountPanelDialog({
   const [isSendingCode, setIsSendingCode] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showSetPasswordPrompt, setShowSetPasswordPrompt] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
   const [setPasswordValue, setSetPasswordValue] = useState('')
   const [confirmPasswordValue, setConfirmPasswordValue] = useState('')
   const [showSetPassword, setShowSetPassword] = useState(false)
@@ -259,7 +260,7 @@ function AccountPanelDialog({
   const setPasswordId = useId()
   const confirmPasswordId = useId()
   const isRegister = entry === 'register'
-  const shouldShowMotionCopy = !isRegister || registerStep === 0
+  const shouldShowMotionCopy = !showForgotPassword && (!isRegister || registerStep === 0)
   const motionCopy = isRegister ? registrationWelcomeMotionCopy : loginMotionCopy
   const activeMotionCopy = motionCopy[copyIndex % motionCopy.length]
   const passwordChanged =
@@ -388,7 +389,7 @@ function AccountPanelDialog({
     try {
       await session.sendCode({
         email: normalizedEmail,
-        purpose: isRegister ? 'register' : 'login',
+        purpose: showForgotPassword ? 'reset_password' : isRegister ? 'register' : 'login',
       })
       const sentAt = Date.now()
       setNow(sentAt)
@@ -493,6 +494,49 @@ function AccountPanelDialog({
     }
   }
 
+  async function submitForgotPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (isSubmitting || isSendingCode) return
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      setError('请输入有效邮箱地址')
+      return
+    }
+    if (!/^\d{6}$/.test(code)) {
+      setError('请输入 6 位邮箱验证码')
+      return
+    }
+    if (setPasswordValue.length < 8 || setPasswordValue.length > 128) {
+      setError('密码需为 8–128 位')
+      return
+    }
+    if (setPasswordValue !== confirmPasswordValue) {
+      setError('两次输入的密码不一致')
+      return
+    }
+
+    setError(null)
+    setSuccess(null)
+    setIsSubmitting(true)
+    try {
+      await session.resetPassword({
+        email: normalizedEmail,
+        code,
+        newPassword: setPasswordValue,
+      })
+      setPassword('')
+      setCode('')
+      setSetPasswordValue('')
+      setConfirmPasswordValue('')
+      setShowForgotPassword(false)
+      setMode('password')
+      setSuccess('密码已重置，请使用新密码登录。')
+    } catch (submitError) {
+      setError(errorMessage(submitError))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isSubmitting || isSendingCode) return
@@ -575,13 +619,23 @@ function AccountPanelDialog({
     registerStep
   ]
   const registerCopy = registrationStepCopy[registerStep]
-  const titleCopy = isRegister ? registerCopy.title : loginWelcomeCopy.title
-  const descriptionCopy = isRegister ? registerCopy.description : loginWelcomeCopy.description
+  const titleCopy = showForgotPassword
+    ? '忘记密码'
+    : isRegister
+      ? registerCopy.title
+      : loginWelcomeCopy.title
+  const descriptionCopy = showForgotPassword
+    ? '验证邮箱后设置新密码。'
+    : isRegister
+      ? registerCopy.description
+      : loginWelcomeCopy.description
   const dialogLabel = showSetPasswordPrompt
     ? '设置登录密码'
-    : isRegister
-      ? '创建 Windup 账号'
-      : '登录 Windup'
+    : showForgotPassword
+      ? '忘记密码'
+      : isRegister
+        ? '创建 Windup 账号'
+        : '登录 Windup'
   const submitContent = isSubmitting
     ? '正在处理…'
     : isSendingCode
@@ -691,7 +745,7 @@ function AccountPanelDialog({
             )}
           </div>
 
-          {!isRegister && !showSetPasswordPrompt && (
+          {!isRegister && !showSetPasswordPrompt && !showForgotPassword && (
             <div
               role="tablist"
               aria-label="账号操作"
@@ -714,7 +768,7 @@ function AccountPanelDialog({
             </div>
           )}
 
-          {!isRegister && passwordChanged && (
+          {!isRegister && passwordChanged && !showForgotPassword && (
             <p role="status" className="auth-screen-toast auth-screen-toast-success">
               密码修改成功，请重新登录
             </p>
@@ -771,6 +825,102 @@ function AccountPanelDialog({
                 className="auth-screen-helper mt-3 w-full text-center text-sm underline-offset-2 hover:underline"
               >
                 稍后设置
+              </button>
+            </form>
+          ) : showForgotPassword ? (
+            <form
+              className="auth-register-fields auth-login-fields"
+              onSubmit={submitForgotPassword}
+              noValidate
+            >
+              <AuthField
+                inputRef={emailInputRef}
+                id={emailId}
+                label="邮箱"
+                icon={EnvelopeSimple}
+                value={email}
+                onValueChange={setEmail}
+                autoComplete="email"
+                inputMode="email"
+                disabled={isSubmitting || isSendingCode}
+                placeholder="邮箱地址"
+              />
+              <AuthField
+                id={codeId}
+                label="验证码"
+                icon={SealCheck}
+                value={code}
+                placeholder="6 位数字"
+                disabled={isSubmitting}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                variant="code"
+                onValueChange={(value) => setCode(value.replace(/\D/g, '').slice(0, 6))}
+                action={
+                  <button
+                    type="button"
+                    onClick={() => void sendCode()}
+                    disabled={isSendingCode || isSubmitting || cooldownSeconds > 0}
+                    className="auth-screen-code-action disabled:cursor-not-allowed"
+                  >
+                    {isSendingCode
+                      ? '正在发送…'
+                      : cooldownSeconds > 0
+                        ? `${cooldownSeconds}s`
+                        : '发送验证码'}
+                  </button>
+                }
+              />
+              <AuthField
+                id={setPasswordId}
+                label="新密码"
+                icon={Keyhole}
+                value={setPasswordValue}
+                autoComplete="new-password"
+                placeholder="新密码"
+                disabled={isSubmitting}
+                type={showSetPassword ? 'text' : 'password'}
+                variant="password"
+                onValueChange={setSetPasswordValue}
+                action={
+                  <PasswordVisibilityButton
+                    visible={showSetPassword}
+                    onClick={() => setShowSetPassword((visible) => !visible)}
+                  />
+                }
+              />
+              <AuthField
+                id={confirmPasswordId}
+                label="确认新密码"
+                icon={Keyhole}
+                value={confirmPasswordValue}
+                autoComplete="new-password"
+                placeholder="再次输入新密码"
+                disabled={isSubmitting}
+                type={showSetPassword ? 'text' : 'password'}
+                variant="password"
+                onValueChange={setConfirmPasswordValue}
+              />
+              {feedback}
+              <button
+                type="submit"
+                disabled={isSubmitting || isSendingCode}
+                className="auth-screen-submit px-4 text-white disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? '正在重置…' : '重置密码'}
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => {
+                  setShowForgotPassword(false)
+                  setError(null)
+                  setSuccess(null)
+                }}
+                className="auth-screen-helper mt-3 w-full text-center text-sm underline-offset-2 hover:underline"
+              >
+                返回登录
               </button>
             </form>
           ) : (
@@ -854,6 +1004,20 @@ function AccountPanelDialog({
                   />
                 )}
 
+                {!isRegister && mode === 'password' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForgotPassword(true)
+                      setError(null)
+                      setSuccess(null)
+                    }}
+                    className="auth-screen-helper justify-self-end text-sm underline-offset-2 hover:underline"
+                  >
+                    忘记密码
+                  </button>
+                )}
+
                 {isRegister && registerStep === 3 && (
                   <AuthField
                     id={nicknameId}
@@ -932,7 +1096,7 @@ function AccountPanelDialog({
             </form>
           )}
 
-          {!showSetPasswordPrompt && (
+          {!showSetPasswordPrompt && !showForgotPassword && (
             <p className="auth-screen-entry-switch mt-7 text-center text-sm">
               {isRegister ? '已有账号？' : '还没有账号？'}{' '}
               <button type="button" onClick={() => switchEntry(isRegister ? 'login' : 'register')}>
@@ -940,7 +1104,7 @@ function AccountPanelDialog({
               </button>
             </p>
           )}
-          {isRegister && !showSetPasswordPrompt && (
+          {isRegister && !showSetPasswordPrompt && !showForgotPassword && (
             <p className="auth-screen-helper mt-2 text-center text-sm">
               {normalizedInviteCode ? '填写邀请码，注册后共得 500 积分。' : '注册即赠 300 积分。'}
             </p>

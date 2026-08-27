@@ -6,13 +6,16 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import partial
 from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 from windup_app.bootstrap.app import create_app
+from windup_app.server.user.model import User
 from windup_app.server.user.service import create_access_token
 from windup_app.web.api import agent as agent_api
 from windup_common.enums.biz_code import BizCode
@@ -460,6 +463,15 @@ async def test_ai_chat_rejects_chunked_body_before_json_parse():
         yield b'"}]}'
 
     app = create_app()
+    auth_session = MagicMock()
+    auth_session.get.return_value = User(
+        id=1,
+        email="test@example.com",
+        password_hash="",
+        auth_version=0,
+        status=0,
+    )
+    app.state.auth_session_factory = lambda: nullcontext(auth_session)
     token = create_access_token(1, "test@example.com")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(

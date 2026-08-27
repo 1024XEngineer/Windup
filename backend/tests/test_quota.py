@@ -52,9 +52,10 @@ def user_with_account(db_session: Session):
 
 
 @pytest.fixture()
-def auth_quota_client(engine, user_with_account):
+def auth_quota_client(engine, db_session, user_with_account):
     """带认证且预置积分账户的 TestClient。"""
     from fastapi.testclient import TestClient
+    from contextlib import nullcontext
     from sqlalchemy.orm import sessionmaker
 
     from windup_app.bootstrap.app import create_app
@@ -75,6 +76,7 @@ def auth_quota_client(engine, user_with_account):
             session.close()
 
     app = create_app()
+    app.state.auth_session_factory = lambda: nullcontext(db_session)
     app.dependency_overrides[get_session] = override_get_session
 
     token = create_access_token(1, "quota_test@example.com")

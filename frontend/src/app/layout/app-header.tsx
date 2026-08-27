@@ -445,6 +445,13 @@ export function AppHeader({
                 >
                   账号中心
                 </Link>
+                <Link
+                  to="/account?section=security"
+                  onClick={accountMenu.close}
+                  className={`${productMenuItemClass} text-app-ink-soft`}
+                >
+                  修改密码
+                </Link>
                 <button
                   type="button"
                   onClick={signOut}
