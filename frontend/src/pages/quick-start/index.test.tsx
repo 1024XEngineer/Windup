@@ -3824,6 +3824,12 @@ describe('QuickStartPage', () => {
     for (const [run, label] of states) {
       const view = renderAt('/quick-start/run-1', serviceFor(run))
       expect(await screen.findByLabelText(new RegExp(label, 'u'))).toBeTruthy()
+      if (label === '动作首帧生成失败') {
+        expect(screen.getByLabelText(/动作首帧生成失败 首帧服务失败/u)).toBeTruthy()
+      }
+      if (label === '动作生成失败') {
+        expect(screen.getByLabelText(/动作生成失败 动作服务失败/u)).toBeTruthy()
+      }
       view.unmount()
     }
   })
