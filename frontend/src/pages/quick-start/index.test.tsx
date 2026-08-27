@@ -3293,7 +3293,7 @@ describe('QuickStartPage', () => {
       resume: vi.fn(() => resumed.promise),
       addAction: vi.fn(async () => Promise.reject(new Error('动作生成暂时不可用'))),
     })
-    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service, addActionAgentFor())
 
     const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
     await waitFor(() =>
@@ -3301,8 +3301,9 @@ describe('QuickStartPage', () => {
     )
     fireEvent.change(input, { target: { value: '挥手' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认并生成' }))
 
-    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手'))
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手', {}))
     expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
 
     await act(async () => {
