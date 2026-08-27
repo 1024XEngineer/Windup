@@ -411,9 +411,11 @@ class GenerationTaskOut(BaseModel):
     input_payload: dict | None = None
     result: dict | None = None
     error_message: str | None = None
+    # pending:比本任务更早、别人未结束的条数;自己的单 / running / 终态为 0。
+    queue_ahead: int = 0
 
 
-def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
+def _task_to_out(session: Session, task: GenerationTask) -> GenerationTaskOut:
     """领域 dataclass → 响应模型。"""
     result_dict = None
     if task.result is not None:
@@ -426,6 +428,7 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
         input_payload=task.input_payload,
         result=result_dict,
         error_message=task.error_message,
+        queue_ahead=task_repo.queue_ahead_for(session, task),
     )
 
 
@@ -570,7 +573,7 @@ def submit_image_generation(
         task_id=task.id,
         task_type=task.task_type.value,
     )
-    return Response.success(_task_to_out(task), message="任务已提交")
+    return Response.success(_task_to_out(session, task), message="任务已提交")
 
 
 @router.post("/image-set", response_model=Response[GenerationTaskOut])
@@ -615,7 +618,7 @@ def submit_direction_set_generation(
             task_id=task.id,
             task_type=task.task_type.value,
         )
-    return Response.success(_task_to_out(task), message="方向集任务已提交")
+    return Response.success(_task_to_out(session, task), message="方向集任务已提交")
 
 
 def _submit_view_sheet(
@@ -736,7 +739,7 @@ def submit_action_generation(
         task_id=task.id,
         task_type=task.task_type.value,
     )
-    return Response.success(_task_to_out(task), message="任务已提交")
+    return Response.success(_task_to_out(session, task), message="任务已提交")
 
 
 @router.get("/tasks/{task_id}", response_model=Response[GenerationTaskOut])
@@ -754,7 +757,7 @@ def get_task(
         # 归属两道,与 stream_task 同口径:只查项目不够,任意已认证用户拿自己的
         # project_id 配上别人的 task_id 就能读到别人的产物 URL。
         raise BizException("任务不存在", code=BizCode.NOT_FOUND)
-    return Response.success(_task_to_out(task))
+    return Response.success(_task_to_out(session, task))
 
 
 @router.post(
@@ -787,7 +790,7 @@ def retry_failed_directions(
             f"{billing.attempt_for_task(restarted.task_type, restarted.input_payload)}"
         ),
     )
-    return Response.success(_task_to_out(restarted), message="失败方向已重新提交")
+    return Response.success(_task_to_out(session, restarted), message="失败方向已重新提交")
 
 
 @router.get("/tasks/{task_id}/stream")

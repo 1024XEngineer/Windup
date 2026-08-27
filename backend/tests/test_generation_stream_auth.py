@@ -27,7 +27,7 @@ from windup_app.server.orchestrator.model import GenerationType, TaskStatus
 # 成立（2026-08-11 变异测试逮到第一版正是如此：删掉 error_message 仍全绿）。
 _EVENT_KEYS = {
     "id", "user_id", "project_id", "task_type",
-    "status", "input_payload", "result", "error_message",
+    "status", "input_payload", "result", "error_message", "queue_ahead",
 }
 
 
@@ -194,12 +194,31 @@ def test_both_send_paths_use_the_same_payload_builder(session):
 
     task_repo._task_event_publisher = _Publisher()
     try:
-        task_repo._publish_task_update(task_id, task)
+        task_repo._publish_task_update(session, task_id, task)
     finally:
         task_repo._task_event_publisher = old_publisher
 
     assert set(sent[0]) == _EVENT_KEYS
-    assert set(task_repo.task_event_payload(task)) == _EVENT_KEYS
+    assert set(task_repo.task_event_payload(task, session)) == _EVENT_KEYS
+
+
+def test_queue_ahead_counts_other_users_not_own(session):
+    own_done = _make_task(session, user_id=1, project_id=42)
+    own_pending = _make_task(session, user_id=1, project_id=42)
+    _make_task(session, user_id=2, project_id=99)
+    task_repo.update_status(session, own_done, TaskStatus.COMPLETED)
+    mine = _make_task(session, user_id=1, project_id=42)
+    session.commit()
+    assert task_repo.queue_ahead_for(session, task_repo.get_task(session, own_pending)) == 0, (
+        "自己更早的 pending 不算排队"
+    )
+    ahead = task_repo.queue_ahead_for(session, task_repo.get_task(session, mine))
+    assert ahead == 1, "已完成的不算,自己更早的 pending 不算,只剩 other"
+    assert task_repo.queue_ahead_for(session, task_repo.get_task(session, own_done)) == 0
+    task_repo.update_status(session, mine, TaskStatus.RUNNING)
+    session.commit()
+    running = task_repo.queue_ahead_for(session, task_repo.get_task(session, mine))
+    assert running == 0, "RUNNING 已在执行,不再报前面还有几单"
 
 
 @pytest.mark.parametrize("status", [TaskStatus.PENDING, TaskStatus.RUNNING])
@@ -363,7 +382,7 @@ def test_task_without_project_id_logs_instead_of_publishing_into_the_void(sessio
     task_repo._task_event_publisher = _Publisher()
     try:
         with caplog.at_level(logging.WARNING):
-            task_repo._publish_task_update(task_id, task)
+            task_repo._publish_task_update(session, task_id, task)
     finally:
         task_repo._task_event_publisher = old_publisher
 
