@@ -51,6 +51,16 @@ def _example_keys() -> set[str]:
     }
 
 
+def _example_values() -> dict[str, str]:
+    if not _ENV_EXAMPLE.is_file():
+        pytest.skip(f"没有 {_ENV_EXAMPLE}")
+    return {
+        match.group(1): match.group(2)
+        for line in _ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
+        if (match := re.match(r"^([A-Z][A-Z0-9_]*)=(.*)$", line.strip()))
+    }
+
+
 def _settings_classes():
     """遍历 config 包的每个子模块 —— 包的 __init__ 未必把配置类都再导出一遍。"""
     import importlib
@@ -97,3 +107,13 @@ def test_every_example_key_is_actually_read():
 
 def test_admin_frontend_api_base_is_documented():
     assert "VITE_ADMIN_API_BASE_URL" in _example_keys()
+
+
+def test_admin_cookie_example_supports_local_http_development():
+    values = _example_values()
+    assert values["ADMIN_COOKIE_SECURE"] == "false"
+    assert values["ADMIN_COOKIE_DOMAIN"] == ""
+
+    example = _ENV_EXAMPLE.read_text(encoding="utf-8")
+    assert "ADMIN_COOKIE_SECURE=true" in example
+    assert "ADMIN_COOKIE_DOMAIN=admin.windup.xin" in example
