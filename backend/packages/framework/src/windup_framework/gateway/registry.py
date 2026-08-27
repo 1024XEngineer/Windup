@@ -11,6 +11,8 @@ FAMILIES: dict[str, Family] = {
     "kling-v2-5-turbo": Family.VIDEO_INPUT_REFERENCE,
     "kling-v2-6": Family.VIDEO_INPUT_REFERENCE,
     "kling-video-o1": Family.VIDEO_IMAGE_LIST,  # 登记但不允许进 chain
+    # kling v3 turbo 只在 FAL 队列面上有;OpenAI /videos 面实测 model not found。
+    "kling-v3-turbo-std": Family.VIDEO_FAL_QUEUE,
     "veo3.1": Family.VIDEO_FAL_QUEUE,  # 登记≠放行,还要在 USER_GATED_MODELS 的白名单里
 }
 

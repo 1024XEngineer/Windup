@@ -44,7 +44,7 @@ from windup_framework.gateway.types import AdapterResult
 
 from .interfaces import FirstFrameUploader, ImageProvider, VideoProvider
 from .protocol import HttpCall, VideoRequest
-from .protocol.fal_queue import VeoQueueVideoProtocol
+from .protocol.fal_queue import VeoQueueVideoProtocol, fal_video_protocol
 from .protocol.image_faces import FalQueueImageFace, OpenAIImagesFace
 from .protocol.openai_video import OpenAIVideoProtocol, fit_first_frame
 
@@ -120,8 +120,10 @@ class SufyVideoProvider(VideoProvider):
 
         if FAMILIES.get(model or "") is Family.VIDEO_FAL_QUEUE:
             # 每次现取:key 由 config 注入,provider 建好之后 config 仍可能被换。
-            return VeoQueueVideoProtocol(
-                self._cfg.api_key, base_url=self._cfg.normalized_base_url
+            # 按型号分派而不是一律给 veo 的面:同在 FAL 队列面上,veo 有四个必填项与
+            # "首帧必须公网 URL"的硬约束,kling 一个都不适用。
+            return fal_video_protocol(
+                model or "", self._cfg.api_key, base_url=self._cfg.normalized_base_url
             )
         return OpenAIVideoProtocol(self._cfg.api_key)
 

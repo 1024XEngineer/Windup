@@ -22,9 +22,20 @@ from .types import HttpCall, VideoRequest
 #: (``{msg}_url is required``)与"这个端点不存在"在响应里长得一样。
 FAL_I2V_ENDPOINTS: Mapping[str, str] = {
     "fal-ai/kling-video/o1/image-to-video": "start_image_url",
+    "fal-ai/kling-video/v3/turbo/std/image-to-video": "image_url",
     "bytedance/seedance-2.0/image-to-video": "image_url",
     "fal-ai/veo3.1/image-to-video": "image_url",
     "fal-ai/vidu/q1/image-to-video": "image_url",
+}
+
+#: FAL 队列面的**视频型号 → 建单端点**。型号名由 :data:`FAMILIES` 登记,端点在这里定;
+#: 两张表分开是因为 family 只回答"走哪条协议面",而同一条面上不同型号的路径完全不同。
+#:
+#: ``kling-v3-turbo-std`` 只在这条面上有 —— OpenAI ``/videos`` 面实测报
+#: ``model not found or disabled: kling-v3-turbo``(2026-08-27),别再去那边找它。
+FAL_VIDEO_ENDPOINTS: Mapping[str, str] = {
+    "veo3.1": "fal-ai/veo3.1/image-to-video",
+    "kling-v3-turbo-std": "fal-ai/kling-video/v3/turbo/std/image-to-video",
 }
 
 #: 队列里还在跑。除这两个之外的状态一律当终态处理 —— 认不出的状态继续轮询,会把
@@ -354,3 +365,45 @@ def _assert_spend_pinned(body: dict[str, object]) -> None:
         raise VeoSpendGuardError(
             f"resolution 必须是 {VEO_RESOLUTIONS} 之一,收到 {body.get('resolution')!r}"
         )
+
+
+class KlingQueueVideoProtocol(FalQueueVideoProtocol):
+    """kling 在 FAL 队列面上的形状。与 veo 那条面的两处关键差别:
+
+    1. **首帧走 base64 dataURI,不需要先传对象存储。** 2026-08-27 实测十余次建单成片,
+       全部以 ``data:image/jpeg;base64,`` 发出。仓里那条"FAL 面只吃公网 URL"的归档
+       结论对 kling 不成立 —— 少一次上传就少一处会坏的地方,故沿用基类的 base64。
+    2. **``duration`` 必须显式给。** 基类不发它(十个端点的取值形态分 ``5`` / ``"5"`` /
+       ``"5s"`` 三种,猜错是一次已计费的 400);kling 这条已实测是**无后缀的字符串** ``"5"``。
+       不发就得听上游默认值,而默认值要是 10s 就是双倍价 —— 这类"漏了不报错、账单翻倍"
+       的字段一律显式钉住。
+    """
+
+    #: 实测取值形态:字符串、无 ``s`` 后缀(veo 那条面是 ``"4s"``,形状不同,别互相抄)。
+    DURATION = "5"
+
+    def build_submit(self, req: VideoRequest) -> HttpCall:
+        call = super().build_submit(req)
+        body = dict(call.body or {})
+        body["duration"] = self.DURATION
+        if not body.get("duration"):
+            raise ValueError("kling 建单必须带 duration,否则按上游默认档计费")
+        return HttpCall(
+            method=call.method, path=call.path, headers=call.headers, body=body
+        )
+
+
+def fal_video_protocol(model: str, api_key: str, *, base_url: str):
+    """按型号取 FAL 面的协议实现。
+
+    不做成一个类加分支:veo 有四个必填项与一条"首帧必须是公网 URL"的硬约束,
+    kling 一个都不适用,写进同一个类就得每家一个 if,而分支写错的代价是一次已计费的错档。
+    """
+    endpoint = FAL_VIDEO_ENDPOINTS.get(model)
+    if endpoint is None:
+        raise UnknownFalEndpointError(
+            f"型号 {model!r} 没有登记 FAL 端点,已登记: {sorted(FAL_VIDEO_ENDPOINTS)}"
+        )
+    if model == "veo3.1":
+        return VeoQueueVideoProtocol(api_key, base_url=base_url)
+    return KlingQueueVideoProtocol(api_key, endpoint, base_url=base_url)

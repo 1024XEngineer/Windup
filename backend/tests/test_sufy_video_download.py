@@ -693,7 +693,14 @@ def _video_provider(handler, **kw):
     from windup_framework.providers.sufy import SufyVideoProvider
 
     p = SufyVideoProvider(
-        config=AIProviderSettings(base_url="https://gw.example.com/v1", api_key="k"),
+        # 显式钉住走 OpenAI /videos 面的型号。本文件测的是 ``fit_first_frame`` 与那条面
+        # 本身,而默认型号 2026-08-27 起是走 FAL 队列面的 kling v3 turbo —— 跟着默认值走
+        # 的话,换一次默认值这一整个文件的桩就全部失配,而失配的表现是"响应不是 JSON 对象",
+        # 看不出跟型号有关。
+        config=AIProviderSettings(
+            base_url="https://gw.example.com/v1", api_key="k",
+            video_model="kling-v2-5-turbo",
+        ),
         # 轮询预算 = max_min * 60 // poll。poll 取大值让预算只有几次，
         # 再把 time.sleep 打桩掉，用例就既快又不空转（第一版 poll=0.001 配
         # max_min=1 会真轮询 6 万次，单文件跑了 96 秒）。
