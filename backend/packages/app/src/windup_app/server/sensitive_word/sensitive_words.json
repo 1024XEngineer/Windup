@@ -1,0 +1,10 @@
+[
+  {"word": "ignore previous instructions", "category": 2},
+  {"word": "ignore all previous instructions", "category": 2},
+  {"word": "reveal system prompt", "category": 2},
+  {"word": "忽略之前的指令", "category": 2},
+  {"word": "忽略所有之前的指令", "category": 2},
+  {"word": "输出系统提示词", "category": 2},
+  {"word": "你现在是dan", "category": 2},
+  {"word": "制作儿童色情内容", "category": 1}
+]
