@@ -338,9 +338,9 @@ class ViewSheetTaskExecutor:
             return self._matte
         with self._assembly_lock:
             if self._matte is None:
-                from windup_framework.providers import OnnxU2NetMatteProvider
+                from windup_framework.providers import make_matte_provider
 
-                self._matte = OnnxU2NetMatteProvider()
+                self._matte = make_matte_provider()
             return self._matte
 
     def _download(self, url: str) -> bytes:

@@ -279,7 +279,7 @@ def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
             return object()
         return _factory
 
-    monkeypatch.setattr(providers, "OnnxU2NetMatteProvider", _counting("matte"))
+    monkeypatch.setattr(providers, "make_matte_provider", _counting("matte"))
     monkeypatch.setattr(gateway, "build_image_gateway", _counting("image"))
     monkeypatch.setattr(gateway, "build_video_gateway", _counting("video"))
 
@@ -319,9 +319,9 @@ def test_injected_matte_is_not_replaced_on_assemble(monkeypatch):
     sent = object()
 
     def _boom(*_a, **_k):
-        raise AssertionError("不该再构造 OnnxU2NetMatteProvider")
+        raise AssertionError("不该再构造抠图 provider")
 
-    monkeypatch.setattr(providers, "OnnxU2NetMatteProvider", _boom)
+    monkeypatch.setattr(providers, "make_matte_provider", _boom)
     monkeypatch.setattr(gateway, "build_image_gateway", lambda **_k: object())
     monkeypatch.setattr(gateway, "build_video_gateway", lambda **_k: object())
 

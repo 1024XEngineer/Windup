@@ -1465,7 +1465,7 @@ def test_warmup_injects_one_matte_into_both_executors(monkeypatch):
 
     fake = _Fake()
     monkeypatch.setattr(
-        "windup_framework.providers.OnnxU2NetMatteProvider", lambda *a, **k: fake
+        "windup_framework.providers.make_matte_provider", lambda *a, **k: fake
     )
     prev_a, prev_i = ex.executor._matte, ex.image_executor._matte
     try:
