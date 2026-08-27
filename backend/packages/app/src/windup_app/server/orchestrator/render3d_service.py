@@ -351,17 +351,32 @@ class _LazyAutoRig:
 
 
 def _publish_model(data: bytes) -> str:
-    """把绑骨模型放到对象存储,拿到 ``outfits[].model_3d_url`` 要的那个 URL。"""
-    from windup_app.server.media.model import MediaUploadInput
+    """把绑骨模型放到对象存储,拿到 ``outfits[].model_3d_url`` 要的那个 URL。
+
+    后缀按 **magic bytes** 定,不写死 ``.glb``:绑骨接口即便被要求 GLB 也返回 FBX
+    (实测归档里每一份绑骨产物都是 FBX),而两个出帧台宿主都是**按 URL 后缀挑 loader**
+    的 —— FBX 挂成 ``.glb`` 会让它走 GLTFLoader,报一句 "Bad glTF",排查方向整个跑偏到
+    出帧台,而钱早就花完了。``Type`` 是供应商的自述,magic 才是事实。
+    """
+    from windup_framework.providers.render3d import sniff_format
+
+    from windup_app.server.media.model import MediaCategory, MediaUploadInput
     from windup_app.server.media.service import service as media_service
 
+    ext, content_type = (
+        ("fbx", "application/x-fbx")
+        if sniff_format(data) == "FBX"
+        else ("glb", "model/gltf-binary")
+    )
     return media_service.upload(
         data,
         MediaUploadInput(
-            filename="rigged.glb",
-            content_type="model/gltf-binary",
+            filename=f"rigged.{ext}",
+            content_type=content_type,
             size=len(data),
-            category="model-3d",
+            # 取枚举成员而不是字面量:分类是 pydantic 强校验的,字面量打错会在**两笔钱
+            # 都花完之后**才炸,而错误文本只说"输入不合法"。
+            category=MediaCategory.MODEL_3D,
         ),
     ).url
 

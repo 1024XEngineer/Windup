@@ -27,6 +27,24 @@ export function isStageMaterial(value: string): value is StageMaterial {
   return (MATERIALS as readonly string[]).includes(value)
 }
 
+/**
+ * 要渲的动作名 → 模型里真实存在的片段名。
+ *
+ * 绑骨接口一次只烘一个动作,而片段名由它的动作库自己起(实测 08-19 与 08-27 两次任务
+ * 拿到的都是 `Armature|32795ddb244644eac67ccfd8b84060c3_remap`),**永远对不上产品动作
+ * 名**。所以只有一个片段时就用它 ——
+ * 这不是兜底:只有一个候选就不存在"选错"。"这份资产会不会这个动作"由派单那一侧保证
+ * (资产只烘了一个动作,别的动作在编排层就被拒了),不由片段名保证。
+ *
+ * 多于一个片段还对不上名字仍然抛:那时候选谁都是猜,而猜错会渲出另一个动作,
+ * 帧数、时长、成色全部正常,没有一道会红。
+ */
+export function resolveClip(want: string, available: string[]): string {
+  if (available.includes(want)) return want
+  if (available.length === 1) return available[0]
+  throw new StageError(`模型里没有片段 ${JSON.stringify(want)};有的是 ${JSON.stringify(available)}`)
+}
+
 export interface StageRigInfo {
   loader: string
   rootBone: string | null

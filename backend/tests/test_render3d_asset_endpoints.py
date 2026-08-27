@@ -64,17 +64,23 @@ class _FakeModel3D:
 
 
 class _FakeAutoRig:
+    """绑骨的替身。**照真接口的行为回 motion**:不传 MotionType 的请求接口照样受理、
+    照样扣费,只是产物零动画 —— 替身把 ``motion`` 恒填成非空的话,"忘了传动作"这个
+    缺陷在所有用例里都不可见。"""
+
     def __init__(self) -> None:
         self.calls = 0
+        self.motions: list[str | int | None] = []
 
     def rig(self, model: bytes, *, want: str = "GLB", motion=None):
         self.calls += 1
-        return _Rigged(model + b"-rigged", "GLB")
+        self.motions.append(motion)
+        return _Rigged(model + b"-rigged", "GLB", motion)
 
 
 class _Rigged:
-    def __init__(self, data: bytes, fmt: str) -> None:
-        self.data, self.fmt = data, fmt
+    def __init__(self, data: bytes, fmt: str, motion=None) -> None:
+        self.data, self.fmt, self.motion = data, fmt, motion
 
 
 @pytest.fixture()

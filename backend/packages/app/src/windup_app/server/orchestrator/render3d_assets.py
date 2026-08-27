@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import pathlib
+from collections.abc import Mapping
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -68,6 +69,49 @@ RAW_KEY_PREFIX = "raw:"
 MODEL3D_CREDITS = CREDITS["Normal"]
 AUTORIG_CREDITS = RIG_CREDITS
 BUILD_CREDITS = MODEL3D_CREDITS + AUTORIG_CREDITS
+
+# ── 产品动作 → 绑骨预设动作 ─────────────────────────────────────────────────
+#
+# 绑骨接口一次只吃一个 ``MotionType``,**一次绑骨 = 一个动作片段**。所以这张表回答的是
+# "某个产品动作该烘哪个预设",而不是"一份资产能出哪些动作"(后者恒为一个)。
+#
+# 值为 ``None`` 表示**这条路线不接这个动作**,不是待补:
+#
+#   - ``attack``:预设库里只有 thrust(16)/ kick(18) 两个近似项,而产品的攻击按运动
+#     拓扑分四型(sweep / thrust / project / lunge,见 ``AttackArchetype``)。拿 thrust
+#     顶 sweep 会渲出一段"直刺"冒充"横挥" —— 帧数、时长、成色全部正常,没有一道会红。
+#     要接它得先实测出 sweep 类预设的编号,那是另一件事。
+#   - ``custom``:用户自述动作,预设库里按定义就没有对应项;映射到任何一个预设都是拿
+#     别的动作冒充。
+#
+# 两者继续走 i2v —— 那条路线本来就吃自然语言描述,不是降级。
+#
+# 键取 ``orchestrator.model.ActionType`` 的取值(不 import 那个枚举:本模块是准备整体
+# 搬去产品仓的,它不该依赖 ORM 层)。取值域由 ``test_render3d_motion`` 钉住。
+ACTION_MOTIONS: Mapping[str, str | None] = {
+    "walk": "walk",
+    "idle": "idle",
+    "jump": "jump",
+    "attack": None,
+    "custom": None,
+}
+
+# 建资产时烘进模型的那个动作。**是常量,不是部署开关。**
+#
+# 一份绑骨产物只带一个动作片段,"这份资产会哪个动作"必须与它真实烘进去的那个永远一致。
+# 做成开关的话,改开关会让**已经建好的**资产开始声称自己会另一个动作,而渲出来的仍是
+# 旧的那段 —— 又是一次"帧数、时长、成色全正常"的静默错。要按造型选动作,得先有一个
+# 能承载"每动作一份资产"的落点与 URL 字段(见本模块开头的成本说明)。
+#
+# 选 walk 而不是 idle:走 / 跑正是另外两条路线做不好的部分(i2v 各朝向互不一致、逐帧
+# 路线腿不左右交替),而 idle 已经由 i2v 覆盖得不错。
+BUILD_MOTION = "walk"
+
+# 走本路线出得了的动作。资产只烘了 ``BUILD_MOTION``,别的动作**必须在派单之前被拒**:
+# 模型里那唯一一个片段照样渲得出 32 张帧,拿走路帧当攻击交付不会有任何一处报错。
+RENDERABLE_ACTIONS = frozenset(
+    action for action, motion in ACTION_MOTIONS.items() if motion == BUILD_MOTION
+)
 
 
 class Render3DAssetState(str, Enum):
@@ -309,10 +353,15 @@ class Render3DAssetBuilder:
 
     # ── 内部 ─────────────────────────────────────────────────────────────
     def _build(self, key: str, master: bytes, progress: ProgressPort) -> bytes:
-        """① 图生 3D →(人工确认)→ ② 绑骨。**按次计费,每造型一次性。**
+        """① 图生 3D →(人工确认)→ ② 绑骨并烘入 :data:`BUILD_MOTION`。**按次计费,每造型一次性。**
 
         中间那道人工确认是硬停点,原因见 :class:`ModelReviewGate`:模型不可事后修改,
         坏模型只能重生成,所以要在**花绑骨的钱之前**让人看一眼。
+
+        **绑骨必须带动作。** 不带 ``MotionType`` 的请求接口照样受理、照样扣 10 积分,
+        只是产物里零个动画片段(实测:带 walk 的产物 1 个 AnimationStack,不带的 0 个;
+        图生 3D 出的原始模型本身也是 0 个)。出帧台拿到零片段就出不了动作,而绑骨、
+        取件、落点每一步都"成功"。
         """
         raw_key = f"{RAW_KEY_PREFIX}{key}"
 
@@ -337,8 +386,16 @@ class Render3DAssetBuilder:
                 "不合格则删掉待审模型重新生成 —— 混元的模型改不动,只能重生成",
             )
 
-        progress.step("assets", 1, 2, "模型已确认,自动绑骨(按次计费)")
-        rigged: RiggedModel = self._autorig.rig(model, want="GLB")
+        progress.step("assets", 1, 2, f"模型已确认,自动绑骨并烘入 {BUILD_MOTION} 动作(按次计费)")
+        rigged: RiggedModel = self._autorig.rig(model, want="GLB", motion=BUILD_MOTION)
+        if rigged.motion is None:
+            # 不带动作的绑骨产物在下游**每一道闸前都是正常的**:格式对、28 骨对、体积对,
+            # 只是出帧台拿到零个动画片段。存下来就等于把 10 积分买来的哑模型挂成 READY,
+            # 用户侧的症状是"三渲二根本出不了动作",而没有任何一处报错指向绑骨这一步。
+            raise RuntimeError(
+                f"绑骨产物里没有动作片段(请求的是 {BUILD_MOTION!r})—— 拒绝当成就绪资产存下。"
+                "绑骨请求体缺 MotionType 时接口照样成功、照样扣费,产物只是零动画。"
+            )
 
         # 存的是**绑骨后**的产物:它是渲帧真正要的那个,存中间的 model 等于下次还得再绑一次。
         self._store.put(key, rigged.data)

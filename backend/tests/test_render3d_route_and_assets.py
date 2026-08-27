@@ -97,16 +97,22 @@ class _FakeModel3D:
 
 
 class _FakeAutoRig:
+    """**不传 MotionType 就回零动画产物** —— 真接口就是这个行为(受理、扣费、产物没有
+    AnimationStack)。替身恒回一个动作的话,"绑骨时忘了带动作"在这里永远看不出来。"""
+
     def __init__(self) -> None:
         self.calls = 0
+        self.motions: list[str | int | None] = []
 
     @property
     def preset_motions(self):
-        return {"walk": PresetMotion(name="walk", motion_type=1)}
+        return {"walk": PresetMotion(name="walk", motion_type=23)}
 
     def rig(self, model, *, want="GLB", motion=None) -> RiggedModel:
         self.calls += 1
-        return RiggedModel(data=b"RIGGED-bytes", fmt="GLB")
+        self.motions.append(motion)
+        preset = self.preset_motions.get(motion) if isinstance(motion, str) else None
+        return RiggedModel(data=b"RIGGED-bytes", fmt="GLB", motion=preset)
 
 
 def _sheet(directions: tuple[str, ...], n_frames: int) -> SpriteSheet:
