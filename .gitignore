@@ -26,6 +26,7 @@ data/
 
 # 运行产物
 output/
+frontend/dist-admin/
 
 # 构建缓存
 .ruff_cache/

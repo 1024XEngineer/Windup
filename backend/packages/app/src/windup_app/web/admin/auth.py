@@ -78,7 +78,8 @@ def _set_session_cookies(response: HttpResponse, admin_session: AdminSession) ->
         admin_session.csrf_token,
         max_age=admin_auth_settings.refresh_token_ttl_seconds,
         httponly=False,
-        path="/admin-api",
+        # 管理 SPA 位于站点根路径；该双提交值必须能被页面读取后放进请求头。
+        path="/",
         **common,
     )
 
@@ -104,7 +105,7 @@ def _clear_session_cookies(response: HttpResponse) -> None:
     response.delete_cookie(
         ADMIN_CSRF_COOKIE,
         httponly=False,
-        path="/admin-api",
+        path="/",
         **common,
     )
 

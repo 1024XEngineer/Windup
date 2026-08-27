@@ -66,6 +66,7 @@ def test_admin_login_sets_strict_cookie_session_without_returning_tokens(client,
     assert "HttpOnly" in access_header and "Secure" in access_header
     assert "HttpOnly" in refresh_header and "Secure" in refresh_header
     assert "HttpOnly" not in csrf_header and "Secure" in csrf_header
+    assert "Path=/;" in csrf_header
     assert all("SameSite=strict" in value for value in set_cookie)
 
 
