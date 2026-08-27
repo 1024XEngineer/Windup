@@ -660,7 +660,7 @@ def _submit_view_sheet(
         task_id=task.id,
         task_type=task.task_type.value,
     )
-    return Response.success(_task_to_out(task), message="任务已提交")
+    return Response.success(_task_to_out(session, task), message="任务已提交")
 
 
 @router.post("/four-view", response_model=Response[GenerationTaskOut])
