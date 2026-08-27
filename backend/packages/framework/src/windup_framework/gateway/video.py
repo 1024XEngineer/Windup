@@ -11,7 +11,7 @@ from windup_framework.gateway.billing import billing_flags, upstream_reached_lab
 from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.image import _CIRCUIT
-from windup_framework.gateway.policy import decide
+from windup_framework.gateway.policy import decide, rate_limit_wait_s
 from windup_framework.gateway.registry import ModelRegistry, RegistryError
 from windup_framework.gateway.routes import (
     GatewayRoute,
@@ -30,9 +30,6 @@ from windup_framework.gateway.trace import (
     hash_image_input,
 )
 from windup_framework.gateway.types import AdapterResult, NextStep, Scene
-
-_DEFAULT_RETRY_AFTER_S = 2.0
-_SLEEP_CAP_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -395,19 +392,31 @@ class VideoGateway:
                         if bound_job_id is not None:
                             fail(last_http_status)
                         if has_next_route:
+                            nxt = routes[route_index + 1]
+                            time.sleep(
+                                rate_limit_wait_s(
+                                    retry_count=retry_count,
+                                    retry_after_s=result.retry_after_s,
+                                )
+                            )
                             fallback_used = True
-                            route_reason_override = "key_rate_limit"
+                            if nxt.base_url_id != route.base_url_id:
+                                self._circuit.open("base_url:" + route.base_url_id)
+                                route_reason_override = "base_url_unreached"
+                            else:
+                                route_reason_override = "key_rate_limit"
                             switch_to_next_route = True
                             break
+                        self._circuit.open("aggregator")
                         fail(last_http_status)
                     if step is NextStep.RETRY_SAME:
                         if error_type is ModelErrorType.RATE_LIMIT:
-                            wait = (
-                                result.retry_after_s
-                                if result.retry_after_s is not None
-                                else _DEFAULT_RETRY_AFTER_S
+                            time.sleep(
+                                rate_limit_wait_s(
+                                    retry_count=retry_count,
+                                    retry_after_s=result.retry_after_s,
+                                )
                             )
-                            time.sleep(min(wait, _SLEEP_CAP_S))
                         retry_count += 1
                         if error_type is ModelErrorType.UNREACHED:
                             resend_spent = 1
