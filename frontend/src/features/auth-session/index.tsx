@@ -355,10 +355,7 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
     [apis, commitCurrentUser],
   )
   const setPassword = useCallback(
-    async (
-      input: Parameters<UserApis['setPassword']>[0],
-      options?: { keepSession?: boolean },
-    ) => {
+    async (input: Parameters<UserApis['setPassword']>[0], options?: { keepSession?: boolean }) => {
       await apis.setPassword(input)
       if (!options?.keepSession) clearSession('password-changed')
     },
