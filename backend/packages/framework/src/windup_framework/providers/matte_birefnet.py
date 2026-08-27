@@ -83,6 +83,27 @@ class BiRefNetMatteProvider(MatteProvider):
             )
         return self._session
 
+    def warmup(self) -> None:
+        """把会话装进内存。**必须有这个方法** —— 没有它整条接线会静默失效。
+
+        ``bootstrap.worker`` 是 ``matte.warmup()`` 然后 ``bind_matte(matte)``,两句包在
+        同一个 ``except Exception`` 里。缺 ``warmup`` 时第一句抛 AttributeError,
+        **``bind_matte`` 就到不了** —— 于是三个 executor 各自惰性 new 一份 provider,
+        而本类默认 ``union_with_u2net=True``,每份内部再 new 一个 u2net,进程里就是
+        6 个 ONNX 会话。生产 worker 容器上限 5GiB,而本模型单帧峰值 6.85GB。
+        表面上只有一条 "ONNX 预热失败" 的 WARNING,开发机上完全跑得通。
+
+        并集那一路的 u2net 也一并预热:它是每帧都要跑的,留到首帧再装等于把两次冷启动
+        叠在一起。
+        """
+        self._get_session()
+        if self._union:
+            if self._u2net is None:
+                from .matte import OnnxU2NetMatteProvider
+
+                self._u2net = OnnxU2NetMatteProvider()
+            self._u2net.warmup()
+
     def _predict_mask(self, img: Image.Image) -> Image.Image:
         session = self._get_session()
         arr = np.asarray(

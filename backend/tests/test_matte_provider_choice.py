@@ -49,3 +49,28 @@ def test_birefnet_is_reachable_by_name_not_dead_code(monkeypatch):
 
     monkeypatch.setenv(ENV, "birefnet")
     assert isinstance(make_matte_provider(), BiRefNetMatteProvider)
+
+
+def test_every_selectable_provider_survives_the_bootstrap_warmup_call(monkeypatch):
+    """拦的坏例:某个 provider 缺 ``warmup``,整条共享接线静默失效。
+
+    ``bootstrap.worker`` 是 ``matte.warmup()`` 然后 ``bind_matte(matte)``,两句包在同一个
+    ``except Exception`` 里。缺 ``warmup`` 时第一句抛 AttributeError,``bind_matte``
+    **就到不了** —— 三个 executor 各自惰性 new 一份,而 BiRefNet 默认与 u2net 取并集,
+    每份内部再 new 一个 u2net,进程里 6 个 ONNX 会话。生产 worker 上限 5GiB,
+    BiRefNet 单帧峰值 6.85GB。表面上只有一条 "ONNX 预热失败" 的 WARNING。
+    (FennoAI 式审查在 #823 上指出;本用例把它钉住。)
+
+    断言的是**协议齐全**,不真跑推理:权重 224MB + 176MB,CI 上不该下载。
+    """
+    from windup_framework.providers import make_matte_provider
+    from windup_framework.providers.matte_factory import ENV, _BIREFNET, _U2NET
+
+    for choice in (_U2NET, _BIREFNET):
+        monkeypatch.setenv(ENV, choice)
+        provider = make_matte_provider()
+        assert callable(getattr(provider, "warmup", None)), (
+            f"{type(provider).__name__} 缺 warmup —— bind_matte 会被跳过,"
+            "共享实例失效,进程里会装多份 ONNX 会话"
+        )
+        assert callable(getattr(provider, "cutout", None))
