@@ -70,6 +70,65 @@
         "title": "AdminAccessOut",
         "type": "object"
       },
+      "AdminLoginIn": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "AdminLoginIn",
+        "type": "object"
+      },
+      "AdminOut": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "permissions"
+        ],
+        "title": "AdminOut",
+        "type": "object"
+      },
+      "AdminSessionOut": {
+        "properties": {
+          "admin": {
+            "$ref": "#/components/schemas/AdminOut"
+          }
+        },
+        "required": [
+          "admin"
+        ],
+        "title": "AdminSessionOut",
+        "type": "object"
+      },
       "ArtStyle": {
         "description": "项目的美术风格。\n\n只有 ``PIXEL`` 改变管线行为(出帧吸附母版像素网格、颜色吸回母版色板),其余取值\n只进提示词。像素网格密度不在这一维 —— 它由目标分辨率定,两处各定一遍会打架。",
         "enum": [
@@ -2835,6 +2894,48 @@
         "title": "Response[AdminAccessOut]",
         "type": "object"
       },
+      "Response_AdminSessionOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminSessionOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[AdminSessionOut]",
+        "type": "object"
+      },
       "Response_CharacterOut_": {
         "properties": {
           "code": {
@@ -3925,6 +4026,110 @@
         "summary": "List Action Presets",
         "tags": [
           "action-presets"
+        ]
+      }
+    },
+    "/admin-api/auth/login": {
+      "post": {
+        "operationId": "login_admin_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLoginIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_AdminSessionOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "admin-auth"
+        ]
+      }
+    },
+    "/admin-api/auth/logout": {
+      "post": {
+        "operationId": "logout_admin_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "admin-auth"
+        ]
+      }
+    },
+    "/admin-api/auth/me": {
+      "get": {
+        "operationId": "me_admin_api_auth_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_AdminSessionOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Me",
+        "tags": [
+          "admin-auth"
+        ]
+      }
+    },
+    "/admin-api/auth/refresh": {
+      "post": {
+        "operationId": "refresh_admin_api_auth_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_AdminSessionOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Refresh",
+        "tags": [
+          "admin-auth"
         ]
       }
     },

@@ -64,3 +64,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build Admin SPA
+        run: npm run build:admin

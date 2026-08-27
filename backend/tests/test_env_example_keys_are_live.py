@@ -18,7 +18,7 @@ _ENV_EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / ".env.example"
 _INFRA_KEYS = frozenset({
     "WINDUP_HOST", "WINDUP_PORT", "WINDUP_CORS_ORIGINS", "WINDUP_CORS_ORIGIN_REGEX",
     "POSTGRES_DATA_DIR", "REDIS_DATA_DIR", "POSTGRES_EXTERNAL_PORT",
-    "SERPAPI_API_KEY", "VITE_API_BASE_URL",
+    "SERPAPI_API_KEY", "VITE_API_BASE_URL", "VITE_ADMIN_API_BASE_URL",
     # windup_framework.mq.config / windup_app.server.mq.catalog / sse.bridge
     "WINDUP_MQ_STREAM_MAXLEN", "WINDUP_MQ_PEL_CLAIM_IDLE_MS",
     "WINDUP_MQ_PEL_CLAIM_INTERVAL_SECONDS", "WINDUP_MQ_MAX_PUBLISH_ATTEMPTS",
@@ -93,3 +93,7 @@ def test_every_example_key_is_actually_read():
         "填了不生效比不填更糟——部署方以为配置生效了。"
         "确认前缀与对应 BaseSettings 的 env_prefix 一致。"
     )
+
+
+def test_admin_frontend_api_base_is_documented():
+    assert "VITE_ADMIN_API_BASE_URL" in _example_keys()

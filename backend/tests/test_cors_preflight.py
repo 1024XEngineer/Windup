@@ -28,6 +28,21 @@ class TestCORSPreflight:
         assert "access-control-allow-methods" in resp.headers
         assert "access-control-allow-headers" in resp.headers
 
+    def test_admin_dev_origin_preflight(self, client):
+        """独立管理端本地开发端口应能携带 Cookie 调用 Admin API。"""
+        for origin in ("http://localhost:5174", "http://127.0.0.1:5174"):
+            resp = client.options(
+                "/admin-api/auth/login",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "Content-Type",
+                },
+            )
+            assert resp.status_code == 200
+            assert resp.headers.get("access-control-allow-origin") == origin
+            assert resp.headers.get("access-control-allow-credentials") == "true"
+
     def test_protected_endpoint_preflight_without_token(self, client):
         """受保护接口的 OPTIONS 预检请求不需要 token，应返回 CORS 头。"""
         # 测试多个受保护接口
