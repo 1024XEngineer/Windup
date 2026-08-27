@@ -687,6 +687,17 @@
             "title": "Outfits",
             "type": "array"
           },
+          "stance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterStance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "角色体型(双足/四足/无肢);未设置时下游按双足处理"
+          },
           "templates": {
             "description": "角色各源方向母版与镜像关系",
             "items": {

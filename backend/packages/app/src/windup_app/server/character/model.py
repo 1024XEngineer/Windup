@@ -54,6 +54,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from windup_common.enums.character import CharacterStatus
+from windup_common.models import CharacterStance
 from windup_framework.db import Base
 
 
@@ -298,6 +299,20 @@ class CharacterData(BaseModel):
     """角色完整数据（方向母版与造型→动作→帧）。"""
 
     version: int = Field(default=1, ge=1, description="结构版本")
+    # 角色体型。决定"手臂/手肘"这类人体部位词能不能进提示词 —— 非双足角色的描述里
+    # 出现它们,模型会凭空接上一对人的上肢,而帧数/时长/成色全部正常、没有一道会红。
+    #
+    # 存在角色上而不是每次动作请求带:体型是角色的属性,不是这次生成的选项。
+    # 放在请求里的那份(``CreateActionInput.stance``)此前 558/558 个任务一个都没传过,
+    # 三道按体型分流的判据因此全是死代码(#840)。
+    #
+    # ``None`` = 没人选过,**与"选了双足"是两回事**。不在这里兜 BIPED:兜了的话
+    # 每个新建角色都会把默认值实体化写进 character_data,于是"有人确认过它是人形"
+    # 和"从来没人看过这个字段"再也分不开 —— 而那正是 #840 本身的形状。
+    # 双足这个默认值由 ``CharacterCard.stance`` 定义一次,下游取不到时用它。
+    stance: CharacterStance | None = Field(
+        default=None, description="角色体型(双足/四足/无肢);未设置时下游按双足处理"
+    )
     templates: list[CharacterTemplateSequence] = Field(
         default_factory=list, description="角色各源方向母版与镜像关系"
     )
