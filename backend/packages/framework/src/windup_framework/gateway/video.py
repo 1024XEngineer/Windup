@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings as default_settings
-from windup_framework.gateway.errors import UpstreamExhaustedError
+from windup_framework.gateway.errors import RateLimitBackoff, UpstreamExhaustedError
 from windup_framework.gateway.billing import billing_flags, upstream_reached_label
 from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.context import current_call_context
@@ -168,6 +168,10 @@ class VideoGateway:
             fail(None)
 
         for route_index, route in enumerate(routes):
+            if route_index < ctx.i2v_route_skip:
+                fallback_used = True
+                route_reason_override = "key_rate_limit"
+                continue
             if self._circuit.is_open("base_url:" + route.base_url_id):
                 if route_index + 1 < len(routes):
                     fallback_used = True
@@ -225,7 +229,7 @@ class VideoGateway:
                 else:
                     route_reason = "fallback_after_upstream_fail"
 
-                retry_count = 0
+                retry_count = ctx.i2v_retry_count
                 resend_spent = 0
                 bound_job_id: str | None = None
                 while True:
@@ -398,6 +402,17 @@ class VideoGateway:
                     if step is NextStep.FALLBACK_KEY:
                         if bound_job_id is not None:
                             fail(last_http_status)
+                        if not follow and error_type is ModelErrorType.RATE_LIMIT:
+                            if has_next_route:
+                                raise RateLimitBackoff(
+                                    wait_s=rate_limit_wait_s(
+                                        retry_count=retry_count,
+                                        retry_after_s=result.retry_after_s,
+                                    ),
+                                    fallback_key=True,
+                                )
+                            self._circuit.open("aggregator")
+                            fail(last_http_status)
                         if has_next_route:
                             nxt = routes[route_index + 1]
                             time.sleep(
@@ -418,6 +433,14 @@ class VideoGateway:
                         fail(last_http_status)
                     if step is NextStep.RETRY_SAME:
                         if error_type is ModelErrorType.RATE_LIMIT:
+                            if not follow:
+                                raise RateLimitBackoff(
+                                    wait_s=rate_limit_wait_s(
+                                        retry_count=retry_count,
+                                        retry_after_s=result.retry_after_s,
+                                    ),
+                                    fallback_key=False,
+                                )
                             time.sleep(
                                 rate_limit_wait_s(
                                     retry_count=retry_count,

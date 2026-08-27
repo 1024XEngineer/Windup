@@ -30,6 +30,7 @@ from windup_common.directions import direction_prompt
 from windup_common.enums import ArtStyle
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 from windup_framework.gateway import bind_call_context, fresh_gateway_request
+from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.registry import (
     USER_GATED_MODELS,
     ModelRegistry,
@@ -50,8 +51,9 @@ from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.orchestrator.i2v_poll import ActionAwaitingVideo
 from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_media, is_own_media
 from windup_app.server.orchestrator.client_bake import ActionAwaitingClientBake
-from windup_app.server.orchestrator.signals import ActionRateLimited
-from windup_framework.gateway.errors import UpstreamExhaustedError
+from windup_app.server.mq import i2v_admit
+from windup_app.server.orchestrator.signals import ActionAwaitingAdmit, ActionRateLimited
+from windup_framework.gateway.errors import RateLimitBackoff, UpstreamExhaustedError
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
@@ -98,6 +100,10 @@ def _close_failed(session: Session, task_id: int, error_message: str) -> None:
         return
     task_repo.fail_task(session, task_id, error_message=error_message)
     _settle_credit(session, task_id, success=False)
+    try:
+        i2v_admit.release(task_id)
+    except Exception:
+        logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
 
 
 # ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
@@ -362,6 +368,8 @@ class ActionTaskExecutor:
                 _settle_credit(s, task_id, success=True)
 
             generation_io.using_session(session, self._make_session, _complete)
+        except ActionAwaitingAdmit:
+            logger.info("动作任务 %s 等待 i2v 名额或冷却,已挂延迟队列", task_id)
         except ActionAwaitingVideo:
             logger.info("动作任务 %s 已提交 i2v,等待延迟轮询", task_id)
         except ActionAwaitingClientBake:
@@ -377,6 +385,7 @@ class ActionTaskExecutor:
 
             generation_io.using_session(session, self._make_session, _reject)
         except UpstreamExhaustedError as exc:
+            i2v_admit.release(task_id)
             if not exc.is_free_retryable:
                 raise
             # 限流被拒:上游没建单、没扣配额。把任务放回 PENDING 让消费层稍后重投,
@@ -543,7 +552,38 @@ class ActionTaskExecutor:
                 if hasattr(gen, "start_video") and (
                     can_defer() if callable(can_defer) else True
                 ):
-                    job = gen.start_video(card, action, master, progress, canvas=canvas)
+                    if not i2v_admit.try_acquire(task_id):
+                        i2v_admit.schedule_retry(task_id, i2v_admit.ADMIT_RETRY_S)
+                        raise ActionAwaitingAdmit
+                    if not i2v_admit.can_submit(task_id):
+                        wait = i2v_admit.cooldown_remaining_s() or i2v_admit.ADMIT_RETRY_S
+                        i2v_admit.schedule_retry(task_id, wait)
+                        raise ActionAwaitingAdmit
+                    skip, retry_n = i2v_admit.retry_state(task_id)
+                    ctx = current_call_context()
+                    unbind_retry = bind_call_context(
+                        request_id=ctx.request_id,
+                        task_id=ctx.task_id,
+                        user_id=ctx.user_id,
+                        start_from_model=ctx.start_from_model,
+                        i2v_route_skip=skip,
+                        i2v_retry_count=retry_n,
+                    )
+                    try:
+                        job = gen.start_video(
+                            card, action, master, progress, canvas=canvas
+                        )
+                    except RateLimitBackoff as exc:
+                        wait = i2v_admit.on_rate_limit(
+                            wait_s=exc.wait_s,
+                            fallback_key=exc.fallback_key,
+                            task_id=task_id,
+                        )
+                        i2v_admit.schedule_retry(task_id, wait)
+                        raise ActionAwaitingAdmit from exc
+                    finally:
+                        unbind_retry()
+                    i2v_admit.clear_cooling()
                     i2v_poll.schedule(task_id, job, poll_count=0)
                     raise ActionAwaitingVideo
                 generated = gen.generate(card, action, master, progress, canvas=canvas)
@@ -605,6 +645,10 @@ class ActionTaskExecutor:
             finally:
                 reset_call()
             i2v_poll.clear(task_id)
+            try:
+                i2v_admit.release(task_id)
+            except Exception:
+                logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
 
             def _complete(s: Session) -> None:
                 task_repo.update_result(s, task_id, _ACTION_RESULT, result)
@@ -619,6 +663,10 @@ class ActionTaskExecutor:
                 task_repo.fail_task(s, task_id, error_message=error_message)
 
             generation_io.using_session(session, self._make_session, _reject)
+            try:
+                i2v_admit.release(task_id)
+            except Exception:
+                logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
         except Exception as exc:  # noqa: BLE001
             logger.exception("动作任务 %s 轮询失败", task_id)
             if session is not None:

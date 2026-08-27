@@ -8,7 +8,18 @@ from __future__ import annotations
 
 from windup_common.enums.model import ModelErrorType
 
-__all__ = ["UpstreamExhaustedError"]
+__all__ = ["RateLimitBackoff", "UpstreamExhaustedError"]
+
+
+class RateLimitBackoff(Exception):
+    """视频建单撞 429，这一跳到此为止，等待改由延迟队列做，不在线程里 sleep。"""
+
+    def __init__(self, *, wait_s: float, fallback_key: bool) -> None:
+        self.wait_s = wait_s
+        self.fallback_key = fallback_key
+        super().__init__(
+            f"rate limited wait_s={wait_s} fallback_key={fallback_key}"
+        )
 
 
 class UpstreamExhaustedError(RuntimeError):

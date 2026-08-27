@@ -432,6 +432,40 @@ def test_handle_generation_dispatches_action_task(db_session, engine, monkeypatc
     assert run_action.call_args.args[1].stance is CharacterStance.QUADRUPED
 
 
+def test_handle_generation_resumes_running_action_for_i2v_admit(
+    db_session, engine, monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_action(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterActionInput(
+            character_id=1,
+            action_type=ActionType.WALK,
+            num_frames=4,
+        ),
+    )
+    task_repo.update_status(db_session, task.id, TaskStatus.RUNNING)
+    db_session.commit()
+
+    run_action = MagicMock()
+    handle_generation(
+        {
+            "task_id": task.id,
+            "task_type": GenerationType.CHARACTER_ACTION.value,
+            "resume_i2v_admit": True,
+        },
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    run_action.assert_called_once()
+
+
 def test_handle_generation_unknown_type_raises(db_session, engine, monkeypatch):
     _patch_worker_session_local(monkeypatch, engine)
     seed_credit_account(db_session, 1)

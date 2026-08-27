@@ -165,7 +165,10 @@ def handle_generation(
         if task.is_terminal:
             logger.info("任务已终态，跳过执行 | task_id=%d status=%s", task_id, task.status)
             return
-        if task.status is TaskStatus.RUNNING:
+        resume_admit = bool(payload.get("resume_i2v_admit"))
+        if task.status is TaskStatus.RUNNING and not (
+            resume_admit and task_type == GenerationType.CHARACTER_ACTION.value
+        ):
             logger.info("任务 RUNNING 中，延后重试 | task_id=%d", task_id)
             raise HandlerDeferred(f"task {task_id} still running")
         billing_attempt = billing.attempt_for_task(task.task_type, task.input_payload)
