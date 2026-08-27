@@ -3,12 +3,12 @@ from __future__ import annotations
 from windup_common.enums.model import ModelErrorType
 from windup_framework.gateway.types import NextStep
 
-RATE_LIMIT_BACKOFF_BASE_S = 2.0
-RATE_LIMIT_SLEEP_CAP_S = 30.0
+RATE_LIMIT_BACKOFF_BASE_S = 8.0
+RATE_LIMIT_SLEEP_CAP_S = 60.0
 
 
 def rate_limit_wait_s(*, retry_count: int, retry_after_s: float | None) -> float:
-    """429 同 key 重试等待：2s、4s 指数退避，Retry-After 作下限，封顶 30s。"""
+    """429 等待：同 key 再试 8s，换 key 16s。Retry-After 作下限，封顶 60s。"""
     wait = RATE_LIMIT_BACKOFF_BASE_S * (2 ** retry_count)
     if retry_after_s is not None:
         wait = max(wait, retry_after_s)
@@ -39,7 +39,7 @@ def decide(
         return NextStep.FAIL
     if error_type is ModelErrorType.UNREACHED:
         return NextStep.OPEN_AGGREGATOR
-    if error_type is ModelErrorType.RATE_LIMIT and retry_count < 2:
+    if error_type is ModelErrorType.RATE_LIMIT and retry_count == 0:
         return NextStep.RETRY_SAME
     if error_type is ModelErrorType.RATE_LIMIT:
         return NextStep.FALLBACK_KEY

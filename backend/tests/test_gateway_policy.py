@@ -12,24 +12,23 @@ def test_522_retries_once_then_opens_aggregator():
     assert decide(error_type=ModelErrorType.UNREACHED, retry_count=1, has_job_id=False) is NextStep.OPEN_AGGREGATOR
 
 
-def test_429_retries_twice_then_fallback_key():
+def test_429_retries_once_then_fallback_key():
     assert decide(error_type=ModelErrorType.RATE_LIMIT, retry_count=0, has_job_id=False) is NextStep.RETRY_SAME
-    assert decide(error_type=ModelErrorType.RATE_LIMIT, retry_count=1, has_job_id=False) is NextStep.RETRY_SAME
-    assert decide(error_type=ModelErrorType.RATE_LIMIT, retry_count=2, has_job_id=False) is NextStep.FALLBACK_KEY
+    assert decide(error_type=ModelErrorType.RATE_LIMIT, retry_count=1, has_job_id=False) is NextStep.FALLBACK_KEY
 
 
 def test_429_backoff_is_exponential():
-    assert rate_limit_wait_s(retry_count=0, retry_after_s=None) == 2.0
-    assert rate_limit_wait_s(retry_count=1, retry_after_s=None) == 4.0
+    assert rate_limit_wait_s(retry_count=0, retry_after_s=None) == 8.0
+    assert rate_limit_wait_s(retry_count=1, retry_after_s=None) == 16.0
 
 
 def test_429_backoff_uses_retry_after_as_floor():
     assert rate_limit_wait_s(retry_count=0, retry_after_s=10.0) == 10.0
-    assert rate_limit_wait_s(retry_count=1, retry_after_s=3.0) == 4.0
+    assert rate_limit_wait_s(retry_count=1, retry_after_s=3.0) == 16.0
 
 
-def test_429_backoff_caps_at_30s():
-    assert rate_limit_wait_s(retry_count=0, retry_after_s=100.0) == 30.0
+def test_429_backoff_caps_at_60s():
+    assert rate_limit_wait_s(retry_count=0, retry_after_s=100.0) == 60.0
 
 
 def test_520_never_retries():

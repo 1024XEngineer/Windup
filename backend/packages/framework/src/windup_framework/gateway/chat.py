@@ -453,10 +453,22 @@ class ChatGateway:
                         break
                     if step is NextStep.FALLBACK_KEY:
                         if has_next_route:
+                            nxt = self._routes[route_index + 1]
+                            time.sleep(
+                                rate_limit_wait_s(
+                                    retry_count=retry_count,
+                                    retry_after_s=result.retry_after_s,
+                                )
+                            )
                             fallback_used = True
-                            route_reason_override = "key_rate_limit"
+                            if nxt.base_url_id != route.base_url_id:
+                                self._circuit.open("base_url:" + route.base_url_id)
+                                route_reason_override = "base_url_unreached"
+                            else:
+                                route_reason_override = "key_rate_limit"
                             switch_to_next_route = True
                             break
+                        self._circuit.open("aggregator")
                         fail(last_http_status)
                     if step is NextStep.RETRY_SAME:
                         if error_type is ModelErrorType.RATE_LIMIT:
