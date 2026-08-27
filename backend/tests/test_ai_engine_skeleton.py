@@ -39,6 +39,17 @@ def _tiny_png(color=(200, 60, 60, 255), shift=0) -> bytes:
     return buf.getvalue()
 
 
+def _large_subject_master() -> bytes:
+    """256 画布上 198px 高的确认母版,与 Issue #793 的生产样本占幅一致。"""
+    img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    for y in range(29, 227):
+        for x in range(100, 156):
+            img.putpixel((x, y), (30, 80, 180, 255))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
 class _NullProgress:
     def step(self, stage: str, i: int, total: int, note: str = "") -> None:
         pass
@@ -81,6 +92,45 @@ def test_generate_walk_is_wired_end_to_end():
     assert all(d > 0 for d in out.durations)
     assert set(out.durations) == {DEFAULT_FPS_MS["walk"]}
     assert all(f and f[:8] == b"\x89PNG\r\n\x1a\n" for f in out.frames)  # 真 PNG
+
+
+def _delivered_subject_height(frame: bytes) -> int:
+    rgba = Image.open(io.BytesIO(frame)).convert("RGBA")
+    box = rgba.getchannel("A").getbbox()
+    assert box is not None
+    return box[3] - box[1]
+
+
+def test_video_delivery_inherits_master_occupancy_for_native_and_pixel_outputs():
+    """原生与像素分支必须继承确认母版占幅,不能再统一压回 62%。"""
+    gen = _make_generator()
+    heights = []
+    for stylize in (Stylize.NONE, Stylize.PIXEL):
+        out = gen.generate(
+            CharacterCard(name="rogue", desc=""),
+            ActionSpec(action=ActionType.WALK, n_frames=4, stylize=stylize),
+            master=_large_subject_master(), progress=_NullProgress(),
+        )
+        heights.append(_delivered_subject_height(out.frames[0]))
+
+    assert all(abs(height - 198) <= 2 for height in heights), heights
+    assert abs(heights[0] - heights[1]) <= 2, heights
+
+
+class _DeferredWalkStrategy(_MockWalkStrategy):
+    def frames_from_video(self, video, card, action, master, progress) -> list[bytes]:
+        return [_tiny_png() for _ in range(action.n_frames)]
+
+
+def test_deferred_video_finish_reloads_master_occupancy():
+    """异步收口跨进程,仍要从母版重建占幅事实,不能退回固定 62%。"""
+    gen = CharacterGenerator({GenRoute.VIDEO_I2V: _DeferredWalkStrategy()})
+    out = gen.finish_video(
+        b"video", CharacterCard(name="rogue", desc=""),
+        ActionSpec(action=ActionType.WALK, n_frames=4, stylize=Stylize.NONE),
+        master=_large_subject_master(), progress=_NullProgress(),
+    )
+    assert abs(_delivered_subject_height(out.frames[0]) - 198) <= 2
 
 
 def test_action_spec_stylize_defaults_and_toggle():

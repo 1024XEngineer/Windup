@@ -157,6 +157,7 @@ def align_bottom_center(
     ref_height: float | None = None,
     cell_h: int | None = None,
     anchor: str = ANCHOR_FOOT,
+    resample: Image.Resampling = Image.Resampling.NEAREST,
 ) -> list[Image.Image]:
     """按脚线对齐到统一画布,消除逐帧画布漂移(Issue #21)。
 
@@ -189,6 +190,9 @@ def align_bottom_center(
     几何按"比例"而不是"像素"表达(``foot_line``/``fill_h``/``fill_w`` 都是比例),所以
     换画布尺寸不改变构图,母版入口预检(``master_check.REJECT_ASPECT`` = 2*FILL_W/FILL_H)
     与出帧仍共用同一套几何 —— 那条阈值里没有 cell,本来就与画布像素尺寸无关。
+
+    ``resample``:最后一次尺寸变换的采样方式。默认 NEAREST 保持已有像素资产逐像素兼容;
+    连续色调的原生视频帧应显式传 LANCZOS,避免缩小时把纹理抽成无意义硬色块。
     """
     import numpy as np
 
@@ -301,7 +305,7 @@ def align_bottom_center(
         else:
             lift = round((ground - box[3]) * fs) if preserve_lift else 0
             top = int(ch * foot_line) - h - lift
-        crop = crop.resize((w, h), Image.NEAREST)
+        crop = crop.resize((w, h), resample)
         canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
         canvas.alpha_composite(crop, (cw // 2 - w // 2, top))
         out.append(canvas)
