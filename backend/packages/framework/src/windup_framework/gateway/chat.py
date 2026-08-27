@@ -17,7 +17,7 @@ from windup_framework.gateway.billing import billing_flags, upstream_reached_lab
 from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.circuit import CircuitBreaker
 from windup_framework.gateway.context import current_call_context
-from windup_framework.gateway.policy import decide
+from windup_framework.gateway.policy import decide, rate_limit_wait_s
 from windup_framework.gateway.routes import (
     GatewayRoute,
     config_for_route,
@@ -30,8 +30,6 @@ from windup_framework.gateway.sequencer import AttemptSequencer
 from windup_framework.gateway.types import Family, NextStep, Scene
 
 _CIRCUIT = CircuitBreaker()
-_DEFAULT_RETRY_AFTER_S = 2.0
-_SLEEP_CAP_S = 30.0
 
 
 _ERROR_MESSAGE_LIMIT = 2_000
@@ -462,12 +460,12 @@ class ChatGateway:
                         fail(last_http_status)
                     if step is NextStep.RETRY_SAME:
                         if error_type is ModelErrorType.RATE_LIMIT:
-                            wait = (
-                                result.retry_after_s
-                                if result.retry_after_s is not None
-                                else _DEFAULT_RETRY_AFTER_S
+                            time.sleep(
+                                rate_limit_wait_s(
+                                    retry_count=retry_count,
+                                    retry_after_s=result.retry_after_s,
+                                )
                             )
-                            time.sleep(min(wait, _SLEEP_CAP_S))
                         retry_count += 1
                         continue
                     if step is NextStep.FALLBACK:

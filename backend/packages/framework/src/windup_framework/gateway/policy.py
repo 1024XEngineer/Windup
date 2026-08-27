@@ -3,6 +3,17 @@ from __future__ import annotations
 from windup_common.enums.model import ModelErrorType
 from windup_framework.gateway.types import NextStep
 
+RATE_LIMIT_BACKOFF_BASE_S = 2.0
+RATE_LIMIT_SLEEP_CAP_S = 30.0
+
+
+def rate_limit_wait_s(*, retry_count: int, retry_after_s: float | None) -> float:
+    """429 同 key 重试等待：2s、4s 指数退避，Retry-After 作下限，封顶 30s。"""
+    wait = RATE_LIMIT_BACKOFF_BASE_S * (2 ** retry_count)
+    if retry_after_s is not None:
+        wait = max(wait, retry_after_s)
+    return min(wait, RATE_LIMIT_SLEEP_CAP_S)
+
 
 def decide(
     *,

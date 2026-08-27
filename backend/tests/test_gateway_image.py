@@ -113,6 +113,34 @@ def test_429_does_not_switch_model_when_only_one_key(monkeypatch):
     assert "gemini-2.5-flash-image-alt" not in ad.calls
 
 
+def test_429_same_key_retries_use_exponential_backoff(monkeypatch):
+    slept: list[float] = []
+    monkeypatch.setattr("windup_framework.gateway.image.time.sleep", slept.append)
+    rate = AdapterResult(ok=False, error_type=ModelErrorType.RATE_LIMIT, http_status=429)
+    ad = FakeImageAdapter({"gemini-2.5-flash-image": [rate, rate, rate]})
+    gw = _make_gw(ad)
+    with pytest.raises(RuntimeError, match="429"):
+        gw.gen_image("p", [])
+    assert ad.calls == ["gemini-2.5-flash-image"] * 3
+    assert slept == [2.0, 4.0]
+
+
+def test_429_backoff_waits_at_least_retry_after(monkeypatch):
+    slept: list[float] = []
+    monkeypatch.setattr("windup_framework.gateway.image.time.sleep", slept.append)
+    rate = AdapterResult(
+        ok=False,
+        error_type=ModelErrorType.RATE_LIMIT,
+        http_status=429,
+        retry_after_s=10.0,
+    )
+    ad = FakeImageAdapter({"gemini-2.5-flash-image": [rate, rate, rate]})
+    gw = _make_gw(ad)
+    with pytest.raises(RuntimeError, match="429"):
+        gw.gen_image("p", [])
+    assert slept == [10.0, 10.0]
+
+
 def test_429_switches_key_on_same_base_url_before_model(monkeypatch, caplog):
     monkeypatch.setattr("windup_framework.gateway.image.time.sleep", lambda _: None)
     caplog.set_level(logging.INFO, logger="windup.gateway")
