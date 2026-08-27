@@ -11,6 +11,7 @@ import pathlib
 # CI 环境可能未配置真实凭据,在 import 触发 Settings 实例化前提供测试默认值。
 # setdefault 不覆盖已有的环境变量(本地 .env 或 CI secrets 优先生效)。
 os.environ.setdefault("JWT_SECRET", "test-secret-key-for-ci-only-32chars")
+os.environ.setdefault("ADMIN_JWT_SECRET", "test-admin-key-for-ci-only-32chars")
 os.environ.setdefault("POSTGRES_PASSWORD", "testpassword123")
 os.environ.setdefault("AI_GATEWAY_LEDGER_ENABLED", "false")
 
@@ -22,6 +23,15 @@ from sqlalchemy.pool import StaticPool
 
 from windup_app.bootstrap.app import create_app
 from windup_app.server.character.model import Character
+from windup_app.server.admin.audit import AdminAuditLog
+from windup_app.server.admin.model import (
+    AdminPermission,
+    AdminRefreshToken,
+    AdminRole,
+    AdminUser,
+    admin_role_permission,
+    admin_user_role,
+)
 from windup_app.server.project.model import Project
 from windup_app.server.quota.model import (
     CreditAccount,
@@ -122,6 +132,13 @@ def engine():
     Base.metadata.create_all(
         engine,
         tables=[
+            AdminUser.__table__,
+            AdminRole.__table__,
+            AdminPermission.__table__,
+            admin_user_role,
+            admin_role_permission,
+            AdminRefreshToken.__table__,
+            AdminAuditLog.__table__,
             Project.__table__,
             User.__table__,
             Character.__table__,

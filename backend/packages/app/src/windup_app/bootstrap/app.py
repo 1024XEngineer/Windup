@@ -19,6 +19,8 @@ from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDe
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
 from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
 from windup_ai_engine.impl.project_namer import LangChainProjectNamer
+from windup_app.server.admin import audit as admin_audit_model  # noqa: F401
+from windup_app.server.admin import model as admin_model  # noqa: F401
 from windup_app.server.character.model import Character  # noqa: F401
 from windup_app.server.character.service import service as character_service
 from windup_app.server.project.model import Project  # noqa: F401

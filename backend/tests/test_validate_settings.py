@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from windup_framework.config.admin_auth import AdminAuthSettings
 from windup_framework.config.database import DatabaseSettings
 from windup_framework.config.jwt import JWTSettings
 
@@ -30,6 +31,10 @@ def _no_env_files(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "windup_framework.config.database.DatabaseSettings.model_config",
         {**DatabaseSettings.model_config, "env_file": ()},
+    )
+    monkeypatch.setattr(
+        "windup_framework.config.admin_auth.AdminAuthSettings.model_config",
+        {**AdminAuthSettings.model_config, "env_file": ()},
     )
 
 
@@ -73,6 +78,27 @@ class TestJWTSettings:
         monkeypatch.setenv("JWT_SECRET", "a" * 64)
         s = JWTSettings()
         assert len(s.secret.get_secret_value()) == 64
+
+
+class TestAdminAuthSettings:
+    """管理员签名密钥必须与普通用户 JWT 独立，且满足同样的强度下限。"""
+
+    def test_missing_admin_secret_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ADMIN_JWT_SECRET", raising=False)
+        with pytest.raises(ValidationError, match="jwt_secret"):
+            AdminAuthSettings()
+
+    def test_short_admin_secret_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ADMIN_JWT_SECRET", "short")
+        with pytest.raises(ValidationError, match="32"):
+            AdminAuthSettings()
+
+    def test_admin_cookie_defaults_are_strict(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ADMIN_JWT_SECRET", "a" * 32)
+        settings = AdminAuthSettings()
+        assert settings.cookie_secure is True
+        assert settings.access_token_ttl_seconds == 900
+        assert settings.refresh_token_ttl_seconds == 604800
 
 
 # ── POSTGRES_PASSWORD ────────────────────────────────────────────
