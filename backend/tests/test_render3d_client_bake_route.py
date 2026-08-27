@@ -184,9 +184,13 @@ def test_server_render_carries_rig_facts_and_root_motion():
                 rig=RigInfo(bones=28, skinned_meshes=1, vertices=51388,
                             root_bone="Hips", loader="gltf"),
                 available_clips={"walk": 1.07, "idle": 10.03},
-                root_motion={"walk": {"unit": "1.0 = 角色总高",
-                                      "disp": [[0.0, 0.0], [0.05, 0.0], [0.1, 0.0], [0.15, 0.0]],
-                                      "total_span": 0.15}},
+                # **不要按片段名再包一层。** ``bake_driver.mjs`` 交回 meta 时已经拆过
+                # (``root_motion: rootMotion[clip] ?? null``),``sprite.py`` 原样透传 ——
+                # 所以 ``SpriteSheet.root_motion`` 就是这一段本身。桩多包一层的话,
+                # 生产里"多取一层导致恒为 None"这个真 bug 在测试里永远看不见(它就是这么合进来的)。
+                root_motion={"unit": "1.0 = 角色总高",
+                             "disp": [[0.0, 0.0], [0.05, 0.0], [0.1, 0.0], [0.15, 0.0]],
+                             "total_span": 0.15},
             )
 
     from windup_ai_engine.impl import CharacterGenerator

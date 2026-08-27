@@ -12,6 +12,8 @@ matte 抠图 → 像素化。返回对齐前的 RGBA PNG 帧（对齐 / 打包�
 
 from __future__ import annotations
 
+import contextvars
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -307,6 +309,27 @@ class PerFrameStrategy(DerivationStrategy):
 
 
 # Facing → 出帧台的朝向名。键名与前端导出模型的 ExportAction.sequences[].direction
+
+
+#: 这一次出帧算出来的骨架事实与位移轨。
+#:
+#: **不能挂在 strategy 实例上。** ``ActionTaskExecutor`` 是进程级单例,缓存的
+#: generator / strategy 被所有任务线程共用,而 action 并发默认 8 —— A 的 ``derive``
+#: 写完、A 的 ``_finish`` 读之前,B 的 ``derive`` 会把它覆盖,于是 A 的帧带着 B 的骨架
+#: 事实和 B 的位移轨(位移轨是每动作一份的)落库。帧、时长、成色全对,零报错。
+#:
+#: 用 ContextVar 而不是改 ``derive`` 的返回类型:那个形状是服务端渲与浏览器渲两个入口
+#: 共用的,为这一条改它会牵动两边。ContextVar 天然按线程/任务隔离,读写点都在同一次调用里。
+_DERIVED: contextvars.ContextVar[tuple[object, object] | None] = contextvars.ContextVar(
+    "windup_render3d_derived", default=None
+)
+
+
+def take_derived() -> tuple[object, object]:
+    """取走本次调用算出的 (rig, root_motion) 并清空。**取完即清**,免得下一次没算出来时读到上一次的。"""
+    got = _DERIVED.get()
+    _DERIVED.set(None)
+    return got if got is not None else (None, None)
 # 同域,不需要转换层。
 #
 # **值是真渲一遍量出来的,不能按方位名推。** 直觉上 "south = 朝观者",实际 n(yaw=90°)
@@ -320,14 +343,28 @@ def _root_motion_of(sheet, clip: str) -> list[tuple[float, float]] | None:
     形状是 ``{"unit":..., "times":[...], "disp":[[dx,dz],...], "total_span":...}``,
     只取 ``disp`` —— 时长由 ``frame_durations`` 另算,``unit`` 是常量写在字段注释里。
     """
-    raw = (sheet.root_motion or {}) if isinstance(sheet.root_motion, dict) else {}
-    entry = raw.get(clip) if isinstance(raw, dict) else None
-    if not isinstance(entry, dict):
+    # **不要再按片段名取一层。** 出帧台确实按片段名归档,但 ``bake_driver.mjs`` 交回
+    # ``meta`` 时已经拆过了(``root_motion: rootMotion[clip] ?? null``),
+    # ``sprite.py`` 原样透传 —— 所以到这里 ``sheet.root_motion`` 就是那一段本身。
+    # 再 ``.get(clip)`` 一次恒得 None,而服务端渲那条 100% 走这里:任务照常 COMPLETED、
+    # 帧数时长成色全对,只是位移轨永远是空的。
+    entry = sheet.root_motion if isinstance(sheet.root_motion, dict) else None
+    if not entry:
         return None
     disp = entry.get("disp")
     if not isinstance(disp, list):
         return None
-    return [(float(x), float(z)) for x, z in disp if isinstance(x, (int, float))]
+    out: list[tuple[float, float]] = []
+    for pair in disp:
+        # 逐条校验**两个**分量再解包。原来写成 ``for x, z in disp if isinstance(x, ...)``:
+        # 解包发生在守卫之前,长度不是 2 的条目照样 ValueError;而 z 是脏值时 float(z)
+        # 直接抛,穿出 derive 把任务打成失败。守卫命中时也不能丢掉这一条 —— 丢一条就让
+        # 位移轨比帧数短,索引静默错位。脏数据一律整条作废,不留半截。
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+                or not all(isinstance(v, (int, float)) for v in pair)):
+            return None
+        out.append((float(pair[0]), float(pair[1])))
+    return out
 
 
 def _coverage(png: bytes) -> float:
@@ -392,8 +429,6 @@ class RenderFrameStrategy(DerivationStrategy):
         self._size = size or RENDER_SIZE
         self._min_coverage = min_coverage
         # 最近一次出帧读到的骨架事实与位移轨,由 _finish 取走(见 derive)。
-        self._last_rig: RigFacts | None = None
-        self._last_root_motion: list[tuple[float, float]] | None = None
 
     def derive(
         self,
@@ -454,10 +489,9 @@ class RenderFrameStrategy(DerivationStrategy):
         # 那条分支在生产里无条件不成立。留着会让人以为多朝向已经算好了只是没带出来。
         progress.step("derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧")
 
-        # 出帧台读到的骨架事实与根骨位移轨此前算完即丢(#774)。留在实例上由
-        # CharacterGenerator._finish 取走 —— derive 的返回类型是帧列表,是两个入口
-        # (服务端渲 / 浏览器渲)共用的形状,不为这一条改它。
-        self._last_rig = RigFacts(
+        # 出帧台读到的骨架事实与根骨位移轨此前算完即丢(#774)。放进 ContextVar 由
+        # CharacterGenerator._finish 取走 —— 见 ``_DERIVED`` 上方:挂实例字段会在并发下串味。
+        rig_facts = RigFacts(
             bones=sheet.rig.bones,
             root_bone=sheet.rig.root_bone,
             bone_names=tuple(getattr(sheet.rig, "bone_names", ()) or ()),
@@ -465,7 +499,7 @@ class RenderFrameStrategy(DerivationStrategy):
             vertices=sheet.rig.vertices,
             available_clips=dict(sheet.available_clips or {}),
         )
-        self._last_root_motion = _root_motion_of(sheet, plan.clip)
+        _DERIVED.set((rig_facts, _root_motion_of(sheet, plan.clip)))
 
         return self._stylize(frames, action, progress)
 
