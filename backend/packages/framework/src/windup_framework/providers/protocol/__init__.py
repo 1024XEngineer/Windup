@@ -1,3 +1,4 @@
+from .agnes_video import AGNES_VIDEO_25, AgnesVideoProtocol
 from .fal_queue import (
     FAL_I2V_ENDPOINTS,
     FalQueueVideoProtocol,
@@ -15,6 +16,8 @@ from .openai_video import IMAGE_LIST_MODELS, OpenAIVideoProtocol
 from .types import HttpCall, JobProtocol, VideoRequest
 
 __all__ = [
+    "AGNES_VIDEO_25",
+    "AgnesVideoProtocol",
     "FAL_I2V_ENDPOINTS",
     "FAL_IMAGE_ENDPOINTS",
     "IMAGE_LIST_MODELS",

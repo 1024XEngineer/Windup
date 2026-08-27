@@ -49,6 +49,10 @@ class AIProviderSettings(BaseSettings):
     # 用途是组内做高质量素材,不面向客户。空值 = 没有任何人可用(默认)。
     # 逗号分隔的用户 id,如 "1,7,12"。
     video_veo_user_ids: str = ""
+    # Agnes 使用独立国际站凭证，不复用 Modelink 的全局 base_url/api_key。
+    # Key 只从部署环境读取；为空时 provider 会在上传首帧和发请求之前拒绝建单。
+    video_agnes_base_url: str = "https://apihub.agnes-ai.com/v1"
+    video_agnes_api_key: str = ""
 
     chat_fallbacks: str = ""
     image_fallbacks: str = "gemini-3.1-flash-image-preview"

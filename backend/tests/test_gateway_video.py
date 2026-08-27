@@ -41,6 +41,64 @@ def _video_gw(adapter, circuit=None) -> VideoGateway:
         settings=cfg,
     )
 
+
+def _agnes_gw(adapter, circuit=None) -> VideoGateway:
+    cfg = AIProviderSettings(
+        video_model="agnes-video-2.5",
+        video_fallbacks="kling-v2-5-turbo,kling-v2-6",
+    )
+    return VideoGateway(
+        registry=ModelRegistry.from_settings(cfg),
+        adapter=adapter,
+        circuit=circuit or CircuitBreaker(cooldown_s=60),
+        settings=cfg,
+    )
+
+
+def test_agnes_rate_limit_falls_back_to_kling_after_retries(monkeypatch):
+    """Agnes 使用独立 key，耗尽重试后不能误走 Modelink 的 key 路由。"""
+    monkeypatch.setattr("windup_framework.gateway.video.time.sleep", lambda _: None)
+    rate = AdapterResult(
+        ok=False,
+        error_type=ModelErrorType.RATE_LIMIT,
+        http_status=429,
+        retry_after_s=0,
+    )
+    adapter = FakeVideoAdapter(
+        submits={
+            "agnes-video-2.5": [rate, rate, rate],
+            "kling-v2-5-turbo": [
+                AdapterResult(ok=True, job_id="kling-job", maybe_billed=True)
+            ],
+            "kling-v2-6": [],
+        },
+        follows={"kling-job": MP4},
+    )
+
+    assert _agnes_gw(adapter).i2v(b"frame", "walk") == MP4.body
+    assert adapter.submit_models == ["agnes-video-2.5"] * 3 + ["kling-v2-5-turbo"]
+
+
+def test_agnes_unreached_falls_back_to_kling_after_safe_retry():
+    """Agnes 请求未到上游时安全重试一次，仍失败则启用 Kling。"""
+    adapter = FakeVideoAdapter(
+        submits={
+            "agnes-video-2.5": [UNREACHED, UNREACHED],
+            "kling-v2-5-turbo": [
+                AdapterResult(ok=True, job_id="kling-job", maybe_billed=True)
+            ],
+            "kling-v2-6": [],
+        },
+        follows={"kling-job": MP4},
+    )
+
+    assert _agnes_gw(adapter).i2v(b"frame", "walk") == MP4.body
+    assert adapter.submit_models == [
+        "agnes-video-2.5",
+        "agnes-video-2.5",
+        "kling-v2-5-turbo",
+    ]
+
 def test_submit_522_retries_once_does_not_open_second_job_on_fallback_model():
     ad = FakeVideoAdapter(
         submits={"kling-v2-5-turbo": [UNREACHED, UNREACHED], "kling-v2-6": [
@@ -314,13 +372,15 @@ def test_poll_i2v_pending_then_download():
                 edge_fingerprint="https://cdn.example.com/out.mp4",
             )
 
-        def download_completed(self, job_id, url):
+        def download_completed(self, job_id, url, model=None):
+            self.followed.append(f"download:{model}")
             return AdapterResult(ok=True, body=b"mp4-bytes", job_id=job_id, job_status="completed")
 
     ad = _PollAdapter(submits={}, follows={})
-    result = _video_gw(ad).poll_i2v("j-start")
+    result = _video_gw(ad).poll_i2v("j-start", model="kling-v2-5-turbo")
     assert result.ok
     assert result.body == b"mp4-bytes"
+    assert ad.followed == ["inspect:j-start", "download:kling-v2-5-turbo"]
 
 
 def test_poll_i2v_still_pending():

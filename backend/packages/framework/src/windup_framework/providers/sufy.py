@@ -44,6 +44,7 @@ from windup_framework.gateway.types import AdapterResult
 
 from .interfaces import FirstFrameUploader, ImageProvider, VideoProvider
 from .protocol import HttpCall, VideoRequest
+from .protocol.agnes_video import AGNES_VIDEO_25, AgnesVideoProtocol
 from .protocol.fal_queue import VeoQueueVideoProtocol
 from .protocol.image_faces import FalQueueImageFace, OpenAIImagesFace
 from .protocol.openai_video import OpenAIVideoProtocol, fit_first_frame
@@ -123,6 +124,11 @@ class SufyVideoProvider(VideoProvider):
             return VeoQueueVideoProtocol(
                 self._cfg.api_key, base_url=self._cfg.normalized_base_url
             )
+        if FAMILIES.get(model or "") is Family.VIDEO_AGNES:
+            return AgnesVideoProtocol(
+                self._cfg.video_agnes_api_key,
+                base_url=self._cfg.video_agnes_base_url,
+            )
         return OpenAIVideoProtocol(self._cfg.api_key)
 
     def _first_frame_url(self, first_frame: bytes, size: str) -> str:
@@ -133,17 +139,32 @@ class SufyVideoProvider(VideoProvider):
         """
         if self._uploader is None:
             raise RuntimeError(
-                "veo 首帧只吃公网 URL,但本 provider 没有注入 uploader;"
+                "当前视频模型首帧只吃公网 URL,但本 provider 没有注入 uploader;"
                 "组装层要传 FirstFrameUploader 进来"
             )
         return self._uploader.upload(fit_first_frame(first_frame, size), "image/jpeg")
 
-    def _client(self) -> httpx.Client:
+    def _client(self, model: str | None = None) -> httpx.Client:
+        from windup_framework.gateway.registry import FAMILIES
+        from windup_framework.gateway.types import Family
+
+        if FAMILIES.get(model or "") is Family.VIDEO_AGNES:
+            base_url = self._cfg.video_agnes_base_url.rstrip("/")
+            api_key = self._cfg.video_agnes_api_key
+        else:
+            base_url = self._cfg.normalized_base_url
+            api_key = self._cfg.api_key
         return httpx.Client(
-            base_url=self._cfg.normalized_base_url,
-            headers={"Authorization": f"Bearer {self._cfg.api_key}"},
+            base_url=base_url,
+            headers={"Authorization": f"Bearer {api_key}"},
             timeout=self._cfg.timeout,
         )
+
+    def _client_for(self, model: str | None):
+        """Agnes 取专属凭证；其余型号保留既有无参 ``_client()`` 调用契约。"""
+        if model == AGNES_VIDEO_25:
+            return self._client(model)
+        return self._client()
 
     def submit_video(
         self,
@@ -154,6 +175,13 @@ class SufyVideoProvider(VideoProvider):
         model: str,
     ) -> AdapterResult:
         """一次 POST 建单。成功: ok=True, job_id, body=b"", maybe_billed=True。"""
+        if model == AGNES_VIDEO_25 and not self._cfg.video_agnes_api_key.strip():
+            return AdapterResult(
+                ok=False,
+                error_type=ModelErrorType.UNREACHED,
+                maybe_billed=False,
+                edge_fingerprint="建单前被拒: AI_VIDEO_AGNES_API_KEY 未配置",
+            )
         protocol = self._protocol_for(model)
         req = VideoRequest(
             model=model,
@@ -163,7 +191,7 @@ class SufyVideoProvider(VideoProvider):
             mode=self._mode,
             first_frame=first_frame,
         )
-        if isinstance(protocol, VeoQueueVideoProtocol):
+        if isinstance(protocol, (VeoQueueVideoProtocol, AgnesVideoProtocol)):
             # 只有这一面需要先上传、且有一组建单前的硬断言,所以 try 只包住它 ——
             # 包住 kling 那条会顺手改掉一条跑在线上的路径的失败语义,而那不是本次要动的东西。
             # 失败一律记 maybe_billed=False:这一步还没碰上游,和"发出去了但不知道结果"
@@ -181,7 +209,7 @@ class SufyVideoProvider(VideoProvider):
                 )
         else:
             call = protocol.build_submit(req)
-        with self._client() as client:
+        with self._client_for(model) as client:
             try:
                 resp = client.request(
                     call.method, call.path, json=call.body, headers=dict(call.headers)
@@ -200,7 +228,7 @@ class SufyVideoProvider(VideoProvider):
         veo 的单据在那条路径上是 404,所以异步轮询那条链必须把型号一路带下来。
         """
         protocol = self._protocol_for(model)
-        with self._client() as client:
+        with self._client_for(model) as client:
             resp = _poll_get(client, protocol.build_poll(job_id))
             parsed = protocol.parse_poll(resp, job_id)
             if parsed.error_type is not None or not parsed.ok:
@@ -281,14 +309,16 @@ class SufyVideoProvider(VideoProvider):
                 poll_ms=poll_ms,
                 poll_count=poll_count,
             )
-        downloaded = self.download_completed(job_id, url)
+        downloaded = self.download_completed(job_id, url, model=model)
         return with_poll(downloaded, download_ms=downloaded.download_ms)
 
-    def download_completed(self, job_id: str, url: str) -> AdapterResult:
+    def download_completed(
+        self, job_id: str, url: str, model: str | None = None
+    ) -> AdapterResult:
         """按 inspect 拿到的 URL 下载 mp4,不轮询。"""
         try:
             download_t0 = time.monotonic()
-            with self._client() as client:
+            with self._client_for(model) as client:
                 body = _download(client, url)
             download_ms = int((time.monotonic() - download_t0) * 1000)
         except RuntimeError as exc:

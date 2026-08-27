@@ -20,6 +20,7 @@ class Family(str, Enum):
     VIDEO_INPUT_REFERENCE = "video.input_reference"
     VIDEO_IMAGE_LIST = "video.image_list"
     VIDEO_FAL_QUEUE = "video.fal_queue"
+    VIDEO_AGNES = "video.agnes"
 
 
 #: 每个 scene 允许出现哪些 family。链上混不同 family 是合法的 —— 兜底型号与主型号
@@ -34,6 +35,7 @@ SCENE_FAMILIES: dict[Scene, frozenset[Family]] = {
     Scene.CHARACTER_ACTION: frozenset({
         Family.VIDEO_INPUT_REFERENCE,
         Family.VIDEO_FAL_QUEUE,
+        Family.VIDEO_AGNES,
     }),
 }
 

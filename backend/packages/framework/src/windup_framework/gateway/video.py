@@ -29,7 +29,7 @@ from windup_framework.gateway.trace import (
     hash_bytes,
     hash_image_input,
 )
-from windup_framework.gateway.types import AdapterResult, NextStep, Scene
+from windup_framework.gateway.types import AdapterResult, Family, NextStep, Scene
 
 _DEFAULT_RETRY_AFTER_S = 2.0
 _SLEEP_CAP_S = 30.0
@@ -95,7 +95,9 @@ class VideoGateway:
             snap = adapter.inspect_job(job_id, model=model)
             if snap.ok and snap.job_status == "completed" and snap.edge_fingerprint:
                 if hasattr(adapter, "download_completed"):
-                    return adapter.download_completed(job_id, snap.edge_fingerprint)
+                    return adapter.download_completed(
+                        job_id, snap.edge_fingerprint, model=model
+                    )
             return snap
         return adapter.follow_job(job_id, model=model)
 
@@ -331,6 +333,17 @@ class VideoGateway:
                         has_job_id=has_job_id,
                     )
                     has_next_route = route_index + 1 < len(routes)
+                    has_next_model = i + 1 < len(models)
+                    uses_isolated_model_credentials = (
+                        self._registry.family_of(model) is Family.VIDEO_AGNES
+                    )
+                    if (
+                        uses_isolated_model_credentials
+                        and bound_job_id is None
+                        and has_next_model
+                        and step in (NextStep.OPEN_AGGREGATOR, NextStep.FALLBACK_KEY)
+                    ):
+                        step = NextStep.FALLBACK
                     if step is NextStep.FAIL and bound_job_id is None:
                         tier_step = budget.tier_b_escalation(
                             error_type,
@@ -418,13 +431,15 @@ class VideoGateway:
                             and error_type is not ModelErrorType.UPSTREAM_FAILED
                         ):
                             fail(last_http_status)
+                        allowed_pre_submit_fallbacks = {
+                            ModelErrorType.RATE_LIMIT,
+                            ModelErrorType.MODEL_NOT_FOUND,
+                        }
+                        if uses_isolated_model_credentials:
+                            allowed_pre_submit_fallbacks.add(ModelErrorType.UNREACHED)
                         if (
                             bound_job_id is None
-                            and error_type
-                            not in (
-                                ModelErrorType.RATE_LIMIT,
-                                ModelErrorType.MODEL_NOT_FOUND,
-                            )
+                            and error_type not in allowed_pre_submit_fallbacks
                         ):
                             fail(last_http_status)
                         fallback_used = True
