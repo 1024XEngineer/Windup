@@ -13,11 +13,14 @@ from sqlalchemy.orm import sessionmaker
 
 from conftest import seed_credit_account
 from windup_app.server.mq.catalog import (
+    GENERATION_ACTION_STREAM,
     GENERATION_IMAGE_STREAM,
     MSG_TYPE_CHARACTER_ACTION,
     MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
     MSG_TYPE_VERIFICATION_CODE,
+    POOL_POLL,
+    POOL_SHARED,
 )
 from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.orchestrator.model import (
@@ -542,6 +545,7 @@ def test_consumer_claim_idle_submits_messages(engine, monkeypatch):
 
     def fake_claim(*_args, **_kwargs):
         claim_calls["count"] += 1
+        assert _kwargs.get("count") == 1
         if claim_calls["count"] == 1:
             return ([("2-0", {"data": "{}"})], "2-0")
         return ([], "2-0")
@@ -672,6 +676,96 @@ def test_consumer_skips_xreadgroup_when_image_slots_full(engine, monkeypatch):
         thread.join(timeout=3)
     finally:
         release.set()
+        stop.set()
+        consumer.shutdown()
+
+
+def test_consumer_does_not_queue_action_beyond_shared_pool(engine, monkeypatch):
+    """动作共享池满时，多领到的 action 不得进执行器队列；poll 槽空着也不能拿去堆 action。"""
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_ACTION_CONCURRENCY", "1")
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_POLL_CONCURRENCY", "2")
+    _patch_worker_session_local(monkeypatch, engine)
+
+    stop = threading.Event()
+    redis_mock = MagicMock()
+    monkeypatch.setattr("windup_app.worker.consumer.get_redis", lambda: redis_mock)
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.mq_client.ensure_consumer_group",
+        lambda *_a: None,
+    )
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.mq_client.claim_idle_messages",
+        lambda *_a, **_k: ([], "0-0"),
+    )
+
+    first_started = threading.Event()
+    first_release = threading.Event()
+    second_started = threading.Event()
+
+    def fake_process(_self, stream_id, _fields):
+        if stream_id == "a-0":
+            first_started.set()
+            first_release.wait(timeout=5)
+            return
+        second_started.set()
+        stop.set()
+
+    monkeypatch.setattr(StreamConsumer, "_process_message", fake_process)
+
+    extra = {
+        "data": json.dumps(
+            {
+                "v": 1,
+                "id": str(uuid.uuid4()),
+                "type": MSG_TYPE_CHARACTER_ACTION,
+                "payload": {"task_id": 2, "task_type": "character_action"},
+            }
+        )
+    }
+
+    def fake_xreadgroup(*_args, **_kwargs):
+        if stop.is_set() or second_started.is_set():
+            return []
+        return [(GENERATION_ACTION_STREAM, [("a-1", extra)])]
+
+    monkeypatch.setattr("windup_app.worker.consumer.mq_client.xreadgroup", fake_xreadgroup)
+
+    consumer = StreamConsumer(
+        ConsumerConfig(
+            stream=GENERATION_ACTION_STREAM,
+            group="generation-action",
+            concurrency=1,
+        ),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=stop,
+    )
+    try:
+        consumer._submit_message(
+            "a-0",
+            {
+                "data": json.dumps(
+                    {
+                        "v": 1,
+                        "id": str(uuid.uuid4()),
+                        "type": MSG_TYPE_CHARACTER_ACTION,
+                        "payload": {"task_id": 1, "task_type": "character_action"},
+                    }
+                )
+            },
+        )
+        assert first_started.wait(timeout=5)
+        assert consumer._pool_has_slot(POOL_SHARED) is False
+        assert consumer._pool_has_slot(POOL_POLL) is True
+        assert consumer._has_free_slot() is True
+        thread = consumer.start()
+        assert second_started.wait(timeout=0.4) is False
+        first_release.set()
+        assert second_started.wait(timeout=5)
+        stop.set()
+        thread.join(timeout=3)
+    finally:
+        first_release.set()
         stop.set()
         consumer.shutdown()
 
