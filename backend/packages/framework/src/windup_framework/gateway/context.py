@@ -12,6 +12,8 @@ class CallContext:
     task_id: str | None = None
     user_id: str | None = None
     start_from_model: str | None = None
+    i2v_route_skip: int = 0
+    i2v_retry_count: int = 0
 
 
 _call_context: ContextVar[CallContext] = ContextVar("windup_gateway_call_context", default=CallContext())
@@ -27,6 +29,8 @@ def bind_call_context(
     task_id: str | None = None,
     user_id: str | None = None,
     start_from_model: str | None = None,
+    i2v_route_skip: int = 0,
+    i2v_retry_count: int = 0,
 ) -> Callable[[], None]:
     token: Token[CallContext] = _call_context.set(
         CallContext(
@@ -34,6 +38,8 @@ def bind_call_context(
             task_id=task_id,
             user_id=user_id,
             start_from_model=start_from_model,
+            i2v_route_skip=i2v_route_skip,
+            i2v_retry_count=i2v_retry_count,
         )
     )
 
@@ -51,4 +57,6 @@ def fresh_gateway_request(**overrides: str | None) -> Callable[[], None]:
         task_id=overrides.get("task_id", ctx.task_id),
         user_id=overrides.get("user_id", ctx.user_id),
         start_from_model=overrides.get("start_from_model", ctx.start_from_model),
+        i2v_route_skip=ctx.i2v_route_skip,
+        i2v_retry_count=ctx.i2v_retry_count,
     )

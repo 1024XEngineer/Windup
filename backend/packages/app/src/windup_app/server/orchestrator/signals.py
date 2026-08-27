@@ -7,7 +7,11 @@
 
 from __future__ import annotations
 
-__all__ = ["ActionRateLimited"]
+__all__ = ["ActionAwaitingAdmit", "ActionRateLimited"]
+
+
+class ActionAwaitingAdmit(Exception):
+    """在途名额满了或账号在 429 冷却里。任务保持 RUNNING，延迟后再打上游。"""
 
 
 class ActionRateLimited(Exception):

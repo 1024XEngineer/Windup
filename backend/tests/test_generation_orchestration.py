@@ -646,6 +646,22 @@ def test_action_task_parks_i2v_and_stays_running(session_factory, monkeypatch):
         "windup_app.server.orchestrator.i2v_poll.schedule",
         lambda task_id, job, **kw: parked.append({"task_id": task_id, "job": job, **kw}),
     )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.try_acquire",
+        lambda _task_id: True,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.can_submit",
+        lambda _task_id: True,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.clear_cooling",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.retry_state",
+        lambda _task_id: (0, 0),
+    )
     service = AiGenerationService()
     executor = ActionTaskExecutor(
         generator=_AsyncGen(),
