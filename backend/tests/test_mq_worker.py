@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from conftest import seed_credit_account
 from windup_app.server.mq.catalog import (
+    GENERATION_IMAGE_STREAM,
     MSG_TYPE_CHARACTER_ACTION,
     MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
@@ -606,6 +607,73 @@ def test_consumer_loop_reads_and_processes_one_message(
     stop.set()
     consumer.shutdown()
     thread.join(timeout=3)
+
+
+def test_consumer_skips_xreadgroup_when_image_slots_full(engine, monkeypatch):
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", "1")
+    _patch_worker_session_local(monkeypatch, engine)
+
+    stop = threading.Event()
+    redis_mock = MagicMock()
+    monkeypatch.setattr("windup_app.worker.consumer.get_redis", lambda: redis_mock)
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.mq_client.ensure_consumer_group",
+        lambda *_a: None,
+    )
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.mq_client.claim_idle_messages",
+        lambda *_a, **_k: ([], "0-0"),
+    )
+    xread_calls: list[int] = []
+
+    def fake_xreadgroup(*_args, **_kwargs):
+        xread_calls.append(1)
+        stop.wait(timeout=0.2)
+        return []
+
+    monkeypatch.setattr("windup_app.worker.consumer.mq_client.xreadgroup", fake_xreadgroup)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_process(_self, _stream_id, _fields):
+        started.set()
+        release.wait(timeout=5)
+
+    monkeypatch.setattr(StreamConsumer, "_process_message", fake_process)
+
+    consumer = StreamConsumer(
+        ConsumerConfig(stream=GENERATION_IMAGE_STREAM, group="generation-image", concurrency=1),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=stop,
+    )
+    try:
+        consumer._submit_message(
+            "i-0",
+            {
+                "data": json.dumps(
+                    {
+                        "v": 1,
+                        "id": str(uuid.uuid4()),
+                        "type": MSG_TYPE_CHARACTER_IMAGE,
+                        "payload": {"task_id": 1, "task_type": "character_image"},
+                    }
+                )
+            },
+        )
+        assert started.wait(timeout=5)
+        assert consumer._has_free_slot() is False
+        thread = consumer.start()
+        assert stop.wait(timeout=0.3) is False
+        assert xread_calls == []
+        release.set()
+        stop.set()
+        thread.join(timeout=3)
+    finally:
+        release.set()
+        stop.set()
+        consumer.shutdown()
 
 
 def test_start_relay_loop_invokes_relay(monkeypatch):

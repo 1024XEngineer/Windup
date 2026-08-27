@@ -96,6 +96,9 @@ class StreamConsumer:
         self._image_sem = self._semaphores.get(MSG_TYPE_CHARACTER_IMAGE)
         self._action_sem = self._semaphores.get(MSG_TYPE_CHARACTER_ACTION)
         self._poll_sem = self._semaphores.get(MSG_TYPE_CHARACTER_ACTION_POLL)
+        self._slot_capacity = sum(pool_sizes.values())
+        self._inflight = 0
+        self._inflight_lock = threading.Lock()
         self._claim_cursor = "0-0"
         self._last_claim_at = 0.0
 
@@ -127,6 +130,10 @@ class StreamConsumer:
                 self._claim_idle(redis_client)
                 self._last_claim_at = now
 
+            if not self._has_free_slot():
+                self._stop.wait(timeout=0.05)
+                continue
+
             try:
                 batches = mq_client.xreadgroup(
                     redis_client,
@@ -144,14 +151,35 @@ class StreamConsumer:
                 for stream_id, fields in messages:
                     self._submit_message(stream_id, fields)
 
+    def _has_free_slot(self) -> bool:
+        with self._inflight_lock:
+            return self._inflight < self._slot_capacity
+
+    def _free_slots(self) -> int:
+        with self._inflight_lock:
+            return max(0, self._slot_capacity - self._inflight)
+
+    def _acquire_slot(self) -> None:
+        with self._inflight_lock:
+            self._inflight += 1
+
+    def _release_slot(self) -> None:
+        with self._inflight_lock:
+            if self._inflight > 0:
+                self._inflight -= 1
+
     def _claim_idle(self, redis_client) -> None:
         while not self._stop.is_set():
+            free = self._free_slots()
+            if free <= 0:
+                break
             claimed, next_start = mq_client.claim_idle_messages(
                 redis_client,
                 self._config.stream,
                 self._config.group,
                 self._consumer_name,
                 start_id=self._claim_cursor,
+                count=free,
             )
             self._claim_cursor = next_start
             for stream_id, fields in claimed:
@@ -160,7 +188,19 @@ class StreamConsumer:
                 break
 
     def _submit_message(self, stream_id: str, fields: dict[str, str]) -> None:
-        self._executor_for(fields).submit(self._process_message, stream_id, fields)
+        self._acquire_slot()
+        try:
+            future = self._executor_for(fields).submit(
+                self._process_message, stream_id, fields
+            )
+        except Exception:
+            self._release_slot()
+            raise
+        done = getattr(future, "add_done_callback", None)
+        if done is None:
+            self._release_slot()
+            return
+        done(lambda _f: self._release_slot())
 
     def _executor_for(self, fields: dict[str, str]) -> ThreadPoolExecutor:
         try:

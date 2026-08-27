@@ -424,6 +424,7 @@ def test_recover_requeues_pending_tasks_with_open_freeze(session_factory):
     assert len(enqueued) == 1
     assert enqueued[0]["dedupe_key"] == f"generation:{task_id}"
     assert enqueued[0]["msg_type"] == "character_action"
+    assert enqueued[0]["stream"] == "windup:stream:generation-action"
     assert enqueued[0]["payload"]["task_id"] == task_id
 
     with session_factory() as session:
@@ -616,6 +617,7 @@ def test_recover_requeues_pending_image_tasks(session_factory):
 
     assert len(enqueued) == 1
     assert enqueued[0]["msg_type"] == "character_image"
+    assert enqueued[0]["stream"] == "windup:stream:generation-image"
     assert enqueued[0]["payload"]["task_id"] == task_id
 
 

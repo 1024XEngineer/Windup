@@ -7,7 +7,13 @@ import signal
 import threading
 import time
 
-from windup_app.server.mq.catalog import all_stream_specs, email_stream_spec, generation_stream_spec
+from windup_app.server.mq.catalog import (
+    all_stream_specs,
+    email_stream_spec,
+    generation_action_stream_spec,
+    generation_image_stream_spec,
+    generation_stream_spec,
+)
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.executor import (
     bind_matte,
@@ -67,6 +73,18 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
+    def _generation_consumer(spec):
+        return StreamConsumer(
+            spec,
+            run_image_task=run_image_task,
+            run_action_task=run_action_task,
+            run_direction_set_task=run_direction_set_task,
+            run_view_sheet_task=run_view_sheet_task,
+            stop_event=stop_event,
+            resume_action_poll=resume_action_poll,
+            resume_action_client_bake=resume_action_client_bake,
+        )
+
     consumers = [
         StreamConsumer(
             email_stream_spec(),
@@ -76,16 +94,10 @@ def main() -> None:
             run_view_sheet_task=run_view_sheet_task,
             stop_event=stop_event,
         ),
-        StreamConsumer(
-            generation_stream_spec(),
-            run_image_task=run_image_task,
-            run_action_task=run_action_task,
-            run_direction_set_task=run_direction_set_task,
-            run_view_sheet_task=run_view_sheet_task,
-            stop_event=stop_event,
-            resume_action_poll=resume_action_poll,
-            resume_action_client_bake=resume_action_client_bake,
-        ),
+        _generation_consumer(generation_image_stream_spec()),
+        _generation_consumer(generation_action_stream_spec()),
+        # 过渡 drain：切流前已进旧 generation Stream 的消息还要被消费。
+        _generation_consumer(generation_stream_spec()),
     ]
     threads = [consumer.start() for consumer in consumers]
     relay_thread = start_relay_loop(stop_event)
@@ -99,7 +111,10 @@ def main() -> None:
     )
     pending_thread.start()
 
-    logger.info("windup worker 已启动 | streams=%s", [s.stream for s in all_stream_specs()])
+    logger.info(
+        "windup worker 已启动 | streams=%s",
+        [s.stream for s in (*all_stream_specs(), generation_stream_spec())],
+    )
 
     try:
         while not stop_event.is_set():
