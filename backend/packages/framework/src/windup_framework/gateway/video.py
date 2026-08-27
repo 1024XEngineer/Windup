@@ -285,6 +285,7 @@ class VideoGateway:
                             attempt_latency_ms=attempt_latency_ms,
                             resend_spent=resend_spent,
                             seconds=seconds,
+                            prompt=prompt,
                             outcome="failed",
                             error_type=error_type,
                             submit_ms=submit_ms,
@@ -312,6 +313,7 @@ class VideoGateway:
                             attempt_latency_ms=attempt_latency_ms,
                             resend_spent=resend_spent,
                             seconds=seconds,
+                            prompt=prompt,
                             outcome="fallback_success" if fallback_used else "success",
                             submit_ms=submit_ms,
                             policy_next_step="success",
@@ -378,6 +380,7 @@ class VideoGateway:
                         attempt_latency_ms=attempt_latency_ms,
                         resend_spent=resend_spent,
                         seconds=seconds,
+                            prompt=prompt,
                         outcome="failed",
                         circuit_scope=circuit_scope,
                         error_type=error_type,
@@ -476,6 +479,7 @@ class VideoGateway:
         attempt_latency_ms: int,
         resend_spent: int,
         seconds: int,
+        prompt: str,
         outcome: str,
         circuit_scope: str | None = None,
         error_type: ModelErrorType | None = None,
@@ -542,6 +546,7 @@ class VideoGateway:
                         error_type, http_status=result.http_status, ok=result.ok
                     ),
                     model_index=model_index,
+                    prompt=prompt,
                 ),
             )
         )
