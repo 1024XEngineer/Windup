@@ -1293,6 +1293,25 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('creates a pixel project without automatic pixelation when the user turns it off', async () => {
+    const create = vi.fn(async (input) => ({
+      id: 'project-native-pixel',
+      ...input,
+      createdAt: '2026-08-27T00:00:00Z',
+      updatedAt: '2026-08-27T00:00:00Z',
+    }))
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await prepare('原生像素角色', 'single', {
+      gameStyle: 'pixel',
+      autoPixelate: false,
+    })
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ gameStyle: 'pixel', autoPixelate: false }),
+    )
+  })
+
   it('reuses an existing project instead of creating another one', async () => {
     const existingProject = {
       id: 'project-existing',
@@ -2812,6 +2831,42 @@ describe('createQuickStartService', () => {
         type: 'custom',
       },
     })
+  })
+
+  it('uses confirmed Agent semantics when appending an action to the current Run', async () => {
+    const run: WorkflowRun = {
+      id: 'old-run',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(),
+    }
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      projectApis: projectReader(),
+      prepareProject: vi.fn(),
+    })
+
+    const session = await service.open(run.id)
+    await session.addAction('outfit-existing', '向前翻滚一圈', {
+      locomotion: true,
+    })
+
+    expect(session.getWorkflow().id).toBe(run.id)
+    expect(
+      session.getWorkflow().nodes.find((node) => node.type === 'action-first-frame'),
+    ).toMatchObject({
+      input: {
+        prompt: '向前翻滚一圈',
+        type: 'custom',
+        locomotion: true,
+      },
+    })
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ actionType: 'custom', prompt: '向前翻滚一圈' }),
+    )
   })
 
   it('Character 写入失败时重新打开已确认的母版节点', async () => {

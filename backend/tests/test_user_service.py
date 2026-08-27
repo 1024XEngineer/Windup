@@ -14,6 +14,7 @@ from windup_app.server.user.model import (
     LoginByPasswordInput,
     RegisterInput,
     ResetPasswordInput,
+    SetPasswordInput,
     UpdateNicknameInput,
     User,
     UserStatus,
@@ -433,6 +434,7 @@ def test_login_by_code_unknown_email_creates_user_and_gifts(
     assert user is not None
     assert result.user.id == user.id
     assert result.user.email_verified_at is not None
+    assert result.user.has_password is False
     account = db_session.scalar(
         select(CreditAccount).where(CreditAccount.user_id == user.id)
     )
@@ -644,6 +646,72 @@ def test_change_password_wrong_old(db_session, service, mock_mq_publish):
 
     with pytest.raises(BizException, match="旧密码错误"):
         service.change_password(db_session, result.user.id, change_input)
+
+
+def test_login_by_password_no_password_set(db_session, service, mock_mq_publish):
+    service._redis.get.return_value = "123456"
+    result = service.login_by_code(
+        db_session, LoginByCodeInput(email="nopwd@example.com", code="123456")
+    )
+    assert result.user.has_password is False
+
+    service._redis.get.return_value = None
+    service._redis.incr.return_value = 1
+    with pytest.raises(BizException, match="该账号未设置密码"):
+        service.login_by_password(
+            db_session,
+            LoginByPasswordInput(email="nopwd@example.com", password="anypass12"),
+        )
+
+
+def test_change_password_no_password_set(db_session, service, mock_mq_publish):
+    service._redis.get.return_value = "123456"
+    result = service.login_by_code(
+        db_session, LoginByCodeInput(email="nopwd2@example.com", code="123456")
+    )
+
+    with pytest.raises(BizException, match="尚未设置密码"):
+        service.change_password(
+            db_session,
+            result.user.id,
+            ChangePasswordInput(old_password="anypass12", new_password="newpass123"),
+        )
+
+
+def test_set_password_success(db_session, service, mock_mq_publish):
+    service._redis.get.return_value = "123456"
+    result = service.login_by_code(
+        db_session, LoginByCodeInput(email="setpwd@example.com", code="123456")
+    )
+
+    service.set_password(
+        db_session, result.user.id, SetPasswordInput(new_password="newpass123")
+    )
+
+    service._redis.get.return_value = None
+    login_result = service.login_by_password(
+        db_session,
+        LoginByPasswordInput(email="setpwd@example.com", password="newpass123"),
+    )
+    assert login_result.user.has_password is True
+
+
+def test_set_password_already_set(db_session, service, mock_mq_publish):
+    service._redis.get.return_value = "123456"
+    result = service.register_by_email(
+        db_session,
+        RegisterInput(
+            email="haspwd@example.com",
+            password="oldpass123",
+            code="123456",
+            invite_code="AB23CD45",
+        ),
+    )
+
+    with pytest.raises(BizException, match="密码已设置"):
+        service.set_password(
+            db_session, result.user.id, SetPasswordInput(new_password="newpass123")
+        )
 
 
 # -- 昵称修改测试 --------------------------------------------------------

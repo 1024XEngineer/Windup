@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { build } from 'vite'
@@ -20,9 +21,9 @@ describe('production serif font delivery', () => {
 
     await build({
       build: { emptyOutDir: true, outDir },
-      configFile: new URL('../vite.config.ts', import.meta.url).pathname,
+      configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
       logLevel: 'silent',
-      root: new URL('..', import.meta.url).pathname,
+      root: fileURLToPath(new URL('..', import.meta.url)),
     })
 
     const assetNames = await readdir(join(outDir, 'assets'))

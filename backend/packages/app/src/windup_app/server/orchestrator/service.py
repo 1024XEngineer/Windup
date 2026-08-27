@@ -28,15 +28,43 @@ from windup_app.server.orchestrator.model import (
     TaskStatus,
     initial_direction_set_output,
 )
+from windup_app.server.sensitive_word.interface import SensitiveWordService
+from windup_app.server.sensitive_word.service import service as sensitive_word_service
 
 
 class AiGenerationService(GenerationService):
     """生成任务服务:提交(建 PENDING 记录)+ 查询。生成执行在 executor 后台。"""
 
+    def __init__(
+        self,
+        sensitive_filter: SensitiveWordService = sensitive_word_service,
+    ) -> None:
+        self._sensitive_filter = sensitive_filter
+
+    def _assert_clean(
+        self,
+        *,
+        user_id: int,
+        source: str,
+        texts: tuple[str | None, ...],
+    ) -> None:
+        for text in texts:
+            if text:
+                self._sensitive_filter.assert_clean(
+                    text,
+                    user_id=user_id,
+                    source=source,
+                )
+
     def generate_character_image(
         self, session: Session, *, user_id: int, project_id: int | None = None,
         input: CharacterImageInput,
     ) -> GenerationTask:
+        self._assert_clean(
+            user_id=user_id,
+            source="generation.image",
+            texts=(input.prompt, input.negative_prompt),
+        )
         task = task_repo.create_task(
             session, user_id=user_id, project_id=project_id,
             task_type=GenerationType.CHARACTER_IMAGE,
@@ -92,6 +120,11 @@ class AiGenerationService(GenerationService):
         task_type: GenerationType,
         model_calls_per_sheet: int,
     ) -> GenerationTask:
+        self._assert_clean(
+            user_id=user_id,
+            source=f"generation.{task_type.value}",
+            texts=(input.prompt, input.negative_prompt),
+        )
         task = task_repo.create_task(
             session,
             user_id=user_id,
@@ -124,6 +157,11 @@ class AiGenerationService(GenerationService):
             raise ValueError("新方向集任务必须绑定已确认角色母版")
         if not input.directions:
             raise ValueError("方向集不能为空")
+        self._assert_clean(
+            user_id=user_id,
+            source="generation.direction_set",
+            texts=(input.prompt, input.negative_prompt),
+        )
         input.billing_attempt = 0
         task = task_repo.create_task(
             session,
@@ -205,6 +243,11 @@ class AiGenerationService(GenerationService):
         input: CharacterActionInput,
     ) -> GenerationTask:
         """建动作生成任务(PENDING)并返回;实际生成由 executor 后台跑,前端轮询 get_task。"""
+        self._assert_clean(
+            user_id=user_id,
+            source="generation.action",
+            texts=(input.custom_prompt,),
+        )
         task = task_repo.create_task(
             session, user_id=user_id, project_id=project_id,
             task_type=GenerationType.CHARACTER_ACTION,

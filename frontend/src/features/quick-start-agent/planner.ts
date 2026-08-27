@@ -244,6 +244,7 @@ function fallbackPlannerResult(
 export function quickStartPlannerInstructions(
   clarificationUsed: boolean,
   artStyle?: string,
+  addActionContext?: { characterPrompt: string },
 ): string {
   const clarificationRule = clarificationUsed
     ? '本草稿已经问过一次必要澄清，不得因为轮数强制生成，也不得再问第二个澄清问题；信息不足时用 reply 说明可继续补充，存在硬冲突时用 blocked。'
@@ -251,9 +252,14 @@ export function quickStartPlannerInstructions(
   const artStyleContext = artStyle
     ? `用户当前选择的画风是「${artStyle}」。这是宿主已经确定的生成约束；拟写提示词时不得使用与它冲突的画风描述，也不要修改或重新选择画风。`
     : ''
+  const addActionRule = addActionContext
+    ? `当前任务只为已有角色新增动作。已有角色的固定约束是：「${addActionContext.characterPrompt}」。不得修改、补写或重新提案角色身份；proposal 的 optimizedPrompt 必须原样返回这份固定约束，只在 actionPrompt 中整理用户要求的新增动作。`
+    : ''
   return `你是 Windup Quick Start 的轻量 Planner。你只理解当前草稿、回复用户，并在合适时给出角色母版提示词提案；你不执行生成，也不参与生成后的流程。
 
 ${artStyleContext}
+
+${addActionRule}
 
 每轮必须调用一次 ${QUICK_START_DECISION_TOOL}，并只返回一个决策：
 - reply：闲聊、回顾历史、评价、比较方案、解释或继续讨论。reply 不消耗澄清额度。
@@ -321,6 +327,7 @@ export function createAiSdkQuickStartPlanner({
     messages,
     clarificationUsed,
     artStyle,
+    addActionContext,
     workflow,
     signal,
   }): Promise<PlannerResult> => {
@@ -331,7 +338,7 @@ export function createAiSdkQuickStartPlanner({
       : { [QUICK_START_DECISION_TOOL]: quickStartDecisionTool }
     const instructions = workflow
       ? quickStartWorkflowInstructions(workflow)
-      : quickStartPlannerInstructions(clarificationUsed, artStyle)
+      : quickStartPlannerInstructions(clarificationUsed, artStyle, addActionContext)
     const history = messages.slice(-MAX_PLANNER_HISTORY_MESSAGES)
     const result = await generateText({
       model,

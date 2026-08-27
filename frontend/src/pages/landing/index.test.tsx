@@ -15,6 +15,37 @@ afterEach(() => {
 })
 
 describe('LandingPage', () => {
+  it('在产品能力段落循环展示真实的角色行走动作', async () => {
+    const animationFrames: FrameRequestCallback[] = []
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        animationFrames.push(callback)
+        return animationFrames.length
+      }),
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    render(
+      <GuestAuthSession>
+        <MemoryRouter>
+          <LandingPage />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    const character = await screen.findByRole('img', { name: '紫灰卷发女巫向前行走' })
+
+    expect(screen.queryByRole('group', { name: '角色往返行走预览' })).toBeNull()
+    expect(character.className).not.toContain('landing-walking-character')
+    expect(character.getAttribute('src')).toContain('walking-witch-000.webp')
+
+    act(() => animationFrames.shift()?.(0))
+    act(() => animationFrames.shift()?.(32))
+
+    expect(character.getAttribute('src')).toContain('walking-witch-001.webp')
+  })
+
   it('用居中宣言、两只工笔鸟与留白产品窗组成首屏', async () => {
     render(
       <GuestAuthSession>
@@ -154,7 +185,26 @@ describe('LandingPage', () => {
     expect(screen.queryByRole('link', { name: '登录' })).toBeNull()
   })
 
-  it('移除 Workflow Editor 图片，但保留三个白色占位容器', async () => {
+  it('只在真实 WorkflowRun 视频进入视口后自动循环播放', async () => {
+    let observe: IntersectionObserverCallback | undefined
+    class IntersectionObserverStub {
+      constructor(callback: IntersectionObserverCallback) {
+        observe = callback
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() {
+        return []
+      }
+      readonly root = null
+      readonly rootMargin = '0px'
+      readonly thresholds = [0.35]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverStub)
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
+
     render(
       <GuestAuthSession>
         <MemoryRouter>
@@ -163,9 +213,29 @@ describe('LandingPage', () => {
       </GuestAuthSession>,
     )
 
-    expect(await screen.findAllByTestId('workflow-editor-placeholder')).toHaveLength(3)
-    expect(document.querySelector('img[src*="workflow-editor"]')).toBeNull()
-    expect(document.querySelector('source[srcset*="workflow-editor"]')).toBeNull()
+    const video = await screen.findByLabelText('Workflow Editor 实际运行演示')
+    expect(video.getAttribute('loop')).not.toBeNull()
+    expect((video as HTMLVideoElement).muted).toBe(true)
+    expect(video.getAttribute('playsinline')).not.toBeNull()
+    expect(video.getAttribute('preload')).toBe('metadata')
+    expect(play).not.toHaveBeenCalled()
+
+    act(() =>
+      observe?.(
+        [{ isIntersecting: true, intersectionRatio: 0.6 } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      ),
+    )
+    expect(play).toHaveBeenCalledTimes(1)
+
+    act(() =>
+      observe?.(
+        [{ isIntersecting: false, intersectionRatio: 0 } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      ),
+    )
+    expect(pause).toHaveBeenCalledTimes(1)
+    expect(await screen.findAllByTestId('workflow-editor-placeholder')).toHaveLength(2)
   })
 
   it('在收尾插画之后提供真实的开源项目入口', async () => {

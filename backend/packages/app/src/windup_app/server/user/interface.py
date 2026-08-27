@@ -16,6 +16,7 @@ from windup_app.server.user.model import (
     LoginByPasswordInput,
     LoginResult,
     RegisterInput,
+    SetPasswordInput,
     UserView,
 )
 
@@ -87,6 +88,15 @@ class UserService(ABC):
         """修改密码（需验证旧密码）。
 
         :raises windup_common.exceptions.BizException: 旧密码错误。
+        """
+
+    @abstractmethod
+    def set_password(
+        self, session: Session, user_id: int, input: SetPasswordInput
+    ) -> None:
+        """设置初始密码（仅未设密码用户）。
+
+        :raises windup_common.exceptions.BizException: 密码已设置。
         """
 
     # -- 查询 ------------------------------------------------------------

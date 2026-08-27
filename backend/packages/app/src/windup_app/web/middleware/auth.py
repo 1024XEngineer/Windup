@@ -47,6 +47,7 @@ AUTH_WHITELIST: set[str] = {
     "/auth/login",
     "/auth/send-code",
     "/auth/login-by-code",
+    "/auth/reset-password",
     "/auth/refresh",
     "/auth/logout",
     "/docs",

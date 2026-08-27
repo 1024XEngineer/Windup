@@ -9,6 +9,7 @@ const projectDto = {
   sprite_width: 64,
   sprite_height: 96,
   game_style: null,
+  auto_pixelate: true,
   sprite_sample_url: 'https://cdn.windup.test/style.png',
   preview_url: 'https://cdn.windup.test/project-preview.png',
   create_at: '2026-08-01T08:00:00Z',
@@ -61,6 +62,7 @@ describe('projectApis', () => {
           directionalMovement: 'four-way',
           spriteSize: { width: 64, height: 96 },
           gameStyle: 'unspecified',
+          autoPixelate: true,
           sampleImageUrl: 'https://cdn.windup.test/style.png',
           previewUrl: 'https://cdn.windup.test/project-preview.png',
           createdAt: '2026-08-01T08:00:00Z',
@@ -88,6 +90,7 @@ describe('projectApis', () => {
       directionalMovement: 'four-way',
       spriteSize: { width: 64, height: 96 },
       gameStyle: 'unspecified',
+      autoPixelate: false,
       sampleImageUrl: 'https://cdn.windup.test/style.png',
     })
 
@@ -101,6 +104,7 @@ describe('projectApis', () => {
       sprite_width: 64,
       sprite_height: 96,
       game_style: 'unspecified',
+      auto_pixelate: false,
       sprite_sample_url: 'https://cdn.windup.test/style.png',
     })
   })

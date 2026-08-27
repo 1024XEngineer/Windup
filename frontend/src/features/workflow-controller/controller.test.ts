@@ -322,6 +322,42 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('keeps pixel style while opting out of automatic pixelation', async () => {
+    const workflow = createWorkflowApis()
+    const generation = createGenerationHarness()
+    const prepareProject = vi.fn(async () => ({
+      id: 'project-native-pixel',
+      spriteSize: { width: 256, height: 256 },
+    }))
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      prepareProject,
+      onAsyncError: () => undefined,
+    })
+
+    await controller.startCharacterGeneration({
+      prompt: '银发像素骑士',
+      gameStyle: 'pixel',
+      autoPixelate: false,
+    })
+
+    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single', {
+      gameStyle: 'pixel',
+      autoPixelate: false,
+    })
+    expect(workflow.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'character-setup',
+            pixelPerfectSuggested: true,
+          }),
+        ]),
+      }),
+    )
+  })
+
   it('uses the uploaded reference when Agent starts character generation', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()
@@ -1413,6 +1449,52 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('四向动作首帧为每个真实源方向使用各自保存的提示词', async () => {
+    const actions = actionNodes()
+    const firstFrame = actions.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    Object.assign(firstFrame.input, {
+      directionPrompts: {
+        east: '向右行走，保持侧面轮廓',
+        north: '背向镜头向上行走',
+        south: '面向镜头向下行走',
+      },
+    })
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedImageUrl: 'https://img/east.png',
+        selectedImages: {
+          east: 'https://img/east.png',
+          north: 'https://img/north.png',
+          south: 'https://img/south.png',
+        },
+      }),
+      ...actions,
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+
+    await controller.generateFirstFrame(firstFrame.id, {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ direction: 'east', prompt: '向右行走，保持侧面轮廓' }),
+    )
+    expect(generation.apis.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ direction: 'north', prompt: '背向镜头向上行走' }),
+    )
+    expect(generation.apis.create).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ direction: 'south', prompt: '面向镜头向下行走' }),
+    )
+  })
+
   it('非东向确认优先沿用方向选择表中的东向兼容值', async () => {
     const template = createController(
       createRun([
@@ -1927,6 +2009,11 @@ describe('WorkflowController', () => {
       firstFrameNode({
         status: 'failed',
         phase: 'generating',
+        input: actionInput({
+          directionPrompts: {
+            north: '背向镜头向上行走',
+          },
+        }),
         generations: [
           { taskId: 'task-east', role: 'first_frame' },
           { taskId: 'task-north', role: 'first_frame', direction: 'north' },
@@ -1970,7 +2057,7 @@ describe('WorkflowController', () => {
       type: 'first_frame',
       projectId: '1',
       actionType: 'walk',
-      prompt: '行走',
+      prompt: '背向镜头向上行走',
       spriteWidth: 64,
       spriteHeight: 64,
       referenceMedia: ['north-template.png'],
@@ -3934,6 +4021,13 @@ describe('WorkflowController', () => {
       firstFrameNode({
         status: 'passed',
         phase: 'completed',
+        input: actionInput({
+          directionPrompts: {
+            east: '向右行走',
+            north: '背向镜头行走',
+            south: '面向镜头行走',
+          },
+        }),
         selectedFirstFrameUrl: 'east-frame.png',
         selectedFirstFrameUrls: {
           east: 'east-frame.png',
@@ -3957,12 +4051,25 @@ describe('WorkflowController', () => {
     expect(
       vi.mocked(generation.apis.create).mock.calls.map(([input]) => ({
         direction: input.direction,
+        prompt: input.prompt,
         referenceMedia: input.referenceMedia,
       })),
     ).toEqual([
-      { direction: 'east', referenceMedia: ['east-frame.png'] },
-      { direction: 'north', referenceMedia: ['north-frame.png'] },
-      { direction: 'south', referenceMedia: ['south-frame.png'] },
+      {
+        direction: 'east',
+        prompt: '向右行走\n增加轮廓光',
+        referenceMedia: ['east-frame.png'],
+      },
+      {
+        direction: 'north',
+        prompt: '背向镜头行走\n增加轮廓光',
+        referenceMedia: ['north-frame.png'],
+      },
+      {
+        direction: 'south',
+        prompt: '面向镜头行走\n增加轮廓光',
+        referenceMedia: ['south-frame.png'],
+      },
     ])
   })
 

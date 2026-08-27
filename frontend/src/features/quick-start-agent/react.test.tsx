@@ -75,6 +75,8 @@ describe('useQuickStartAgent', () => {
       prompt: '银发像素骑士，全身像，深蓝斗篷',
       directionalMovement: 'single',
     })
+    expect(result.current.state).toEqual({ status: 'idle' })
+    expect(result.current.busy).toBe(false)
   })
 
   it('lets a new discussion message supersede the visible proposal', async () => {

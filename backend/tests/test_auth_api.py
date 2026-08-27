@@ -77,9 +77,9 @@ def test_change_password_endpoint(auth_client, seeded_user, mock_user_redis):
     assert body["message"] == "密码修改成功"
 
 
-def test_reset_password_endpoint(auth_client, seeded_user, mock_user_redis):
+def test_reset_password_endpoint(client, seeded_user, mock_user_redis):
     mock_user_redis.get.return_value = "654321"
-    resp = auth_client.post(
+    resp = client.post(
         "/auth/reset-password",
         json={
             "email": "test@example.com",
@@ -91,6 +91,28 @@ def test_reset_password_endpoint(auth_client, seeded_user, mock_user_redis):
     body = resp.json()
     assert body["code"] == 200
     assert body["message"] == "密码重置成功"
+
+
+def test_set_password_endpoint(auth_client, db_session, mock_user_redis):
+    from windup_app.server.user.model import User
+
+    user = User(
+        id=1,
+        email="test@example.com",
+        password_hash="",
+        nickname="旧昵称",
+    )
+    db_session.merge(user)
+    db_session.flush()
+
+    resp = auth_client.post(
+        "/auth/set-password",
+        json={"new_password": "newpass123"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["message"] == "密码设置成功"
 
 
 def test_register_endpoint_success(client, db_session, mock_user_redis):

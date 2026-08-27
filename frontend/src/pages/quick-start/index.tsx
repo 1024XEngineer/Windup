@@ -23,6 +23,7 @@ import {
   Check,
   CopySimple,
   FolderOpen,
+  GridFour,
   MagnifyingGlass,
   Play,
   Plus,
@@ -199,13 +200,20 @@ const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v2'
 const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
 const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
+type AgentConversationScope = 'workflow' | 'add-action'
+
 type AgentConversationTurn =
-  | { role: 'user'; content: string; referenceMedia?: readonly string[]; scope?: 'workflow' }
+  | {
+      role: 'user'
+      content: string
+      referenceMedia?: readonly string[]
+      scope?: AgentConversationScope
+    }
   | {
       role: 'assistant'
       content: string
       kind: 'reply' | 'clarification' | 'blocked'
-      scope?: 'workflow'
+      scope?: AgentConversationScope
     }
   | {
       role: 'assistant'
@@ -220,13 +228,15 @@ type AgentConversationTurn =
       suggestPixelPerfect?: boolean
       referenceMedia?: readonly string[]
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
-      scope?: 'workflow'
+      scope?: AgentConversationScope
     }
 
 type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
   /** 入口处选的画风；不随草稿存住的话，刷新后画风选择器已隐藏而值悄悄回到不指定。 */
   gameStyle?: ArtStyle
+  /** 默认开启；关闭时保留像素风提示词，只跳过自动像素后处理。 */
+  autoPixelate?: boolean
   /** 入口滑块选的方向；进入对话后控件锁定，刷新时必须恢复原值。 */
   directionalMovement?: DirectionalMovement
   projectId?: string | null
@@ -270,6 +280,22 @@ function readAgentDraftGameStyle(key: string): ArtStyle {
     return isArtStyle(parsed.gameStyle) ? parsed.gameStyle : 'unspecified'
   } catch {
     return 'unspecified'
+  }
+}
+
+function readAgentDraftAutoPixelate(key: string): boolean {
+  try {
+    const stored = window.sessionStorage.getItem(key)
+    if (!stored) return true
+    const parsed: unknown = JSON.parse(stored)
+    return !(
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'autoPixelate' in parsed &&
+      parsed.autoPixelate === false
+    )
+  } catch {
+    return true
   }
 }
 
@@ -336,7 +362,10 @@ function readAgentConversation(
       ) {
         return []
       }
-      const scope = 'scope' in turn && turn.scope === 'workflow' ? 'workflow' : undefined
+      const scope =
+        'scope' in turn && (turn.scope === 'workflow' || turn.scope === 'add-action')
+          ? turn.scope
+          : undefined
       if (turn.role === 'user') {
         const referenceMedia =
           'referenceMedia' in turn &&
@@ -591,6 +620,7 @@ function IconActionButton({
   type = 'button',
   className = '',
   expanded,
+  pressed,
   children,
 }: {
   label: string
@@ -600,6 +630,7 @@ function IconActionButton({
   type?: 'button' | 'submit'
   className?: string
   expanded?: boolean
+  pressed?: boolean
   children: ReactNode
 }) {
   const tooltipId = useId()
@@ -610,6 +641,7 @@ function IconActionButton({
       aria-label={label}
       aria-describedby={tooltipId}
       aria-expanded={expanded}
+      aria-pressed={pressed}
       disabled={disabled}
       onClick={onClick}
       data-icon-action
@@ -794,6 +826,12 @@ function QuickStartInput({
       ? readAgentDraftGameStyle(agentDraftConversationStorageKey(activeRunUserId, draftId))
       : 'unspecified'
   })
+  const [autoPixelate, setAutoPixelate] = useState(() => {
+    const draftId = readAgentDraftId()
+    return draftId
+      ? readAgentDraftAutoPixelate(agentDraftConversationStorageKey(activeRunUserId, draftId))
+      : true
+  })
   const [projectId, setProjectId] = useState<string | null>(() => {
     const requestedProjectId = entrySearchParams.get('projectId')
     if (requestedProjectId) return requestedProjectId
@@ -817,6 +855,8 @@ function QuickStartInput({
   projectIdRef.current = projectId
   const gameStyleRef = useRef(gameStyle)
   gameStyleRef.current = gameStyle
+  const autoPixelateRef = useRef(autoPixelate)
+  autoPixelateRef.current = autoPixelate
   const [submitting, setSubmitting] = useState(false)
   const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
@@ -891,6 +931,7 @@ function QuickStartInput({
         {
           turns,
           gameStyle: updates.gameStyle ?? gameStyleRef.current,
+          autoPixelate: updates.autoPixelate ?? autoPixelateRef.current,
           directionalMovement: updates.directionalMovement ?? directionalMovementRef.current,
           projectId: updates.projectId === undefined ? projectIdRef.current : updates.projectId,
         },
@@ -913,6 +954,7 @@ function QuickStartInput({
           setSelectedProject(restoredProject)
           setDirectionalMovement(restoredProject.directionalMovement)
           setGameStyle(restoredProject.gameStyle)
+          setAutoPixelate(restoredProject.autoPixelate ?? true)
         }
       },
       () => {
@@ -939,9 +981,12 @@ function QuickStartInput({
       gameStyleRef.current = project.gameStyle
       setDirectionalMovement(project.directionalMovement)
       setGameStyle(project.gameStyle)
+      autoPixelateRef.current = project.autoPixelate ?? true
+      setAutoPixelate(project.autoPixelate ?? true)
     }
     persistAgentDraft({
       gameStyle: project?.gameStyle ?? gameStyleRef.current,
+      autoPixelate: project?.autoPixelate ?? autoPixelateRef.current,
       directionalMovement: project?.directionalMovement ?? directionalMovementRef.current,
       projectId: nextProjectId,
     })
@@ -1124,7 +1169,12 @@ function QuickStartInput({
       const result = await agentSession.confirmProposal(
         state.optimizedPrompt,
         directionalMovement,
-        { gameStyle, automaticDelivery: true, ...(projectId ? { projectId } : {}) },
+        {
+          gameStyle,
+          ...(gameStyle === 'pixel' ? { autoPixelate } : {}),
+          automaticDelivery: true,
+          ...(projectId ? { projectId } : {}),
+        },
       )
       if (result.kind === 'generated') await handoffGenerated(result)
     } catch {
@@ -1149,6 +1199,13 @@ function QuickStartInput({
     setGameStyle(next)
     styleMenu.close()
     persistAgentDraft({ gameStyle: next })
+  }
+
+  function toggleAutoPixelate() {
+    const next = !autoPixelateRef.current
+    autoPixelateRef.current = next
+    setAutoPixelate(next)
+    persistAgentDraft({ autoPixelate: next })
   }
 
   function chooseDirectionalMovement(next: DirectionalMovement) {
@@ -1210,6 +1267,7 @@ function QuickStartInput({
       try {
         const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement, {
           gameStyle,
+          ...(gameStyle === 'pixel' ? { autoPixelate } : {}),
           ...(projectId ? { projectId } : {}),
         })
         if (result.kind === 'generated') await handoffGenerated(result)
@@ -1603,6 +1661,22 @@ function QuickStartInput({
                         </div>
                       ) : null}
                     </div>
+                    {gameStyle === 'pixel' ? (
+                      <IconActionButton
+                        label={`自动完美像素化：${autoPixelate ? '已开启' : '已关闭'}`}
+                        disabled={entryBusy}
+                        pressed={autoPixelate}
+                        onClick={toggleAutoPixelate}
+                        className={autoPixelate ? 'text-app-accent' : ''}
+                      >
+                        <GridFour
+                          data-icon="auto-pixelate"
+                          aria-hidden="true"
+                          size={21}
+                          weight={autoPixelate ? 'fill' : 'regular'}
+                        />
+                      </IconActionButton>
+                    ) : null}
                   </>
                 ) : null}
                 <div ref={projectMenuRoot} className="relative order-first">
@@ -2626,6 +2700,7 @@ function QuickStartRun({
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const addActionIntent = searchParams.get('intent') === 'add-action'
+  const requestedOutfitId = searchParams.get('outfitId')
   const [session, setSession] = useState<QuickStartSession | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [restoring, setRestoring] = useState(true)
@@ -2661,7 +2736,12 @@ function QuickStartRun({
   const initialAgentConversation = useRef(readAgentRunConversation(activeRunUserId, runId)).current
   const [agentConversationTurns, setAgentConversationTurns] = useState(initialAgentConversation)
   const agentConversationTurnsRef = useRef(agentConversationTurns)
-  const initialWorkflowAgentSeed = useRef(createAgentSeed(initialAgentConversation)).current
+  const initialWorkflowAgentSeed = useRef(
+    createAgentSeed(initialAgentConversation.filter((turn) => turn.scope !== 'add-action')),
+  ).current
+  const initialAddActionAgentSeed = useRef(
+    createAgentSeed(initialAgentConversation.filter((turn) => turn.scope === 'add-action')),
+  ).current
   const automaticPublishAttempt = useRef<string | null>(null)
   const transcriptScrollRegion = useRef<HTMLElement>(null)
   const promptCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -2674,6 +2754,8 @@ function QuickStartRun({
   } | null>(null)
   const mountedRef = useRef(true)
   const pixelPerfectUrlsRef = useRef<readonly string[]>([])
+  // 恢复会先展示旧快照再等待 resume；用序号避免迟到的成功清理抹掉期间产生的用户错误。
+  const workflowErrorEpochRef = useRef(0)
   const workflowAgentActions = useMemo<WorkflowAgentActions>(
     () => ({
       getContext: () =>
@@ -2712,15 +2794,56 @@ function QuickStartRun({
     actions: workflowAgentActions,
     initialMessages: initialWorkflowAgentSeed.messages,
   })
+  const appendActionToCurrentRun = useCallback(
+    async (input: {
+      prompt: string
+      actionPrompt?: string
+      actionType?: 'idle' | 'walk' | 'attack' | 'jump'
+      locomotion?: true
+    }) => {
+      const target = activeSessionRef.current
+      if (!target) throw new Error('当前生成会话尚未恢复')
+      let outfitId = requestedOutfitId
+      if (!outfitId) {
+        const info = target.getCharacterInfo() ?? (await target.resolveCharacterInfo())
+        outfitId = info?.outfitId ?? null
+      }
+      if (!outfitId) throw new Error('没有找到要追加动作的角色造型')
+      const actionPrompt = input.actionPrompt?.trim()
+      if (!actionPrompt) throw new Error('Agent 提案缺少新增动作')
+      const updated = await target.addAction(outfitId, actionPrompt, {
+        ...(input.actionType ? { actionType: input.actionType } : {}),
+        ...(input.locomotion ? { locomotion: input.locomotion } : {}),
+      })
+      if (mountedRef.current && activeSessionRef.current === target) setRun(updated)
+      return { runId: target.runId }
+    },
+    [requestedOutfitId],
+  )
+  const addActionCharacterPrompt = run ? workflowPrompt(run) : ''
+  const addActionContext = useMemo(
+    () => ({ characterPrompt: addActionCharacterPrompt }),
+    [addActionCharacterPrompt],
+  )
+  const addActionAgentSession = useQuickStartAgent({
+    planner: agent.planner,
+    startCharacterGeneration: appendActionToCurrentRun,
+    addActionContext,
+    initialMessages: initialAddActionAgentSeed.messages,
+    initialClarificationUsed: initialAddActionAgentSeed.clarificationUsed,
+    initialProposal: initialAddActionAgentSeed.pendingProposal,
+  })
   const reportWorkflowError = useCallback((cause: unknown, fallback: string) => {
     const presented = presentWorkflowError(cause, fallback)
     if (workflowConflictRef.current && !presented.conflict) return
+    workflowErrorEpochRef.current += 1
     workflowConflictRef.current ||= presented.conflict
     setError(presented.message)
     setWorkflowConflict(workflowConflictRef.current)
   }, [])
   const clearWorkflowError = useCallback(() => {
     if (workflowConflictRef.current) return
+    workflowErrorEpochRef.current += 1
     setError(null)
     setWorkflowConflict(false)
   }, [])
@@ -2868,8 +2991,10 @@ function QuickStartRun({
     setPixelPerfectStatus('idle')
     setActionVersion('original')
     workflowConflictRef.current = false
+    workflowErrorEpochRef.current += 1
     setError(null)
     setWorkflowConflict(false)
+    const restoreErrorEpoch = workflowErrorEpochRef.current
 
     void (async () => {
       const providedSession = initialSessionRef.current
@@ -2901,7 +3026,7 @@ function QuickStartRun({
         : await nextSession.resume()
       if (active) {
         setRun(resumed)
-        clearWorkflowError()
+        if (workflowErrorEpochRef.current === restoreErrorEpoch) clearWorkflowError()
         setRestoring(false)
       }
     })().catch((cause) => {
@@ -3200,7 +3325,6 @@ function QuickStartRun({
       : allDirectionsSelected(firstFrameCandidates, firstFrameSelections)
   const firstFrameConfirmLabel =
     firstFrameSheets.length > 0 ? '确认候选帧，生成完整动作' : '确认首帧，生成完整动作'
-  const requestedOutfitId = searchParams.get('outfitId')
   const canAddAction =
     addActionIntent &&
     !workflowHasActiveNode &&
@@ -3360,6 +3484,44 @@ function QuickStartRun({
     )
   }
 
+  function updateAddActionProposalStatus(
+    proposalId: string,
+    proposalStatus: Extract<AgentConversationTurn, { kind: 'proposal' }>['proposalStatus'],
+  ) {
+    const next = agentConversationTurnsRef.current.map((turn) =>
+      turn.role === 'assistant' &&
+      turn.kind === 'proposal' &&
+      turn.scope === 'add-action' &&
+      turn.proposalId === proposalId
+        ? { ...turn, proposalStatus }
+        : turn,
+    )
+    agentConversationTurnsRef.current = next
+    setAgentConversationTurns(next)
+    writeAgentConversation('localStorage', agentRunConversationStorageKey(activeRunUserId, runId), {
+      turns: next,
+    })
+  }
+
+  async function confirmAddActionProposal(proposalId: string) {
+    const state = addActionAgentSession.state
+    if (state.status !== 'proposal' || state.proposalId !== proposalId || addingAction) return
+    setAddingAction(true)
+    clearWorkflowError()
+    try {
+      await addActionAgentSession.confirmProposal(
+        state.optimizedPrompt,
+        session?.getDirectionalMovement?.() ?? 'single',
+      )
+      updateAddActionProposalStatus(proposalId, 'confirmed')
+      setActionDescription('')
+    } catch (cause) {
+      reportWorkflowError(cause, '新增动作失败，请稍后重试')
+    } finally {
+      if (mountedRef.current) setAddingAction(false)
+    }
+  }
+
   async function continueConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (workflowConflictRef.current) return
@@ -3374,24 +3536,37 @@ function QuickStartRun({
     const message = actionDescription.trim()
     if (addActionIntent) {
       if (!canAddAction || !message || !session || addingAction) return
-      setAddingAction(true)
       clearWorkflowError()
+      appendRunConversationTurn({ role: 'user', content: message, scope: 'add-action' })
+      setActionDescription('')
       try {
-        let outfitId = requestedOutfitId
-        if (!outfitId) {
-          const info = session.getCharacterInfo() ?? (await session.resolveCharacterInfo())
-          outfitId = info?.outfitId ?? null
+        const result = await addActionAgentSession.submit(message)
+        if (result.kind === 'message') {
+          appendRunConversationTurn({
+            role: 'assistant',
+            content: result.message,
+            kind: result.messageKind,
+            scope: 'add-action',
+          })
+        } else if (result.kind === 'proposal') {
+          appendRunConversationTurn({
+            role: 'assistant',
+            content: `${result.optimizationSummary}\n\n角色：${result.optimizedPrompt}${result.actionPrompt ? `\n动作：${result.actionPrompt}` : ''}`,
+            kind: 'proposal',
+            proposalId: result.proposalId,
+            optimizedPrompt: result.optimizedPrompt,
+            ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
+            ...(result.actionType ? { actionType: result.actionType } : {}),
+            ...(result.locomotion ? { locomotion: result.locomotion } : {}),
+            optimizationSummary: result.optimizationSummary,
+            suggestPixelPerfect: result.suggestPixelPerfect,
+            proposalStatus: 'pending',
+            scope: 'add-action',
+          })
         }
-        if (!outfitId) throw new Error('没有找到要追加动作的角色造型')
-        const updated = await session.addAction(outfitId, message)
-        if (!mountedRef.current || activeSessionRef.current !== session) return
-        setRun(updated)
-        setActionDescription('')
       } catch (cause) {
         if (!mountedRef.current || activeSessionRef.current !== session) return
-        reportWorkflowError(cause, '新增动作失败，请稍后重试')
-      } finally {
-        if (mountedRef.current && activeSessionRef.current === session) setAddingAction(false)
+        reportWorkflowError(cause, 'Agent 暂时无法整理新增动作')
       }
       return
     }
@@ -3447,10 +3622,13 @@ function QuickStartRun({
       templateSelectionComplete &&
       (!isDirectionSetSelecting || Boolean(actionDescription.trim()))) ||
     (isFirstFrameSelecting && firstFrameSelectionComplete) ||
-    (canAddAction && Boolean(actionDescription.trim()) && !addingAction) ||
+    (canAddAction &&
+      Boolean(actionDescription.trim()) &&
+      !addingAction &&
+      !addActionAgentSession.busy) ||
     (workflowAgentMode && workflowAgentAvailable && Boolean(actionDescription.trim()))
   const workflowComposerDisabled = addActionIntent
-    ? !canAddAction || addingAction || workflowConflict
+    ? !canAddAction || addingAction || addActionAgentSession.busy || workflowConflict
     : workflowAgentMode &&
       ((workflowIsActive && !candidateAgentMode) ||
         !workflowAgentAvailable ||
@@ -3475,11 +3653,12 @@ function QuickStartRun({
     actionStep?.id,
     new Map(pixelPerfectReplacementEntries),
   )
-  const entryAgentConversationTurns = agentConversationTurns.filter(
-    (turn) => turn.scope !== 'workflow',
-  )
+  const entryAgentConversationTurns = agentConversationTurns.filter((turn) => !turn.scope)
   const workflowAgentConversationTurns = agentConversationTurns.filter(
     (turn) => turn.scope === 'workflow',
+  )
+  const addActionAgentConversationTurns = agentConversationTurns.filter(
+    (turn) => turn.scope === 'add-action',
   )
   const workflowAgentConversation = workflowAgentConversationTurns.map((turn, index) => (
     <div
@@ -3498,6 +3677,32 @@ function QuickStartRun({
     workflowAgentSession.state.status === 'action' &&
     (workflowAgentSession.state.action === 'regenerate_character_template' ||
       workflowAgentSession.state.action === 'refine_character_template')
+  const addActionAgentConversation = addActionAgentConversationTurns.map((turn, index) => (
+    <div
+      key={`${turn.role}:add-action:${index}:${turn.content}`}
+      data-conversation-kind="agent"
+      className="min-w-0"
+    >
+      {turn.role === 'user' ? (
+        <UserTurn>{turn.content}</UserTurn>
+      ) : turn.kind === 'proposal' ? (
+        <PromptProposal
+          summary={turn.optimizationSummary}
+          prompt={turn.optimizedPrompt}
+          actionPrompt={turn.actionPrompt}
+          status={turn.proposalStatus}
+          disabled={addingAction || addActionAgentSession.busy || workflowConflict}
+          onConfirm={() => void confirmAddActionProposal(turn.proposalId)}
+          onFill={() => {
+            updateAddActionProposalStatus(turn.proposalId, 'adopted')
+            setActionDescription(turn.actionPrompt ?? '')
+          }}
+        />
+      ) : (
+        <AgentCopy lines={turn.content.split('\n')} />
+      )}
+    </div>
+  ))
 
   return (
     <section className="relative min-h-screen overflow-hidden bg-app-canvas pt-14 text-app-ink">
@@ -3657,6 +3862,8 @@ function QuickStartRun({
                 />
               ) : null}
             </AgentTurn>
+
+            {addActionAgentConversation}
 
             {firstFrameStep ? (
               <>

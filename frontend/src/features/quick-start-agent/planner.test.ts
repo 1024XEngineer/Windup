@@ -37,6 +37,18 @@ describe('quickStartPlannerInstructions', () => {
     expect(laterTurn).toContain('不得再问第二个澄清问题')
     expect(laterTurn).toContain('可继续补充')
   })
+
+  it('keeps an existing character fixed while proposing only a new action', () => {
+    const instructions = quickStartPlannerInstructions(false, undefined, {
+      characterPrompt: '紫发女巫，黑色尖顶帽，手持木质法杖',
+    })
+
+    expect(instructions).toContain('当前任务只为已有角色新增动作')
+    expect(instructions).toContain('紫发女巫，黑色尖顶帽，手持木质法杖')
+    expect(instructions).toContain('不得修改、补写或重新提案角色身份')
+    expect(instructions).toContain('actionPrompt')
+    expect(instructions).toContain('locomotion: true')
+  })
 })
 
 describe('createAiSdkQuickStartPlanner', () => {

@@ -844,10 +844,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(group.className).toContain('grid-cols-3')
     expect(group.className).toContain('aspect-square')
     expect(within(group).getAllByRole('img')).toHaveLength(8)
-    expect(within(group).getByLabelText('八向宫格中心留空')).toBeTruthy()
+    expect(within(group).getByLabelText('八向宫格空位')).toBeTruthy()
   })
 
-  it('四向角色母版完成态展示四张独立图片', async () => {
+  it('四向角色母版完成态按九宫方位展示四张独立图片并隐藏空位痕迹', async () => {
     const workflow = completedTemplateWorkflow('42')
     workflow.nodes[1] = {
       ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
@@ -868,7 +868,9 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     const group = await screen.findByRole('group', { name: '四向角色母版集合' })
-    expect(group.className).toContain('grid-cols-2')
+    expect(group.className).toContain('grid-cols-3')
+    expect(group.children).toHaveLength(9)
+    expect(within(group).getAllByLabelText('四向宫格空位')).toHaveLength(5)
     expect(within(group).getAllByRole('img')).toHaveLength(4)
     expect(
       within(group)
@@ -1295,7 +1297,12 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     defaultSessionLoader.mockResolvedValue(session)
     renderEditor('/workflow-editor/42')
 
-    fireEvent.click(await screen.findByRole('button', { name: '重做北方向' }))
+    fireEvent.click(await screen.findByRole('button', { name: '选择北动作首帧候选 1' }))
+    const confirmNorth = screen.getByRole('button', { name: '确认北向首帧' })
+    expect((confirmNorth as HTMLButtonElement).disabled).toBe(false)
+
+    const retryNorth = screen.getByRole('button', { name: '重做北方向' })
+    fireEvent.click(retryNorth)
 
     await waitFor(() =>
       expect(retry).toHaveBeenCalledWith(firstFrame.id, 'north', {
@@ -1304,11 +1311,168 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         referenceMedia: [],
       }),
     )
+    await waitFor(() => expect((retryNorth as HTMLButtonElement).disabled).toBe(false))
+    expect((confirmNorth as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByRole('img', { name: '北动作首帧候选 1' })).toBeTruthy()
     expect(screen.queryByRole('img', { name: '西动作首帧候选 1' })).toBeNull()
   })
 
-  it('八向动作首帧完成态展示八张独立图片并将中心留空', async () => {
+  it('四向动作首帧只在失败的真实源方向卡片提供重试', async () => {
+    const workflow = reviewingActionWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    Object.assign(firstFrame, {
+      status: 'failed',
+      phase: 'generating',
+      error: 'north provider failed',
+      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+        taskId: `first-${direction}`,
+        role: 'first_frame' as const,
+        direction,
+      })),
+      selectedFirstFrameUrl: null,
+    })
+    const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
+    const session = createSession(workflow, {
+      project,
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) => {
+          const direction = taskId.replace('first-', '') as 'east' | 'north' | 'south'
+          return {
+            id: taskId,
+            projectId: '1',
+            type: 'first_frame' as const,
+            status: direction === 'north' ? ('failed' as const) : ('completed' as const),
+            result:
+              direction === 'north'
+                ? null
+                : {
+                    type: 'first_frame' as const,
+                    direction,
+                    images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+                  },
+            error: direction === 'north' ? 'north provider failed' : null,
+          }
+        }) as GenerationApis['get'],
+      }),
+    })
+    const retry = vi.spyOn(session.controller, 'retryGenerationDirection').mockResolvedValue()
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByRole('img', { name: '东动作首帧候选 1' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '南动作首帧候选 1' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '重试东方向' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '重试南方向' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试北方向' }))
+
+    expect(retry).toHaveBeenCalledWith(firstFrame.id, 'north', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      referenceMedia: [],
+    })
+  })
+
+  it('四向配置态展开四张方向卡片并只让真实源方向填写提示词', async () => {
+    const workflow = reviewingActionWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    Object.assign(firstFrame, {
+      status: 'active',
+      phase: 'configuring',
+      generations: [],
+      selectedFirstFrameUrl: null,
+      selectedFirstFrameUrls: undefined,
+    })
+    for (const node of workflow.nodes) {
+      if (node.type === 'action-generation-method') node.status = 'locked'
+      if (node.type === 'action-full-frame' || node.type === 'review') node.status = 'locked'
+    }
+    const session = createSession(workflow, {
+      project: { ...projectFixture(), directionalMovement: 'four-way' },
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByRole('article', { name: '北向动作首帧' })).toBeTruthy()
+    expect(screen.getByRole('article', { name: '南向动作首帧' })).toBeTruthy()
+    expect(screen.getByRole('article', { name: '东向动作首帧' })).toBeTruthy()
+    const west = screen.getByRole('article', { name: '西向动作首帧' })
+    expect(within(west).getByText('由东向结果水平镜像，不单独调用模型')).toBeTruthy()
+    expect(within(west).queryByRole('textbox')).toBeNull()
+    expect(screen.getByRole('textbox', { name: '东向动作描述' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '北向动作描述' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '南向动作描述' })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: '生成全部真实方向首帧' })).toHaveLength(1)
+
+    const directionNodes = Object.fromEntries(
+      latestFlowProps()
+        .nodes.filter((node) => node.id.startsWith(`${firstFrame.id}:direction:`))
+        .map((node) => [node.id.split(':').at(-1), node]),
+    )
+    expect(directionNodes.north!.position.x).toBe(directionNodes.south!.position.x)
+    expect(directionNodes.west!.position.y).toBe(directionNodes.east!.position.y)
+    expect(directionNodes.west!.position.x).toBeLessThan(directionNodes.north!.position.x)
+    expect(directionNodes.north!.position.x).toBeLessThan(directionNodes.east!.position.x)
+    expect(directionNodes.north!.position.y).toBeLessThan(directionNodes.west!.position.y)
+    expect(directionNodes.west!.position.y).toBeLessThan(directionNodes.south!.position.y)
+    expect(
+      directionNodes.south!.position.y - directionNodes.north!.position.y,
+    ).toBeGreaterThanOrEqual(800)
+    expect(
+      latestFlowProps().nodes.some(
+        (node) =>
+          node.position.x === directionNodes.north!.position.x &&
+          node.position.y === directionNodes.west!.position.y,
+      ),
+    ).toBe(false)
+  })
+
+  it('生成整组首帧前保存各真实源方向的提示词', async () => {
+    const workflow = reviewingActionWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    Object.assign(firstFrame, {
+      status: 'active',
+      phase: 'configuring',
+      generations: [],
+      selectedFirstFrameUrl: null,
+      selectedFirstFrameUrls: undefined,
+    })
+    const session = createSession(workflow, {
+      project: { ...projectFixture(), directionalMovement: 'four-way' },
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.change(await screen.findByRole('textbox', { name: '东向动作描述' }), {
+      target: { value: '向右行走' },
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: '北向动作描述' }), {
+      target: { value: '背向镜头行走' },
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: '南向动作描述' }), {
+      target: { value: '面向镜头行走' },
+    })
+    fireEvent.click(screen.getAllByRole('button', { name: '生成全部真实方向首帧' })[0]!)
+
+    await waitFor(() =>
+      expect(
+        session.controller.getWorkflow().nodes.find((node) => node.id === firstFrame.id),
+      ).toMatchObject({
+        input: {
+          directionPrompts: {
+            east: '向右行走',
+            north: '背向镜头行走',
+            south: '面向镜头行走',
+          },
+        },
+      }),
+    )
+  })
+
+  it('八向动作首帧完成态展示八张独立方向卡片并复用镜像源图', async () => {
     const directions = [
       'east',
       'west',
@@ -1329,34 +1493,53 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       ]),
     )
     firstFrame.selectedFirstFrameUrl = 'https://assets.windup.test/first-east.png'
-    defaultSessionLoader.mockResolvedValue(
-      createSession(workflow, {
-        project: { ...projectFixture(), directionalMovement: 'eight-way' },
-      }),
-    )
+    const session = createSession(workflow, {
+      project: { ...projectFixture(), directionalMovement: 'eight-way' },
+    })
+    const regenerate = vi
+      .spyOn(session.controller, 'regenerateFirstFrame')
+      .mockResolvedValue(undefined)
+    defaultSessionLoader.mockResolvedValue(session)
 
     renderEditor('/workflow-editor/42')
 
-    const group = await screen.findByRole('group', { name: '八向动作首帧集合' })
-    expect(group.className).toContain('grid-cols-3')
-    expect(within(group).getAllByRole('img')).toHaveLength(8)
-    expect(within(group).getByLabelText('八向宫格中心留空')).toBeTruthy()
     for (const [direction, label] of [
       ['east', '东'],
-      ['west', '西'],
       ['north', '北'],
       ['south', '南'],
       ['north_east', '东北'],
-      ['north_west', '西北'],
       ['south_east', '东南'],
-      ['south_west', '西南'],
     ] as const) {
+      const card = await screen.findByRole('article', { name: `${label}向动作首帧` })
       expect(
-        within(group)
-          .getByRole('img', { name: `${label}方向动作首帧` })
+        within(card)
+          .getByRole('img', { name: `${label}向已确认动作首帧` })
           .getAttribute('src'),
       ).toContain(`/first-${direction}.png`)
     }
+
+    for (const [label, sourceDirection, sourceLabel] of [
+      ['西', 'east', '东'],
+      ['西北', 'north_east', '东北'],
+      ['西南', 'south_east', '东南'],
+    ] as const) {
+      const card = await screen.findByRole('article', { name: `${label}向动作首帧` })
+      expect(
+        within(card)
+          .getByRole('img', { name: `${label}向镜像动作首帧` })
+          .getAttribute('src'),
+      ).toContain(`/first-${sourceDirection}.png`)
+      expect(within(card).queryByRole('textbox')).toBeNull()
+      expect(within(card).getByText(`由${sourceLabel}向结果水平镜像，不单独调用模型`)).toBeTruthy()
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: '重新生成动作首帧' }))
+    expect(regenerate).toHaveBeenCalledWith(
+      firstFrame.id,
+      expect.objectContaining({ mode: 'regenerate' }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: '微调动作首帧' }))
+    expect(screen.getByRole('textbox', { name: '动作首帧微调描述' })).toBeTruthy()
   })
 
   it('该造型没有 3D 资产时禁用三渲二选项并给出原因', async () => {

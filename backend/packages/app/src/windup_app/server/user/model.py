@@ -92,6 +92,7 @@ class UserView:
     email_verified_at: datetime | None = None
     status: UserStatus = UserStatus.NORMAL
     last_login_at: datetime | None = None
+    has_password: bool = False
     create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     update_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -139,6 +140,13 @@ class ChangePasswordInput:
     """修改密码入参。"""
 
     old_password: str
+    new_password: str
+
+
+@dataclass
+class SetPasswordInput:
+    """设置初始密码入参（仅未设密码用户）。"""
+
     new_password: str
 
 

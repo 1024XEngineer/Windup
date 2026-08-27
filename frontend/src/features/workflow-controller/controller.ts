@@ -89,6 +89,8 @@ export interface GenerateFirstFrameOptions {
   sourceImageUrls?: Partial<Record<ActionDirection, GeneratedImage['url']>>
   /** 只影响本次请求的 prompt 覆盖值；不改写动作节点的原始输入。 */
   prompt?: string
+  /** 多方向重生成时分别覆盖各真实源方向，避免退回共享动作描述。 */
+  directionPrompts?: Partial<Record<ActionDirection, string>>
   /** 本阶段每个方向的候选数；自动交付固定为一张。 */
   candidateCount?: ImageCandidateCount
 }
@@ -120,6 +122,7 @@ export interface ApplyGenerationResultInput {
 
 export interface PrepareQuickStartProjectOptions {
   gameStyle?: ArtStyle
+  autoPixelate?: boolean
   /** 传入时复用已有项目；缺省时保持 Quick Start 自动建项目。 */
   projectId?: Project['id']
 }
@@ -136,6 +139,7 @@ export interface StartCharacterGenerationInput {
   referenceMedia?: readonly MediaReference[]
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
+  autoPixelate?: boolean
   projectId?: Project['id']
   automaticDelivery?: {
     actionPrompt?: string
@@ -226,6 +230,11 @@ export interface WorkflowController {
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateFirstFrameOptions,
   ): Promise<void>
+  /** 在生成前保存各真实源方向的首帧描述；镜像方向没有独立提示词。 */
+  updateFirstFrameDirectionPrompts(
+    nodeId: ActionFirstFrameWorkflowNode['id'],
+    prompts: Partial<Record<ActionDirection, string>>,
+  ): Promise<void>
   regenerateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: RegenerateImageOptions,
@@ -284,11 +293,17 @@ interface PendingGenerationAttachment {
 }
 
 export function createAutoPrepareProject(
-  projectApis: Pick<ProjectApis, 'create' | 'get'>,
+  projectApis: Pick<ProjectApis, 'create' | 'get' | 'setAutoPixelate'>,
 ): PrepareQuickStartProject {
   return async (prompt, directionalMovement = 'single', options) => {
     if (options?.projectId) {
-      const project = await projectApis.get(options.projectId)
+      let project = await projectApis.get(options.projectId)
+      if (
+        options.autoPixelate !== undefined &&
+        (project.autoPixelate ?? true) !== options.autoPixelate
+      ) {
+        project = await projectApis.setAutoPixelate(project.id, options.autoPixelate)
+      }
       return {
         id: project.id,
         spriteSize: project.spriteSize,
@@ -301,6 +316,7 @@ export function createAutoPrepareProject(
       directionalMovement,
       spriteSize: { width: 256, height: 256 },
       gameStyle: options?.gameStyle,
+      autoPixelate: options?.autoPixelate,
     })
     return {
       id: project.id,
@@ -437,6 +453,7 @@ export function createWorkflowController({
     referenceMedia = [],
     directionalMovement: selectedDirectionalMovement = 'single',
     gameStyle,
+    autoPixelate,
     projectId,
     automaticDelivery,
     suggestPixelPerfect = false,
@@ -451,6 +468,7 @@ export function createWorkflowController({
     const locomotion = actionPrompt ? automaticDelivery?.locomotion : undefined
     const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
       gameStyle,
+      ...(autoPixelate === undefined ? {} : { autoPixelate }),
       projectId,
     })
     generationDirections = getDirectionProfile(
@@ -469,7 +487,7 @@ export function createWorkflowController({
           generations: [],
           error: null,
           input: { prompt: normalizedPrompt, referenceMedia: [...referenceMedia] },
-          ...(suggestPixelPerfect ? { pixelPerfectSuggested: true } : {}),
+          ...(suggestPixelPerfect || autoPixelate === false ? { pixelPerfectSuggested: true } : {}),
           ...(automaticDelivery
             ? {
                 automation: {
@@ -991,9 +1009,13 @@ export function createWorkflowController({
           projectId: run.projectId,
           actionType: node.input.type,
           prompt:
-            options.prompt === undefined
-              ? node.input.prompt?.trim() || node.input.name
-              : nonEmpty(options.prompt, 'prompt'),
+            options.directionPrompts?.[direction] !== undefined
+              ? nonEmpty(options.directionPrompts[direction] ?? '', 'directionPrompt')
+              : options.prompt === undefined
+                ? node.input.directionPrompts?.[direction]?.trim() ||
+                  node.input.prompt?.trim() ||
+                  node.input.name
+                : nonEmpty(options.prompt, 'prompt'),
           spriteWidth: options.spriteWidth,
           spriteHeight: options.spriteHeight,
           referenceMedia: [sourceImage ?? (characterTemplateReference as MediaReference)],
@@ -1005,6 +1027,40 @@ export function createWorkflowController({
         return input
       },
       generationDirections,
+    )
+  }
+
+  function updateFirstFrameDirectionPrompts(
+    nodeId: ActionFirstFrameWorkflowNode['id'],
+    prompts: Partial<Record<ActionDirection, string>>,
+  ) {
+    ensureRunning()
+    const invalidDirection = Object.keys(prompts).find(
+      (direction) => !generationDirections.includes(direction as ActionDirection),
+    )
+    if (invalidDirection) {
+      throw new Error(`方向 ${invalidDirection} 是镜像方向，不能保存独立提示词`)
+    }
+    const normalized = Object.fromEntries(
+      generationDirections.flatMap((direction) => {
+        const prompt = prompts[direction]?.trim()
+        return prompt ? [[direction, prompt]] : []
+      }),
+    ) as Partial<Record<ActionDirection, string>>
+    return persist((run) =>
+      updateNode(run, nodeId, (node) => {
+        if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
+        if (node.phase !== 'configuring') throw new Error('动作首帧已开始生成，不能修改方向提示词')
+        return replaceNode(run, {
+          ...node,
+          input: {
+            ...node.input,
+            ...(Object.keys(normalized).length > 0
+              ? { directionPrompts: normalized }
+              : { directionPrompts: undefined }),
+          },
+        })
+      }),
     )
   }
 
@@ -1084,7 +1140,15 @@ export function createWorkflowController({
       throw new Error('动作首帧当前不能重新生成')
     }
     const basePrompt = firstFrameNode.input.prompt?.trim() || firstFrameNode.input.name
-    const prompt = adjustedPrompt(basePrompt, options)
+    const directionPrompts = Object.fromEntries(
+      generationDirections.map((direction) => [
+        direction,
+        adjustedPrompt(
+          firstFrameNode.input.directionPrompts?.[direction]?.trim() || basePrompt,
+          options,
+        ),
+      ]),
+    ) as Partial<Record<ActionDirection, string>>
     const sourceImageUrls =
       options.mode === 'refine'
         ? Object.fromEntries(
@@ -1112,7 +1176,7 @@ export function createWorkflowController({
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
         sourceImageUrls,
-        prompt,
+        directionPrompts,
       })
     })
   }
@@ -1309,7 +1373,10 @@ export function createWorkflowController({
               type: 'first_frame',
               projectId: run.projectId,
               actionType: node.input.type,
-              prompt: node.input.prompt?.trim() || node.input.name,
+              prompt:
+                node.input.directionPrompts?.[retryDirection]?.trim() ||
+                node.input.prompt?.trim() ||
+                node.input.name,
               spriteWidth: options.spriteWidth,
               spriteHeight: options.spriteHeight,
               referenceMedia: [templateUrl as MediaReference],
@@ -2001,6 +2068,7 @@ export function createWorkflowController({
     confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
     generateCharacterViewSheet: asCommand(generateCharacterViewSheet),
     confirmCharacterViewSheet: asCommand(confirmCharacterViewSheet),
+    updateFirstFrameDirectionPrompts: asCommand(updateFirstFrameDirectionPrompts),
     generateFirstFrame: asCommand(generateFirstFrame),
     regenerateFirstFrame: asCommand(regenerateFirstFrame),
     confirmFirstFrame: asCommand(confirmFirstFrame),

@@ -99,7 +99,14 @@ export interface QuickStartSession {
     signal?: AbortSignal,
   ): Promise<WorkflowRun>
   /** 在当前 WorkflowRun 的角色母版后追加动作，不创建新的 Run。 */
-  addAction(outfitId: string, actionDescription: string): Promise<WorkflowRun>
+  addAction(
+    outfitId: string,
+    actionDescription: string,
+    semantics?: {
+      actionType?: 'idle' | 'walk' | 'attack' | 'jump'
+      locomotion?: true
+    },
+  ): Promise<WorkflowRun>
   confirmCandidate(
     selectedImages: QuickStartTemplateSelection,
     actionDescription?: string,
@@ -1027,7 +1034,7 @@ export function createQuickStartService({
             .map((generation) => generation.queueAhead ?? 0),
         )
       },
-      async addAction(outfitId, actionDescription) {
+      async addAction(outfitId, actionDescription, semantics) {
         const prompt = actionDescription.trim()
         if (!prompt) throw new Error('请先描述要新增的动作')
         const run = controller.getWorkflow()
@@ -1042,7 +1049,7 @@ export function createQuickStartService({
           }
         }
         const spriteSize = knownSpriteSize ?? (await resolveProjectSpriteSize(run.projectId))
-        await prepareAction(controller, outfitId, prompt, spriteSize)
+        await prepareAction(controller, outfitId, prompt, spriteSize, semantics)
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },

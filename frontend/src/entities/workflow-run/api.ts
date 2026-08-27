@@ -46,6 +46,21 @@ function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === 'string'
 }
 
+const ACTION_SOURCE_DIRECTIONS = ['east', 'north', 'south', 'north_east', 'south_east'] as const
+
+function isDirectionPromptMap(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      Object.entries(value).every(
+        ([direction, prompt]) =>
+          isMember(direction, ACTION_SOURCE_DIRECTIONS) &&
+          typeof prompt === 'string' &&
+          prompt.trim().length > 0,
+      ))
+  )
+}
+
 function isGenerationRef(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -156,6 +171,7 @@ function hasValidActionInput(value: unknown): boolean {
     typeof value.type === 'string' &&
     value.type.length > 0 &&
     isNullableString(value.prompt) &&
+    isDirectionPromptMap(value.directionPrompts) &&
     typeof value.fps === 'number' &&
     Number.isFinite(value.fps) &&
     value.fps > 0 &&

@@ -581,9 +581,10 @@ def test_response_conversion_path_is_live(auth_client):
     """
     project = _create_project(auth_client)
     data = _submit_image(auth_client, project["id"])["data"]
-    for k in ("id", "status", "task_type"):
+    for k in ("id", "status", "task_type", "queue_ahead"):
         assert k in data, f"缺字段 {k}：{data}"
     assert "user_id" not in data, "响应不该暴露 user_id"
+    assert data["queue_ahead"] >= 0
 
 
 def test_validation_error_message_tells_the_user_what_is_wrong(auth_client):
