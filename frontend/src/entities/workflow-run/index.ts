@@ -96,6 +96,8 @@ export interface WorkflowActionInput {
   name: string
   type: ActionType
   prompt: string | null
+  /** 多方向项目的真实源方向首帧描述；镜像方向始终继承源方向，不单独保存。 */
+  directionPrompts?: Partial<Record<ActionDirection, string>>
   fps: number
   /** 生成类型与试玩位移解耦；例如向前翻滚仍是 custom，但可以发生位移。 */
   locomotion?: true
