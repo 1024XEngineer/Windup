@@ -1287,13 +1287,27 @@ export function createWorkflowController({
     const originalNode = structuredClone(findNode(before, nodeId))
     const role = generationRoleForNode(originalNode)
     if (!role) throw new Error('目标节点不是生成节点')
-    if (originalNode.status !== 'failed' && originalNode.phase !== 'selecting') {
-      throw new Error('当前方向不能重新生成')
-    }
     const reference = originalNode.generations.find(
       (item) => item.role === role && generationReferenceDirection(item) === direction,
     )
     if (!reference) throw new Error(`方向 ${direction} 没有可替换的生成任务`)
+    if (originalNode.status !== 'failed' && originalNode.phase !== 'selecting') {
+      if (originalNode.status !== 'active' || originalNode.phase !== 'generating') {
+        throw new Error('当前方向不能重新生成')
+      }
+      const expectation = generationExpectationForNode(
+        before,
+        originalNode,
+        reference.direction,
+        reference.role,
+      )
+      const generation = expectation
+        ? await generationApis.get(before.projectId, reference.taskId, expectation)
+        : null
+      if (generation?.status !== 'failed') {
+        throw new Error('当前方向不能重新生成')
+      }
+    }
     if (originalNode.type !== 'action-full-frame') {
       ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
       ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
