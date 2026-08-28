@@ -81,6 +81,11 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
   spriteHeight: number
   /** 首帧必须与角色母版使用同一个真实源方向。 */
   direction?: ActionDirection
+  /**
+   * 四向 / 八向锁定朝向时必填。后端用角色已确认的正视母版，不再吃各向立绘。
+   * 单向首帧不传，仍走 `/generation/image`。
+   */
+  characterId?: string
   /** 每个方向生成的候选数；缺省为 3，后端允许 1–4。 */
   candidateCount?: ImageCandidateCount
 }

@@ -898,6 +898,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       | '/generation/image'
       | '/generation/four-view'
       | '/generation/eight-view'
+      | '/generation/first-frame'
       | '/generation/action',
     projectId: number,
     expectation: Extract<GenerationExpectation, { type: TType }>,
@@ -981,6 +982,37 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           direction: input.direction ?? DEFAULT_DIRECTION,
         })
         expectations.set(generation.id, expectation)
+        return generation as Generation<T['type']>
+      }
+
+      if (input.type === 'first_frame' && input.characterId) {
+        const expectation = {
+          type: 'first_frame' as const,
+          actionType: input.actionType,
+          ...(input.direction === undefined ? {} : { direction: input.direction }),
+        }
+        const candidateCount = imageCandidateCount(
+          input.candidateCount ?? IMAGE_CANDIDATE_COUNT,
+          'candidateCount',
+        )
+        const generation = await post(
+          '/generation/first-frame',
+          projectId,
+          expectation,
+          {
+            project_id: projectId,
+            character_id: inputPositiveInteger(input.characterId, 'characterId'),
+            prompt: input.prompt ?? '',
+            negative_prompt: '',
+            width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),
+            height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
+            num_images: candidateCount,
+            direction: input.direction ?? DEFAULT_DIRECTION,
+          },
+          candidateCount,
+        )
+        expectations.set(generation.id, expectation)
+        candidateCounts.set(generation.id, candidateCount)
         return generation as Generation<T['type']>
       }
 

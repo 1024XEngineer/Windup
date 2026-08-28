@@ -35,6 +35,23 @@ function setupNode(
   }
 }
 
+function boundSetup(
+  overrides: Partial<CharacterSetupWorkflowNode> = {},
+): CharacterSetupWorkflowNode {
+  const { input, ...rest } = overrides
+  return setupNode({
+    status: 'passed',
+    phase: 'completed',
+    ...rest,
+    input: {
+      prompt: '像素骑士',
+      referenceMedia: [],
+      characterId: 'character-1',
+      ...input,
+    },
+  })
+}
+
 function templateNode(
   overrides: Partial<CharacterTemplateWorkflowNode> = {},
 ): CharacterTemplateWorkflowNode {
@@ -1451,7 +1468,7 @@ describe('WorkflowController', () => {
 
   it('四向动作只为三个源方向生成并逐方向确认首帧', async () => {
     const run = createRun([
-      setupNode({ status: 'passed', phase: 'completed' }),
+      boundSetup(),
       templateNode({
         status: 'passed',
         phase: 'completed',
@@ -1517,7 +1534,7 @@ describe('WorkflowController', () => {
       },
     })
     const run = createRun([
-      setupNode({ status: 'passed', phase: 'completed' }),
+      boundSetup(),
       templateNode({
         status: 'passed',
         phase: 'completed',
@@ -1539,15 +1556,30 @@ describe('WorkflowController', () => {
 
     expect(generation.apis.create).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ direction: 'east', prompt: '向右行走，保持侧面轮廓' }),
+      expect.objectContaining({
+        direction: 'east',
+        prompt: '向右行走，保持侧面轮廓',
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
     )
     expect(generation.apis.create).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ direction: 'north', prompt: '背向镜头向上行走' }),
+      expect.objectContaining({
+        direction: 'north',
+        prompt: '背向镜头向上行走',
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
     )
     expect(generation.apis.create).toHaveBeenNthCalledWith(
       3,
-      expect.objectContaining({ direction: 'south', prompt: '面向镜头向下行走' }),
+      expect.objectContaining({
+        direction: 'south',
+        prompt: '面向镜头向下行走',
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
     )
   })
 
@@ -2051,9 +2083,9 @@ describe('WorkflowController', () => {
     )
   })
 
-  it('动作首帧只重试失败方向并使用同方向角色母版', async () => {
+  it('动作首帧只重试失败方向并以正视母版锁定朝向', async () => {
     const run = createRun([
-      setupNode({ status: 'passed', phase: 'completed' }),
+      boundSetup(),
       templateNode({
         status: 'passed',
         phase: 'completed',
@@ -2118,8 +2150,9 @@ describe('WorkflowController', () => {
       prompt: '背向镜头向上行走',
       spriteWidth: 64,
       spriteHeight: 64,
-      referenceMedia: ['north-template.png'],
+      referenceMedia: [],
       direction: 'north',
+      characterId: 'character-1',
     })
     const retriedFirstFrame = controller.getWorkflow().nodes[2]
     if (retriedFirstFrame?.type !== 'action-first-frame') {
@@ -4071,9 +4104,9 @@ describe('WorkflowController', () => {
     },
   )
 
-  it('四向动作首帧微调分别使用同方向已确认图片', async () => {
+  it('四向动作首帧微调按方向写提示词，参考图改由正视母版锁定', async () => {
     const run = createRun([
-      setupNode({ status: 'passed', phase: 'completed' }),
+      boundSetup(),
       templateNode({
         status: 'passed',
         phase: 'completed',
@@ -4119,22 +4152,26 @@ describe('WorkflowController', () => {
         direction: input.direction,
         prompt: input.prompt,
         referenceMedia: input.referenceMedia,
+        characterId: 'characterId' in input ? input.characterId : undefined,
       })),
     ).toEqual([
       {
         direction: 'east',
         prompt: '向右行走\n增加轮廓光',
-        referenceMedia: ['east-frame.png'],
+        referenceMedia: [],
+        characterId: 'character-1',
       },
       {
         direction: 'north',
         prompt: '背向镜头行走\n增加轮廓光',
-        referenceMedia: ['north-frame.png'],
+        referenceMedia: [],
+        characterId: 'character-1',
       },
       {
         direction: 'south',
         prompt: '面向镜头行走\n增加轮廓光',
-        referenceMedia: ['south-frame.png'],
+        referenceMedia: [],
+        characterId: 'character-1',
       },
     ])
   })

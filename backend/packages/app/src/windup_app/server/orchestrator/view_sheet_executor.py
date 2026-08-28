@@ -18,10 +18,9 @@ from typing import TYPE_CHECKING
 from PIL import Image
 from sqlalchemy.orm import Session
 
-from windup_ai_engine.prompt import build_view_sheet_prompt
+from windup_ai_engine.prompt import build_view_sheet_prompt, view_for_perspective
 from windup_ai_engine.slicing.quality import subject_blobs
 from windup_common.directions import ActionDirection
-from windup_common.models import CharacterView
 from windup_framework.gateway import bind_call_context, fresh_gateway_request
 
 from windup_app.server.orchestrator import generation_io, task_repo
@@ -71,11 +70,6 @@ _CELL_GRID: dict[ActionDirection, tuple[int, int]] = {
     ActionDirection.SOUTH_WEST: (0, 2),
     ActionDirection.SOUTH: (1, 2),
     ActionDirection.SOUTH_EAST: (2, 2),
-}
-_PERSPECTIVE_TO_VIEW = {
-    1: CharacterView.SIDE,
-    2: CharacterView.TOP_DOWN,
-    3: CharacterView.ISOMETRIC,
 }
 
 
@@ -241,7 +235,7 @@ class ViewSheetTaskExecutor:
             n_sheets,
         )
         jobs = [(sheet_i, direction) for sheet_i in range(n_sheets) for direction in sources]
-        view = _PERSPECTIVE_TO_VIEW.get(cons.perspective, CharacterView.SIDE)
+        view = view_for_perspective(cons.perspective)
         extra = (input.prompt or "").strip()
         image_gen = self._get_image()
         matte = self._get_matte()
