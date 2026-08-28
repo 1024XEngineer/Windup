@@ -5,6 +5,11 @@
 """
 from __future__ import annotations
 
+import io
+import time
+
+from PIL import Image
+
 import pytest
 
 from windup_framework.providers import make_matte_provider
@@ -174,3 +179,86 @@ def test_an_unlimited_cgroup_is_not_read_as_a_tiny_limit(monkeypatch, tmp_path, 
     cg = tmp_path / "memory.max"
     cg.write_text(sentinel)
     assert f._read_int(str(cg)) is None
+
+
+# ── 并发安全 ─────────────────────────────────────────────────────────────
+
+
+def test_birefnet_forward_passes_never_overlap(monkeypatch):
+    """拦的坏例:并发前向叠内存。
+
+    BiRefNet 单帧峰值 6.85GB,而 worker 的生成并发是 IMAGE=4 / ACTION=2。不串行的话
+    四路并发就是四份激活值同时在内存里 —— 而单份就已经超过容器上限。u2net 那边一直
+    有这把锁(``matte._RUN_LOCK``),本类此前漏了。
+
+    判据是**实测重叠数**,不是"代码里有没有 Lock 字样":后者在把锁挪错位置时照样绿。
+    """
+    import threading
+
+    from windup_framework.providers import matte_birefnet as mb
+
+    live = 0
+    peak = 0
+    guard = threading.Lock()
+
+    class _FakeSession:
+        def get_inputs(self):
+            return [type("I", (), {"name": "x"})()]
+
+        def run(self, _out, _feed):
+            nonlocal live, peak
+            with guard:
+                live += 1
+                peak = max(peak, live)
+            time.sleep(0.02)                      # 让并发真的有机会重叠
+            with guard:
+                live -= 1
+            import numpy as np
+            return [np.zeros((1, 1, 8, 8), dtype="float32")]
+
+    prov = mb.BiRefNetMatteProvider(union_with_u2net=False)
+    monkeypatch.setattr(prov, "_get_session", lambda: _FakeSession())
+
+    img = Image.new("RGB", (16, 16), (120, 120, 120))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png = buf.getvalue()
+
+    threads = [threading.Thread(target=prov.cutout, args=(png,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert peak == 1, f"实测同时有 {peak} 个前向在跑;每个峰值 6.85GB,叠起来必 OOM"
+
+
+def test_the_union_u2net_is_created_once_under_concurrency(monkeypatch):
+    """拦的坏例:并集那一路的惰性初始化是检查后赋值,两个线程各建一份。
+
+    每份自带一套 ONNX 会话。worker 并发 4,这个竞态在生产上够得着。
+    """
+    import threading
+
+    from windup_framework.providers import matte_birefnet as mb
+
+    made = []
+
+    class _FakeU2Net:
+        def __init__(self):
+            made.append(1)
+            time.sleep(0.01)                      # 放大竞态窗口
+
+        def warmup(self):
+            pass
+
+    monkeypatch.setattr(
+        "windup_framework.providers.matte.OnnxU2NetMatteProvider", _FakeU2Net
+    )
+    prov = mb.BiRefNetMatteProvider(union_with_u2net=True)
+    threads = [threading.Thread(target=prov._ensure_u2net) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(made) == 1, f"并发下建了 {len(made)} 份 u2net,每份一套 ONNX 会话"
