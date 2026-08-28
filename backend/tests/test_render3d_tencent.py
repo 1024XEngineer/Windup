@@ -98,6 +98,12 @@ def clean_downloads():
     _DOWNLOADS.clear()
 
 
+@pytest.fixture
+def monkeypatch_download(monkeypatch):
+    """把产物下载换成给定实现。用于制造"提交成功、取件失败"这一段。"""
+    return lambda fn: monkeypatch.setattr(T, "_download", fn)
+
+
 @pytest.fixture(autouse=True)
 def no_sleep(monkeypatch):
     monkeypatch.setattr(T.time, "sleep", lambda s: None)
@@ -737,3 +743,55 @@ def test_env_file_values_tolerate_surrounding_quotes(tmp_path, monkeypatch):
     monkeypatch.setattr(_tc3, "ENVFILE", f)
     c = _tc3.TencentCredentials.resolve()
     assert c.secret_id == "AKIDquoted" and c.secret_key == "skquoted"
+
+
+# ── 断点续取:提交之后的失败不该让已扣的费作废 ───────────────────────────────
+
+
+def test_submit_hands_out_the_job_id_before_anything_can_still_fail(cloud, monkeypatch_download):
+    """任务号要在**取件之前**交出去。
+
+    计费发生在提交那一刻,而之后的每一步(等待、下载、进程存活)都可能失败。等到
+    ``rig()`` 正常返回再交,恰好是"没失败"的那条路 —— 需要它的场景一个都覆盖不到。
+    """
+    cloud(SubmitAutoRiggingJob=[{"JobId": "rig-9"}],
+          DescribeAutoRiggingJob=[{"Status": "DONE", "ResultFile3Ds": [
+              {"Type": "GLB", "Url": "https://x/r.glb"}]}])
+    # 取件那一步真的炸。**不能靠钩子自己抛** —— 那样钩子挪到取件之后也照样被调到,
+    # 用例照样绿,而"提交成功但取不回来"正是它要覆盖的唯一场景。
+    _DOWNLOADS.pop("https://x/r.glb", None)
+    seen: list[str] = []
+
+    def boom(url, **kw):
+        raise TimeoutError("产物下载超时")
+
+    monkeypatch_download(boom)
+    with pytest.raises(TimeoutError):
+        TencentAutoRigProvider(Uploader(), CREDS, allow_spend=True).rig(
+            make_glb(), motion="walk", on_submitted=seen.append)
+    assert seen == ["rig-9"], "提交成功了却没交出任务号 —— 这笔钱没人捡得回来"
+
+
+def test_fetch_reports_the_motion_the_caller_asks_about(cloud):
+    """续取要把动作带回来。
+
+    接口不回述这个任务当初请求了什么 ``MotionType``,所以只能由调用方给。带不回来的话
+    ``motion`` 是 ``None``,而上层拿它当"产物零动画片段"的致命错 —— 续回来的好产物
+    会被当废品扔掉,续取写了等于没写。
+    """
+    cloud(DescribeAutoRiggingJob=[{"Status": "DONE", "ResultFile3Ds": [
+        {"Type": "GLB", "Url": "https://x/r.glb"}]}])
+    _DOWNLOADS["https://x/r.glb"] = GLB
+    got = TencentAutoRigProvider(Uploader(), CREDS, allow_spend=True).fetch(
+        "rig-9", motion="walk")
+    assert got.motion == PresetMotion("walk", 23)
+    assert got.data == GLB
+
+
+def test_fetch_costs_nothing_it_never_submits(cloud):
+    """续取的全部价值就是不重新提交。提交一次 = 再扣一次 10 积分。"""
+    fake = cloud(DescribeAutoRiggingJob=[{"Status": "DONE", "ResultFile3Ds": [
+        {"Type": "GLB", "Url": "https://x/r.glb"}]}])
+    _DOWNLOADS["https://x/r.glb"] = GLB
+    TencentAutoRigProvider(Uploader(), CREDS, allow_spend=True).fetch("rig-9", motion="walk")
+    assert fake.count("SubmitAutoRiggingJob") == 0, "续取时又提交了一次"

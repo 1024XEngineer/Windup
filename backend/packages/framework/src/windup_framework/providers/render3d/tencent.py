@@ -25,7 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from ._tc3 import TencentApiError, TencentCredentials, call, cos_request, cos_sign, redact
 from .checks import check_model, sniff_format
@@ -539,7 +539,8 @@ class TencentAutoRigProvider:
         return known or PresetMotion(f"motion_{mt}", mt)
 
     def rig_from_url(self, model_url: str, src_fmt: str, *, want: str = "GLB",
-                     motion: str | int | None = None) -> RiggedModel:
+                     motion: str | int | None = None,
+                     on_submitted: Callable[[str], None] | None = None) -> RiggedModel:
         """绑骨,输入是一个**已经在上游那边**的 URL。**云到云,我们不中转字节。**
 
         与 :meth:`rig` 的分工:那个吃 bytes(先上传再提交),这个吃 URL(直接提交)。
@@ -563,14 +564,17 @@ class TencentAutoRigProvider:
                 f"绑骨服务器要能取到这个 URL,收到 {redact(model_url)[:80]!r}")
         job = _submit_with_backoff(lambda: self._submit(model_url, src_fmt, preset))
         logger.info("绑骨已提交并计费(云到云) JobId=%s —— 后续任何失败都用它重取", job)
+        if on_submitted is not None:
+            on_submitted(job)      # 计费已发生:先落盘再取件,取件失败才有得续
         files = self._wait(job)
         picked, got = _pick_artifact(files, want, strict=False, job_id=job)
         data = _download(str(picked["Url"]))
         _verify_magic(data, got)
-        return RiggedModel(data=data, fmt=got, motion=preset.name if preset else None)
+        return RiggedModel(data=data, fmt=got, motion=preset)
 
     def rig(self, model: bytes, *, want: str = "GLB",
-            motion: str | int | None = None) -> RiggedModel:
+            motion: str | int | None = None,
+            on_submitted: Callable[[str], None] | None = None) -> RiggedModel:
         if want not in MODEL_FORMATS:
             raise ArtifactFormatError(f"want 只能是 {MODEL_FORMATS},收到 {want!r}")
         src_fmt = sniff_format(model)                  # 嗅探,不信调用方声明
@@ -588,21 +592,28 @@ class TencentAutoRigProvider:
         url = self._upload(model, src_fmt)
         job = _submit_with_backoff(lambda: self._submit(url, src_fmt, preset))
         logger.info("绑骨已提交并计费 JobId=%s —— 后续任何失败都用它重取,别重新提交", job)
+        if on_submitted is not None:
+            on_submitted(job)      # 同上:先落盘,后面每一步都可能失败
         files = self._wait(job)
         picked, got = _pick_artifact(files, want, strict=False, job_id=job)
         data = _download(str(picked["Url"]))
         _verify_magic(data, got)
         return RiggedModel(data=data, fmt=got, motion=preset)
 
-    def fetch(self, job_id: str, *, want: str = "GLB") -> RiggedModel:
+    def fetch(self, job_id: str, *, want: str = "GLB",
+              motion: str | int | None = None) -> RiggedModel:
         """取一个**已完成**任务的产物。零成本,不重新提交。
 
         存在的理由:提交之后的任何失败(格式、下载、进程被杀)都不该让已经扣过的费作废。
+
+        ``motion`` 要由调用方给,接口不回述这个任务当初请求了什么动作。缺了它返回的
+        ``RiggedModel.motion`` 恒为 ``None``,而下游把它当"绑骨产物没有动画片段"的
+        致命错 —— 于是续取回来的好产物会被当废品扔掉,续取等于没有。
         """
         picked, got = _pick_artifact(self._wait(job_id), want, strict=False, job_id=job_id)
         data = _download(str(picked["Url"]))
         _verify_magic(data, got)
-        return RiggedModel(data=data, fmt=got, motion=None)
+        return RiggedModel(data=data, fmt=got, motion=self.resolve_motion(motion))
 
     def _upload(self, model: bytes, fmt: str) -> str:
         ct = "model/gltf-binary" if fmt == "GLB" else "application/x-fbx"
