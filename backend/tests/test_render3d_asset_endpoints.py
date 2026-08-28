@@ -58,10 +58,12 @@ class _FakeModel3D:
     def __init__(self) -> None:
         self.calls = 0
         self.seen: list[bytes] = []      # 收到的是哪张图 —— 送错图和没送一样致命
+        self.views: dict | None = None   # 多视图有没有真的传下来
 
-    def image_to_3d(self, master: bytes, *, want: str = "GLB") -> bytes:
+    def image_to_3d(self, master: bytes, *, want: str = "GLB", **kw) -> bytes:
         self.calls += 1
         self.seen.append(master)
+        self.views = kw.get("extra_views")
         return b"glTF-fake-model"
 
 
@@ -553,3 +555,22 @@ def test_a_failed_pose_step_does_not_sink_the_whole_build(api, render3d):
     r = api.post(f"{_base()}/build", json=BIPED)
     assert r.status_code == 200, r.json()
     assert render3d.test_model3d.seen == [render3d.test_source["master"]]
+
+
+def test_extra_views_survive_alongside_the_posed_master(api, render3d):
+    """多视图与 T-Pose 绑骨母版**同时生效**。
+
+    两者在 build 里挨着,合并时极易只留一半 —— 而少了哪一半都不报错:
+    丢了多视图就是用户按多视图付了钱拿到单图重建;丢了绑骨母版就是手臂焊在躯干上。
+    这条专门盯那一行同时带两个参数的调用。
+    """
+    posed = _subject_png(240, 120, (40, 90, 200))
+    render3d._image = _PosingImage(posed)
+    render3d.test_source["back"] = b"BACK-VIEW-BYTES"
+    original_fetch = render3d._fetch
+    render3d._fetch = lambda url: (
+        b"BACK-VIEW-BYTES" if url == "https://cdn.windup.test/back.png" else original_fetch(url)
+    )
+    api.post(f"{_base()}/build", json={**BIPED, "extra_view_urls": {"back": "https://cdn.windup.test/back.png"}})
+    assert render3d.test_model3d.seen == [posed], "送进图生 3D 的不是 T-Pose 绑骨母版"
+    assert render3d.test_model3d.views == {"back": b"BACK-VIEW-BYTES"}, "多视图没传下去"
