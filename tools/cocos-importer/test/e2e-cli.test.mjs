@@ -20,16 +20,13 @@ const framesPackageRoot = join(__dirname, '.tmp-frames-package')
 function ensureZip() {
   if (existsSync(zipPath)) return
   // 用 vitest 跑一次 extract test 落盘
+  const command = process.platform === 'win32' ? 'cmd' : 'npx'
+  const commandArgs = process.platform === 'win32'
+    ? ['/c', 'npx', 'vitest', 'run', '--passWithNoTests', 'src/features/export-package/cocos-target.e2e.extract.test.ts']
+    : ['vitest', 'run', '--passWithNoTests', 'src/features/export-package/cocos-target.e2e.extract.test.ts']
   execFileSync(
-    'cmd',
-    [
-      '/c',
-      'npx',
-      'vitest',
-      'run',
-      '--passWithNoTests',
-      'src/features/export-package/cocos-target.e2e.extract.test.ts',
-    ],
+    command,
+    commandArgs,
     { cwd: frontendDir, stdio: 'inherit' },
   )
   if (!existsSync(zipPath)) throw new Error(`vitest 跑完也没产出 ZIP: ${zipPath}`)
