@@ -48,27 +48,60 @@ html:has(.landing-page) {
 }
 .landing-hero-rays {
   background:
-    radial-gradient(ellipse at 18% 110%, rgb(255 247 220 / .72), transparent 46%),
-    radial-gradient(ellipse at 78% 105%, rgb(221 229 220 / .7), transparent 44%),
-    linear-gradient(112deg, transparent 34%, rgb(255 251 232 / .62) 48%, transparent 60%);
-  background-size: 140% 140%, 130% 130%, 220% 100%;
+    radial-gradient(ellipse at 18% 110%, rgb(255 247 220 / 0.72), transparent 46%),
+    radial-gradient(ellipse at 78% 105%, rgb(221 229 220 / 0.7), transparent 44%),
+    linear-gradient(112deg, transparent 34%, rgb(255 251 232 / 0.62) 48%, transparent 60%);
+  background-size:
+    140% 140%,
+    130% 130%,
+    220% 100%;
   animation: landing-rays-drift 15s ease-in-out infinite alternate;
   filter: blur(10px);
 }
 .landing-hero-paper {
-  opacity: .28;
-  background-image: radial-gradient(rgb(86 82 70 / .18) .55px, transparent .7px);
+  opacity: 0.28;
+  background-image: radial-gradient(rgb(86 82 70 / 0.18) 0.55px, transparent 0.7px);
   background-size: 7px 7px;
   mix-blend-mode: multiply;
 }
-.landing-hero-stage > img { opacity: 0; transition: opacity 1.4s ease, transform 2.4s cubic-bezier(.2,.75,.25,1); }
-.landing-hero-mage { transform: translate3d(8vw, 0, 0) scaleX(-1); }
-.landing-hero-adventurer { transform: translate3d(-10vw, 0, 0); }
-.landing-hero-witch { transform: translate3d(-50%, 28px, 0) scale(.86); }
-.landing-hero-stage.is-revealed > .landing-hero-mage { opacity: .8; transform: translate3d(0, 0, 0) scaleX(-1); transition-delay: .1s; }
-.landing-hero-stage.is-revealed > .landing-hero-adventurer { opacity: .9; transform: translate3d(0, 0, 0); transition-delay: .4s; }
-.landing-hero-stage.is-revealed > .landing-hero-witch { opacity: 1; transform: translate3d(-50%, 0, 0) scale(1); transition-delay: .72s; }
-@keyframes landing-rays-drift { from { transform: translate3d(-3%, 1%, 0) scale(1.08); } to { transform: translate3d(3%, -1%, 0) scale(1.12); } }
+.landing-hero-stage > img {
+  opacity: 0;
+  transition:
+    opacity 1.4s ease,
+    transform 2.4s cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+.landing-hero-mage {
+  transform: translate3d(8vw, 0, 0) scaleX(-1);
+}
+.landing-hero-adventurer {
+  transform: translate3d(-10vw, 0, 0);
+}
+.landing-hero-witch {
+  transform: translate3d(-50%, 28px, 0) scale(0.86);
+}
+.landing-hero-stage.is-revealed > .landing-hero-mage {
+  opacity: 0.8;
+  transform: translate3d(0, 0, 0) scaleX(-1);
+  transition-delay: 0.1s;
+}
+.landing-hero-stage.is-revealed > .landing-hero-adventurer {
+  opacity: 0.9;
+  transform: translate3d(0, 0, 0);
+  transition-delay: 0.4s;
+}
+.landing-hero-stage.is-revealed > .landing-hero-witch {
+  opacity: 1;
+  transform: translate3d(-50%, 0, 0) scale(1);
+  transition-delay: 0.72s;
+}
+@keyframes landing-rays-drift {
+  from {
+    transform: translate3d(-3%, 1%, 0) scale(1.08);
+  }
+  to {
+    transform: translate3d(3%, -1%, 0) scale(1.12);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   html:has(.landing-page) {

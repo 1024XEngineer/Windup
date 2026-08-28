@@ -155,15 +155,28 @@ function StaticCapabilityStory() {
         <h2 className="text-display text-ink">角色不只被生成一次。</h2>
         <p className="mt-5 font-serif text-subtitle text-ink">让角色留下来，而不是生成完就散场。</p>
         <p className="mx-auto mt-3 max-w-[32rem] text-body text-ink-muted">
-          Windup 把角色、造型、动作和每一帧收进同一个项目资产库。今天确认的角色，明天仍然可以回来增加新的动作，创作不会在一次生成后重新归零。
+          Windup
+          把角色、造型、动作和每一帧收进同一个项目资产库。今天确认的角色，明天仍然可以回来增加新的动作，创作不会在一次生成后重新归零。
         </p>
       </header>
 
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        <article data-floating-artifact className="absolute top-[19%] left-[1%] h-36 w-52 -rotate-4 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-4rem]" />
-        <article data-floating-artifact className="absolute top-[16%] right-[6%] h-40 w-44 rotate-3 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]" />
-        <article data-floating-artifact className="absolute bottom-[8%] left-[8%] h-28 w-72 rotate-2 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-3rem]" />
-        <article data-floating-artifact className="absolute right-[7%] bottom-[12%] h-32 w-56 -rotate-3 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]" />
+        <article
+          data-floating-artifact
+          className="absolute top-[19%] left-[1%] h-36 w-52 -rotate-4 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-4rem]"
+        />
+        <article
+          data-floating-artifact
+          className="absolute top-[16%] right-[6%] h-40 w-44 rotate-3 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]"
+        />
+        <article
+          data-floating-artifact
+          className="absolute bottom-[8%] left-[8%] h-28 w-72 rotate-2 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-3rem]"
+        />
+        <article
+          data-floating-artifact
+          className="absolute right-[7%] bottom-[12%] h-32 w-56 -rotate-3 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]"
+        />
       </div>
     </div>
   )
@@ -563,7 +576,9 @@ export function LandingPage() {
             <div
               data-testid="workflow-editor-placeholder"
               className="landing-hero-product-window__surface relative aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
-            ><HeroDitherBackground /></div>
+            >
+              <HeroDitherBackground />
+            </div>
           </figure>
         </section>
 
@@ -576,13 +591,17 @@ export function LandingPage() {
               <dl className="mt-12 grid gap-8">
                 <div className="border-t border-rule pt-6">
                   <dt className="text-subtitle font-semibold text-ink">Quick Start</dt>
-                  <dd className="mt-3 max-w-[26em] text-body text-ink-muted">用自然语言描述角色和动作，系统建立标准流程，并在需要判断的地方停下来等你确认。</dd>
+                  <dd className="mt-3 max-w-[26em] text-body text-ink-muted">
+                    用自然语言描述角色和动作，系统建立标准流程，并在需要判断的地方停下来等你确认。
+                  </dd>
                 </div>
               </dl>
             </div>
             <figure>
               <WorkflowDemoVideo />
-              <figcaption className="mt-4 text-body text-ink-faint">真实 WorkflowRun 会保留画布中的每一次确认结果。</figcaption>
+              <figcaption className="mt-4 text-body text-ink-faint">
+                真实 WorkflowRun 会保留画布中的每一次确认结果。
+              </figcaption>
             </figure>
           </div>
         </section>
@@ -598,7 +617,9 @@ export function LandingPage() {
             </div>
             <figure>
               <WorkflowEditorProductionVideo />
-              <figcaption className="mt-4 text-body text-ink-faint">真实 WorkflowRun 的生产与审核过程。</figcaption>
+              <figcaption className="mt-4 text-body text-ink-faint">
+                真实 WorkflowRun 的生产与审核过程。
+              </figcaption>
             </figure>
           </div>
         </section>
@@ -606,7 +627,9 @@ export function LandingPage() {
         <section className="border-b border-rule bg-paper px-8 py-24 max-lg:px-4 max-lg:py-16 lg:px-12">
           <div className="mx-auto grid max-w-[82rem] gap-12 lg:grid-cols-[minmax(18rem,0.7fr)_minmax(0,1.3fr)] lg:items-center">
             <div>
-              <h2 className="max-w-[10em] text-title text-ink">二向、四向、八向，都能保持同一个角色。</h2>
+              <h2 className="max-w-[10em] text-title text-ink">
+                二向、四向、八向，都能保持同一个角色。
+              </h2>
               <p className="mt-6 max-w-[26em] text-lead text-ink-muted">
                 角色思想一键生成，多方向视图保持真正的完美像素化。
               </p>
@@ -631,7 +654,10 @@ export function LandingPage() {
                   </figcaption>
                 </figure>
               ))}
-              <figure className="relative col-span-2 h-48 overflow-hidden" aria-label="完美像素画局部细节">
+              <figure
+                className="relative col-span-2 h-48 overflow-hidden"
+                aria-label="完美像素画局部细节"
+              >
                 <img
                   src={characterViewFront}
                   alt="角色头部与披风的像素颗粒细节"

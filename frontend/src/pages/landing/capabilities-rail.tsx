@@ -72,7 +72,10 @@ export function CapabilitiesRail() {
       aria-labelledby="capabilities-heading"
       className="relative isolate overflow-visible scroll-mt-28 border-b border-rule pt-16 [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea]"
     >
-      <div className="pointer-events-none absolute inset-x-0 -top-48 z-0 h-[calc(100%+12rem)]" aria-hidden="true">
+      <div
+        className="pointer-events-none absolute inset-x-0 -top-48 z-0 h-[calc(100%+12rem)]"
+        aria-hidden="true"
+      >
         <HeroDitherBackground />
       </div>
       <div className="relative z-10">

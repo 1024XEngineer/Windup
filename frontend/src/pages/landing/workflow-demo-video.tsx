@@ -56,5 +56,7 @@ export function WorkflowDemoVideo({
 }
 
 export function WorkflowEditorProductionVideo() {
-  return <WorkflowDemoVideo source={workflowEditorProductionVideo} label="Workflow Editor 生产演示" />
+  return (
+    <WorkflowDemoVideo source={workflowEditorProductionVideo} label="Workflow Editor 生产演示" />
+  )
 }
