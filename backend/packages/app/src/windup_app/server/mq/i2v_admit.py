@@ -196,6 +196,19 @@ def has_claim(task_id: int) -> bool:
     return bool(get_redis().sismember(INFLIGHT_KEY, _task_member(task_id)))
 
 
+def claimed_ids() -> tuple[int, ...]:
+    """全局索引 ∪ 各车道 SET。终态对账时两边都要扫，避免只清了一边。"""
+    redis_client = get_redis()
+    ids: set[int] = set()
+    keys = (INFLIGHT_KEY, *(_lane_inflight(lane) for lane in lane_ids()))
+    for key in keys:
+        for raw in redis_client.smembers(key) or ():
+            text = raw.decode() if isinstance(raw, bytes) else str(raw)
+            if text.isdigit():
+                ids.add(int(text))
+    return tuple(sorted(ids))
+
+
 def can_submit(task_id: int) -> bool:
     """该任务所在车道健康时可并行；冷却期内等到点且只能一枪。"""
     lane = _bound_lane(task_id) or lane_ids()[0]

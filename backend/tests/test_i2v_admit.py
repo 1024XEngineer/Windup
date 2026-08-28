@@ -46,6 +46,9 @@ class _MemRedis:
     def sismember(self, key, member):
         return 1 if str(member) in self.sets.get(key, set()) else 0
 
+    def smembers(self, key):
+        return set(self.sets.get(key, set()))
+
     def scard(self, key):
         return len(self.sets.get(key, set()))
 
@@ -145,6 +148,14 @@ def _patch_redis(
     monkeypatch.setattr("windup_app.server.mq.i2v_admit.get_redis", lambda: mem)
     monkeypatch.setattr("windup_app.server.mq.i2v_admit.lane_ids", lambda: lanes)
     return mem
+
+
+def test_claimed_ids_unions_global_and_lane_sets(monkeypatch):
+    mem = _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    mem.sadd("windup:i2v:gate:inflight", "632")
+    mem.sadd("windup:i2v:gate:inflight:primary.key0", "632")
+    mem.sadd("windup:i2v:gate:inflight:primary.key1", "710")
+    assert admit.claimed_ids() == (632, 710)
 
 
 def test_third_acquire_is_rejected(monkeypatch):

@@ -416,6 +416,10 @@ class ActionTaskExecutor:
                 task_repo.fail_task(s, task_id, error_message=error_message)
 
             generation_io.using_session(session, self._make_session, _reject)
+            try:
+                i2v_admit.release(task_id)
+            except Exception:
+                logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
         except UpstreamExhaustedError as exc:
             i2v_admit.release(task_id)
             if not exc.is_free_retryable:
