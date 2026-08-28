@@ -188,7 +188,9 @@ function useCocosImportAction(
 
   const executeImport = async () => {
     try {
-      const result = await resolvedImporter(model, (phase) => setState({ status: 'working', phase }))
+      const result = await resolvedImporter(model, (phase) =>
+        setState({ status: 'working', phase }),
+      )
       setState({ status: 'success', result })
     } catch (error) {
       handleError(error)
@@ -230,7 +232,9 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
   if (action.state.status === 'pairing') {
     return (
       <div className="space-y-2 rounded-lg bg-sky-50 p-2">
-        <p role="alert" className="text-xs text-sky-900">{action.state.message}</p>
+        <p role="alert" className="text-xs text-sky-900">
+          {action.state.message}
+        </p>
         <label className="block text-[11px] font-medium text-sky-900">
           Creator 连接码
           <input
@@ -258,8 +262,13 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
         <p>导入失败：{action.state.message}</p>
         {action.state.jobCode ? (
           <p className="mt-1 text-[11px]">
-            阶段：{COCOS_PHASE_LABELS[action.state.phase ?? 'queued']} · 错误码：{action.state.jobCode} · 回滚：
-            {action.state.rolledBack ? '已完成' : action.state.jobCode === 'IMPORT_ROLLBACK_FAILED' ? '未完成，请检查工程资产' : '未执行'}
+            阶段：{COCOS_PHASE_LABELS[action.state.phase ?? 'queued']} · 错误码：
+            {action.state.jobCode} · 回滚：
+            {action.state.rolledBack
+              ? '已完成'
+              : action.state.jobCode === 'IMPORT_ROLLBACK_FAILED'
+                ? '未完成，请检查工程资产'
+                : '未执行'}
           </p>
         ) : null}
       </div>
@@ -269,9 +278,33 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
     return (
       <div className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
         <p className="font-semibold">已导入到当前 Cocos 工程</p>
-        <p className="mt-1">{action.state.result.projectName} · {action.state.result.animationCount} 个动作，{action.state.result.frameCount} 帧</p>
+        <p className="mt-1">
+          {action.state.result.projectName} · {action.state.result.animationCount} 个动作，
+          {action.state.result.frameCount} 帧
+        </p>
       </div>
     )
+  }
+  return null
+}
+
+function StateBanner({ state }: { state: ExportState }) {
+  if (state.status === 'working') {
+    return (
+      <p role="status" className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+        {PHASE_LABELS[state.phase]}
+      </p>
+    )
+  }
+  if (state.status === 'failure') {
+    return (
+      <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
+        导出失败：{state.message}
+      </p>
+    )
+  }
+  if (state.status === 'success') {
+    return <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">下载完成</p>
   }
   return null
 }
@@ -521,12 +554,18 @@ export function ExportPanel({
             type="button"
             disabled={working || cocos.working || cocosImport.working || qualityIssueCount > 0}
             onClick={() => void cocos.startExport()}
-            title={cocos.state.status === 'failure' ? cocos.state.message : '插件不可用时下载 Cocos 适配包'}
+            title={
+              cocos.state.status === 'failure'
+                ? cocos.state.message
+                : '插件不可用时下载 Cocos 适配包'
+            }
             className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {cocosButtonLabel}
           </button>
-          <p className="text-[10px] leading-4 text-amber-700">首次使用需要在 Creator 中安装全局插件并输入连接码。</p>
+          <p className="text-[10px] leading-4 text-amber-700">
+            首次使用需要在 Creator 中安装全局插件并输入连接码。
+          </p>
         </div>
       ) : null}
     </section>
@@ -623,7 +662,11 @@ export function ExportButton({
           <button
             type="button"
             disabled={working || cocos.working || cocosImport.working}
-            title={cocos.state.status === 'failure' ? cocos.state.message : '插件不可用时下载 Cocos 适配包'}
+            title={
+              cocos.state.status === 'failure'
+                ? cocos.state.message
+                : '插件不可用时下载 Cocos 适配包'
+            }
             onClick={() => void cocos.startExport()}
             className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-amber-400 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-50 ${className}`}
           >
@@ -636,7 +679,10 @@ export function ExportButton({
                   : '下载 Cocos 包'}
           </button>
           {cocos.state.status === 'failure' ? (
-            <span role="alert" className="max-w-64 text-[11px] font-medium leading-4 text-app-danger">
+            <span
+              role="alert"
+              className="max-w-64 text-[11px] font-medium leading-4 text-app-danger"
+            >
               Cocos 导出失败：{cocos.state.message}
             </span>
           ) : null}

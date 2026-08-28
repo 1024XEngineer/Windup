@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ExportPackageModel } from './model'
-import { ExportButton, ExportPanel } from './export-panel'
+import { AssetVersionExportButton, ExportButton, ExportPanel } from './export-panel'
 import { CocosBridgeError } from './cocos-bridge-client'
 
 const model = {
@@ -516,7 +516,10 @@ describe('ExportPanel', () => {
         ...action,
         sequences: action.sequences.map((sequence) => ({
           ...sequence,
-          frames: sequence.frames.map((frame) => ({ ...frame, imageUrl: '/pixel-perfect-walk.png' })),
+          frames: sequence.frames.map((frame) => ({
+            ...frame,
+            imageUrl: '/pixel-perfect-walk.png',
+          })),
         })),
       })),
     } satisfies ExportPackageModel
@@ -524,18 +527,31 @@ describe('ExportPanel', () => {
       blob: new Blob(['zip'], { type: 'application/zip' }),
       filename: 'windup-Aster-character-1.zip',
     })
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:versioned-export') })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:versioned-export'),
+    })
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
     const downloads: string[] = []
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-      downloads.push(this.download)
-    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+      function (this: HTMLAnchorElement) {
+        downloads.push(this.download)
+      },
+    )
 
-    render(<AssetVersionExportButton originalModel={model} pixelPerfectModel={pixelPerfectModel} exporter={exporter} />)
+    render(
+      <AssetVersionExportButton
+        originalModel={model}
+        pixelPerfectModel={pixelPerfectModel}
+        exporter={exporter}
+      />,
+    )
     fireEvent.click(screen.getByRole('button', { name: '选择下载版本' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /完美像素版/u }))
 
-    await waitFor(() => expect(exporter).toHaveBeenCalledWith(pixelPerfectModel, expect.any(Function)))
+    await waitFor(() =>
+      expect(exporter).toHaveBeenCalledWith(pixelPerfectModel, expect.any(Function)),
+    )
     expect(downloads).toEqual(['windup-Aster-character-1-pixel-perfect.zip'])
   })
 
@@ -545,14 +561,25 @@ describe('ExportPanel', () => {
       blob: new Blob(['zip'], { type: 'application/zip' }),
       filename: 'windup-Aster-character-1.zip',
     })
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn().mockReturnValueOnce('blob:original').mockReturnValueOnce('blob:pixel-perfect') })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn().mockReturnValueOnce('blob:original').mockReturnValueOnce('blob:pixel-perfect'),
+    })
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
     const downloads: string[] = []
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-      downloads.push(this.download)
-    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+      function (this: HTMLAnchorElement) {
+        downloads.push(this.download)
+      },
+    )
 
-    render(<AssetVersionExportButton originalModel={model} pixelPerfectModel={pixelPerfectModel} exporter={exporter} />)
+    render(
+      <AssetVersionExportButton
+        originalModel={model}
+        pixelPerfectModel={pixelPerfectModel}
+        exporter={exporter}
+      />,
+    )
     fireEvent.click(screen.getByRole('button', { name: '选择下载版本' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /全部下载/u }))
 

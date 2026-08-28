@@ -46,7 +46,7 @@ function buildModel(): ExportPackageModel {
 
 function buildMetadata(plan: readonly PlannedSequence[]): GenericExportMetadata {
   return {
-    schema_version: '1.1.0',
+    schema_version: '1.2.0',
     stage: 'action-assets',
     character: { id: 'char-1', name: 'Aster', image: 'character/master.png' },
     outfit: { id: 'outfit-1', name: 'Explorer' },
@@ -64,6 +64,7 @@ function buildMetadata(plan: readonly PlannedSequence[]): GenericExportMetadata 
         index: frame.index,
         file: frame.filename,
       })),
+      preview_gif: item.previewGifFile,
       anchor: { ...item.sequence.anchor },
       foot_y: item.sequence.footY,
       atlas: {
@@ -86,6 +87,7 @@ function buildPlan(model: ExportPackageModel): PlannedSequence[] {
       exportName: 'Walk-default',
       framesFolder: 'frames/Walk-default',
       atlasFile: 'atlas/Walk-default.png',
+      previewGifFile: 'preview/Walk-default.gif',
       columns: 4,
       rows: 1,
       frames: sequence.frames.map((frame, index) => ({
