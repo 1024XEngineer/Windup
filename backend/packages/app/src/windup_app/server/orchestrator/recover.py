@@ -16,10 +16,11 @@ from sqlalchemy.orm import Session
 
 from windup_app.server.mq.catalog import (
     GENERATION_RUNNING_STALE_SECONDS,
-    GENERATION_STREAM,
     msg_type_for_generation,
+    stream_for_msg_type,
 )
 from windup_app.server.orchestrator import billing, task_repo
+from windup_app.server.mq import i2v_admit
 from windup_app.server.orchestrator.i2v_poll import reschedule_if_waiting
 from windup_app.server.orchestrator.model import (
     GenerationTask,
@@ -38,6 +39,10 @@ def recover_orphaned_generation_tasks(
     running_stale_seconds: int = GENERATION_RUNNING_STALE_SECONDS,
 ) -> None:
     """扫描未结清冻结的开放任务并恢复。调用方负责 commit。"""
+    try:
+        i2v_admit.rebuild()
+    except Exception:
+        logger.exception("重建 i2v 在途名额失败")
     stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=running_stale_seconds)
     for task in task_repo.list_by_status(
         session,
@@ -53,6 +58,9 @@ def recover_orphaned_generation_tasks(
             try:
                 if reschedule_if_waiting(task.id):
                     continue
+                if i2v_admit.has_claim(task.id):
+                    i2v_admit.schedule_retry(task.id, 1)
+                    continue
             except Exception:
                 logger.exception("检查 i2v 延迟状态失败 | task_id=%s", task.id)
             if not fail_stale_running:
@@ -65,6 +73,20 @@ def recover_orphaned_generation_tasks(
             _fail_interrupted(session, task)
             continue
         _requeue_pending(session, publisher, task)
+    try:
+        _release_stale_i2v_claims(session)
+    except Exception:
+        logger.exception("清理终态 i2v 在途名额失败")
+
+
+def _release_stale_i2v_claims(session: Session) -> None:
+    """FAILED/COMPLETED/失踪任务仍占坑时清掉。SET 无 TTL，漏一次就永久堵闸。"""
+    for task_id in i2v_admit.claimed_ids():
+        task = task_repo.get_task(session, task_id)
+        if task is not None and not task.is_terminal:
+            continue
+        i2v_admit.release(task_id)
+        logger.info("终态或失踪任务已释放 i2v 名额 | task_id=%s", task_id)
 
 
 def _fail_unrecoverable(session: Session, task: GenerationTask) -> None:
@@ -109,10 +131,11 @@ def _requeue_pending(
             if hasattr(task.task_type, "value")
             else str(task.task_type)
         )
+        msg_type = msg_type_for_generation(task_type)
         message_id = publisher.enqueue(
             session,
-            stream=GENERATION_STREAM,
-            msg_type=msg_type_for_generation(task_type),
+            stream=stream_for_msg_type(msg_type),
+            msg_type=msg_type,
             payload={
                 "task_id": task.id,
                 "task_type": task_type,

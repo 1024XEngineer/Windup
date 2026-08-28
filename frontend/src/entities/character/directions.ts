@@ -16,7 +16,7 @@ export type ActionDirection = (typeof ACTION_DIRECTIONS)[number]
 export interface DirectionProfile {
   readonly generationDirections: readonly ActionDirection[]
   readonly derivedDirections: readonly ResolvedActionDirection[]
-  /** @deprecated 工作流迁移到 generationDirections 后删除。 */
+  /** 与 generationDirections 同义；保留给已有消费方。 */
   readonly sourceDirections: readonly ActionDirection[]
   readonly logicalDirections: readonly ActionDirection[]
 }
@@ -27,6 +27,11 @@ export interface ResolvedActionDirection {
   readonly mirrorX: boolean
 }
 
+export interface DirectionGridLayout {
+  readonly columns: 1 | 2 | 3
+  readonly cells: readonly (ActionDirection | null)[]
+}
+
 const DIRECTION_PROFILES: Record<DirectionalMovement, DirectionProfile> = {
   single: {
     generationDirections: ['east'],
@@ -35,16 +40,42 @@ const DIRECTION_PROFILES: Record<DirectionalMovement, DirectionProfile> = {
     logicalDirections: ['east', 'west'],
   },
   'four-way': {
-    generationDirections: ['east', 'west', 'north', 'south'],
-    derivedDirections: [],
+    generationDirections: ['east', 'north', 'south'],
+    derivedDirections: [{ direction: 'west', sourceDirection: 'east', mirrorX: true }],
     sourceDirections: ['east', 'north', 'south'],
     logicalDirections: ['east', 'west', 'north', 'south'],
   },
   'eight-way': {
-    generationDirections: ACTION_DIRECTIONS,
-    derivedDirections: [],
+    generationDirections: ['east', 'north', 'south', 'north_east', 'south_east'],
+    derivedDirections: [
+      { direction: 'west', sourceDirection: 'east', mirrorX: true },
+      { direction: 'north_west', sourceDirection: 'north_east', mirrorX: true },
+      { direction: 'south_west', sourceDirection: 'south_east', mirrorX: true },
+    ],
     sourceDirections: ['east', 'north', 'south', 'north_east', 'south_east'],
     logicalDirections: ACTION_DIRECTIONS,
+  },
+}
+
+const DIRECTION_GRID_LAYOUTS: Record<DirectionalMovement, DirectionGridLayout> = {
+  single: { columns: 1, cells: ['east'] },
+  'four-way': {
+    columns: 2,
+    cells: ['north', 'south', 'west', 'east'],
+  },
+  'eight-way': {
+    columns: 3,
+    cells: [
+      'north_west',
+      'north',
+      'north_east',
+      'west',
+      null,
+      'east',
+      'south_west',
+      'south',
+      'south_east',
+    ],
   },
 }
 
@@ -56,6 +87,10 @@ const MIRROR_SOURCES: Partial<Record<ActionDirection, ActionDirection>> = {
 
 export function getDirectionProfile(movement: DirectionalMovement): DirectionProfile {
   return DIRECTION_PROFILES[movement]
+}
+
+export function getDirectionGridLayout(movement: DirectionalMovement): DirectionGridLayout {
+  return DIRECTION_GRID_LAYOUTS[movement]
 }
 
 export function isActionDirection(value: unknown): value is ActionDirection {

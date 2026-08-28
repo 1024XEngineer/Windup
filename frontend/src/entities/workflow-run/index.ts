@@ -96,6 +96,8 @@ export interface WorkflowActionInput {
   name: string
   type: ActionType
   prompt: string | null
+  /** 多方向项目的真实源方向首帧描述；镜像方向始终继承源方向，不单独保存。 */
+  directionPrompts?: Partial<Record<ActionDirection, string>>
   fps: number
   /** 生成类型与试玩位移解耦；例如向前翻滚仍是 custom，但可以发生位移。 */
   locomotion?: true
@@ -163,6 +165,8 @@ export interface CreateWorkflowRunInput {
 
 export interface WorkflowRunApis {
   create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
+  /** 当前用户跨项目的最近运行记录，供 Quick Start 历史侧栏使用。 */
+  listRecent?(query?: PageQuery): Promise<Paged<WorkflowRun>>
   /** 后端只返回未软删除的运行记录。 */
   listByProject?(projectId: string, query?: PageQuery): Promise<Paged<WorkflowRun>>
   get(id: WorkflowRun['id']): Promise<WorkflowRun>

@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, SmallInteger, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from windup_framework.db import Base
@@ -26,11 +26,14 @@ class Project(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     workflow_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     project_name: Mapped[str] = mapped_column(String(20), nullable=False)
-    character_perspective: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # 朝向是唯一的项目方向规格(#664):1=单向(横版侧视) 2=四向(俯视) 3=八向(2.5D)
     directional_movement: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     sprite_width: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     sprite_height: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     game_style: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_pixelate: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
     sprite_sample_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     create_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

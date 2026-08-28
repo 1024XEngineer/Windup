@@ -56,6 +56,35 @@
         "title": "ActionType",
         "type": "string"
       },
+      "AddMotionRequest": {
+        "description": "给已建好的 3D 资产追加一个动作片段。\n\n``motion`` 取 ``render3d_assets.ACTION_MOTIONS`` 里有对应预设的那几个\n(walk / idle / jump);attack 与 custom 没有对应预设,继续走 i2v。",
+        "properties": {
+          "motion": {
+            "minLength": 1,
+            "title": "Motion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "motion"
+        ],
+        "title": "AddMotionRequest",
+        "type": "object"
+      },
+      "AdminAccessOut": {
+        "description": "管理页访问探针响应。",
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allowed"
+        ],
+        "title": "AdminAccessOut",
+        "type": "object"
+      },
       "ArtStyle": {
         "description": "项目的美术风格。\n\n只有 ``PIXEL`` 改变管线行为(出帧吸附母版像素网格、颜色吸回母版色板),其余取值\n只进提示词。像素网格密度不在这一维 —— 它由目标分辨率定,两处各定一遍会打架。",
         "enum": [
@@ -109,12 +138,46 @@
         "type": "object"
       },
       "BakeCompleteRequest": {
-        "description": "浏览器自报交齐了。帧本身已逐帧 POST 上来,这里只带回可对账的采样信息。",
+        "description": "浏览器自报交齐了。帧本身已逐帧 POST 上来,这里带回可对账的采样信息与派生资产。\n\n``rig`` / ``root_motion`` 与服务端渲那条交回的是同一批数(#774):两条路存下来的\n资产必须一样,否则同一造型走哪条路建出来的东西不同,而没有一处会红。",
         "properties": {
           "clip": {
             "minLength": 1,
             "title": "Clip",
             "type": "string"
+          },
+          "rig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BakeRigFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "root_motion": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Motion"
           },
           "sample_times": {
             "items": {
@@ -141,6 +204,56 @@
           }
         },
         "title": "BakeFailRequest",
+        "type": "object"
+      },
+      "BakeRigFacts": {
+        "description": "浏览器出帧台读到的骨架事实。**记录用,不是判据** —— 以骨数/命名当闸已被实测推翻。",
+        "properties": {
+          "available_clips": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Available Clips",
+            "type": "object"
+          },
+          "bone_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Bone Names",
+            "type": "array"
+          },
+          "bones": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Bones",
+            "type": "integer"
+          },
+          "root_bone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Bone"
+          },
+          "skinned_meshes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Skinned Meshes",
+            "type": "integer"
+          },
+          "vertices": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Vertices",
+            "type": "integer"
+          }
+        },
+        "title": "BakeRigFacts",
         "type": "object"
       },
       "Body_put_bake_frame_render3d_bake__task_id__frames__index__post": {
@@ -198,6 +311,33 @@
           "file"
         ],
         "title": "Body_upload_media_media_upload_post",
+        "type": "object"
+      },
+      "BuildAssetRequest": {
+        "description": "建 3D 资产的入参。\n\n``stance`` 必填、无默认:自动绑骨只支持双足,而四足/无肢从模型几何判不出来\n(实测归档模型的包围盒比例完全重叠)。给默认值等于把「没声明」当成「双足」放行。",
+        "properties": {
+          "extra_view_urls": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra View Urls"
+          },
+          "stance": {
+            "$ref": "#/components/schemas/CharacterStance"
+          }
+        },
+        "required": [
+          "stance"
+        ],
+        "title": "BuildAssetRequest",
         "type": "object"
       },
       "ChangePasswordRequest": {
@@ -266,6 +406,40 @@
             "description": "动作显示名称",
             "title": "Name",
             "type": "string"
+          },
+          "preferred_version": {
+            "default": "original",
+            "enum": [
+              "original",
+              "pixel-perfect"
+            ],
+            "title": "Preferred Version",
+            "type": "string"
+          },
+          "root_motion": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "逐帧 (dx, dz) 位移，来源为根骨动画轨；None = 未采集",
+            "title": "Root Motion"
           },
           "sequences": {
             "description": "可选多方向源序列与镜像关系；旧数据的 frames 视为 east",
@@ -551,6 +725,17 @@
             "title": "Outfits",
             "type": "array"
           },
+          "stance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterStance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "角色体型(双足/四足/无肢);未设置时下游按双足处理"
+          },
           "templates": {
             "description": "角色各源方向母版与镜像关系",
             "items": {
@@ -623,6 +808,72 @@
         "title": "CharacterDirectionSetGenerateRequest",
         "type": "object"
       },
+      "CharacterFirstFrameGenerateRequest": {
+        "additionalProperties": false,
+        "description": "四向 / 八向动作首帧:以该朝向立绘为参考,锁住朝向后出动作起手姿态。",
+        "properties": {
+          "action_type": {
+            "$ref": "#/components/schemas/ActionType"
+          },
+          "character_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Character Id",
+            "type": "integer"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/ActionDirection"
+          },
+          "height": {
+            "default": 1024,
+            "maximum": 2048.0,
+            "minimum": 64.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "negative_prompt": {
+            "default": "",
+            "title": "Negative Prompt",
+            "type": "string"
+          },
+          "num_images": {
+            "default": 3,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Num Images",
+            "type": "integer"
+          },
+          "project_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Project Id",
+            "type": "integer"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "reference_image_url": {
+            "title": "Reference Image Url",
+            "type": "string"
+          },
+          "width": {
+            "default": 1024,
+            "maximum": 2048.0,
+            "minimum": 64.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "character_id",
+          "reference_image_url",
+          "prompt",
+          "direction",
+          "action_type"
+        ],
+        "title": "CharacterFirstFrameGenerateRequest",
+        "type": "object"
+      },
       "CharacterFrame": {
         "description": "动作帧。",
         "properties": {
@@ -649,6 +900,18 @@
             "minimum": 0.0,
             "title": "Index",
             "type": "integer"
+          },
+          "pixel_perfect_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "完美像素化帧 URL",
+            "title": "Pixel Perfect Image Url"
           }
         },
         "required": [
@@ -843,6 +1106,25 @@
             ],
             "description": "造型预览图 URL",
             "title": "Preview Url"
+          },
+          "rig_facts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OutfitRigFacts"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "绑骨模型的骨架事实；None = 未建或建于本字段之前"
+          },
+          "rigged_motions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "动作名 → 该动作的绑骨产物 URL",
+            "title": "Rigged Motions",
+            "type": "object"
           }
         },
         "required": [
@@ -1522,6 +1804,29 @@
         "title": "CreditTransactionOut",
         "type": "object"
       },
+      "EmailChangePasswordRequest": {
+        "additionalProperties": false,
+        "description": "当前登录账号的邮箱验证码改密请求。",
+        "properties": {
+          "code": {
+            "pattern": "^\\d{6}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "new_password": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "New Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "new_password"
+        ],
+        "title": "EmailChangePasswordRequest",
+        "type": "object"
+      },
       "FunctionCallResponse": {
         "properties": {
           "arguments": {
@@ -1586,6 +1891,81 @@
         "title": "FunctionDefinition",
         "type": "object"
       },
+      "GenerateCodesIn": {
+        "description": "批量生成兑换码参数。",
+        "properties": {
+          "amount": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "count": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "required": [
+          "count",
+          "amount"
+        ],
+        "title": "GenerateCodesIn",
+        "type": "object"
+      },
+      "GeneratedCodesOut": {
+        "description": "明文只随本次响应返回。",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Codes",
+            "type": "array"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "required": [
+          "count",
+          "amount",
+          "expires_at",
+          "codes"
+        ],
+        "title": "GeneratedCodesOut",
+        "type": "object"
+      },
       "GenerationTaskOut": {
         "description": "生成任务响应。",
         "properties": {
@@ -1626,6 +2006,11 @@
               }
             ],
             "title": "Project Id"
+          },
+          "queue_ahead": {
+            "default": 0,
+            "title": "Queue Ahead",
+            "type": "integer"
           },
           "result": {
             "anyOf": [
@@ -2147,6 +2532,7 @@
           "reference-image",
           "outfit-preview",
           "action-frame",
+          "model-3d",
           "general"
         ],
         "title": "MediaCategory",
@@ -2227,16 +2613,74 @@
         "title": "OpenAIErrorResponse",
         "type": "object"
       },
-      "ProjectCreate": {
-        "description": "创建项目请求。",
+      "OutfitRigFacts": {
+        "description": "绑骨模型的骨架事实。**记录用，不是判据。**\n\n出帧台每渲一段动作都会从模型里读出这些数，此前算完即丢（#774）。存下来是为了\n让「这个造型的骨架长什么样」不必每次重新解析 GLB，也让挂点有据可查——自动绑骨\n保留了挂点骨，武器握持按骨名定位即可，不必重新标定。\n\n为什么不当闸：曾以「28 骨 · humanoid 命名 · 无 mixamorig 前缀」作硬校验，2026-08-26\n量全部归档产物即推翻——骨数是 24 / 27 / 28 / 43 / 49，其中 24 与 27 正是混元自己绑\n的四足，同一条链路出来的骨数就不是常数；带前缀的那个是 Mixamo 绑的，属重定向路线\n的正常输入。据此当闸会把自家产物一起挡掉。",
         "properties": {
-          "character_perspective": {
-            "maximum": 3.0,
-            "minimum": 1.0,
-            "title": "Character Perspective",
+          "available_clips": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "模型自带的预设动作 → 时长（秒）",
+            "title": "Available Clips",
+            "type": "object"
+          },
+          "bone_names": {
+            "description": "骨名列表。挂点的来源——武器握持按骨名定位",
+            "items": {
+              "type": "string"
+            },
+            "title": "Bone Names",
+            "type": "array"
+          },
+          "bones": {
+            "description": "骨骼数量。随模型变，不是常数",
+            "minimum": 0.0,
+            "title": "Bones",
             "type": "integer"
           },
+          "root_bone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "根骨名；读不出时为 None",
+            "title": "Root Bone"
+          },
+          "skinned_meshes": {
+            "default": 0,
+            "description": "蒙皮网格数",
+            "minimum": 0.0,
+            "title": "Skinned Meshes",
+            "type": "integer"
+          },
+          "vertices": {
+            "default": 0,
+            "description": "顶点数",
+            "minimum": 0.0,
+            "title": "Vertices",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bones"
+        ],
+        "title": "OutfitRigFacts",
+        "type": "object"
+      },
+      "ProjectCreate": {
+        "description": "创建项目请求。\n\n``character_perspective`` 已退役(#664):旧客户端多传该字段会被忽略,\n方向规格只认 ``directional_movement``。",
+        "properties": {
+          "auto_pixelate": {
+            "default": true,
+            "title": "Auto Pixelate",
+            "type": "boolean"
+          },
           "directional_movement": {
+            "description": "1=单向 2=四向 3=八向",
             "maximum": 3.0,
             "minimum": 1.0,
             "title": "Directional Movement",
@@ -2314,7 +2758,6 @@
           }
         },
         "required": [
-          "character_perspective",
           "directional_movement",
           "sprite_width",
           "sprite_height"
@@ -2325,7 +2768,13 @@
       "ProjectListOut": {
         "description": "项目列表项；预览是读取投影，不写回 Project。",
         "properties": {
+          "auto_pixelate": {
+            "title": "Auto Pixelate",
+            "type": "boolean"
+          },
           "character_perspective": {
+            "description": "与朝向 1:1:单向→横版、四向→俯视、八向→2.5D。",
+            "readOnly": true,
             "title": "Character Perspective",
             "type": "integer"
           },
@@ -2408,23 +2857,30 @@
           "id",
           "workflow_id",
           "project_name",
-          "character_perspective",
           "directional_movement",
           "sprite_width",
           "sprite_height",
           "game_style",
+          "auto_pixelate",
           "sprite_sample_url",
           "create_at",
           "update_at",
-          "preview_url"
+          "preview_url",
+          "character_perspective"
         ],
         "title": "ProjectListOut",
         "type": "object"
       },
       "ProjectOut": {
-        "description": "项目响应。",
+        "description": "项目响应。\n\n``character_perspective`` 不再落库,由 ``directional_movement`` 派生,\n让尚未对齐的前端读列表/详情时不至于映射失败。",
         "properties": {
+          "auto_pixelate": {
+            "title": "Auto Pixelate",
+            "type": "boolean"
+          },
           "character_perspective": {
+            "description": "与朝向 1:1:单向→横版、四向→俯视、八向→2.5D。",
+            "readOnly": true,
             "title": "Character Perspective",
             "type": "integer"
           },
@@ -2496,14 +2952,15 @@
           "id",
           "workflow_id",
           "project_name",
-          "character_perspective",
           "directional_movement",
           "sprite_width",
           "sprite_height",
           "game_style",
+          "auto_pixelate",
           "sprite_sample_url",
           "create_at",
-          "update_at"
+          "update_at",
+          "character_perspective"
         ],
         "title": "ProjectOut",
         "type": "object"
@@ -2511,6 +2968,17 @@
       "ProjectPatch": {
         "description": "改项目请求;只改传上来的那些字段。",
         "properties": {
+          "auto_pixelate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Pixelate"
+          },
           "game_style": {
             "anyOf": [
               {
@@ -2673,6 +3141,48 @@
         "title": "ResetPasswordRequest",
         "type": "object"
       },
+      "Response_AdminAccessOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminAccessOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[AdminAccessOut]",
+        "type": "object"
+      },
       "Response_CharacterOut_": {
         "properties": {
           "code": {
@@ -2755,6 +3265,48 @@
           }
         },
         "title": "Response[CreditAccountOut]",
+        "type": "object"
+      },
+      "Response_GeneratedCodesOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeneratedCodesOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[GeneratedCodesOut]",
         "type": "object"
       },
       "Response_GenerationTaskOut_": {
@@ -3087,6 +3639,48 @@
         "title": "Response[UserOut]",
         "type": "object"
       },
+      "Response_ValidateCodeOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValidateCodeOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[ValidateCodeOut]",
+        "type": "object"
+      },
       "Response_WorkflowRunOut_": {
         "properties": {
           "code": {
@@ -3194,6 +3788,22 @@
         "title": "SendCodeRequest",
         "type": "object"
       },
+      "SetPasswordRequest": {
+        "description": "设置初始密码请求。",
+        "properties": {
+          "new_password": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "New Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_password"
+        ],
+        "title": "SetPasswordRequest",
+        "type": "object"
+      },
       "TokenResponse": {
         "description": "登录/注册/刷新成功响应。",
         "properties": {
@@ -3294,6 +3904,11 @@
             ],
             "title": "Email Verified At"
           },
+          "has_password": {
+            "default": false,
+            "title": "Has Password",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -3362,6 +3977,11 @@
             ],
             "title": "Email Verified At"
           },
+          "has_password": {
+            "default": false,
+            "title": "Has Password",
+            "type": "boolean"
+          },
           "id": {
             "anyOf": [
               {
@@ -3407,6 +4027,80 @@
           }
         },
         "title": "UserView",
+        "type": "object"
+      },
+      "ValidateCodeIn": {
+        "description": "待核验的兑换码。",
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "ValidateCodeIn",
+        "type": "object"
+      },
+      "ValidateCodeOut": {
+        "description": "兑换码只读核验结果。",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "redeemed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redeemed At"
+          },
+          "status": {
+            "enum": [
+              "valid",
+              "redeemed",
+              "expired",
+              "not_found",
+              "invalid_format"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "amount",
+          "expires_at",
+          "redeemed_at"
+        ],
+        "title": "ValidateCodeOut",
         "type": "object"
       },
       "ValidationError": {
@@ -3473,6 +4167,11 @@
       "WorkflowRunOut": {
         "description": "执行记录响应。",
         "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -3500,7 +4199,8 @@
           "id",
           "project_id",
           "status",
-          "version"
+          "version",
+          "created_at"
         ],
         "title": "WorkflowRunOut",
         "type": "object"
@@ -3582,6 +4282,112 @@
         ]
       }
     },
+    "/admin/quota/redemption-codes": {
+      "post": {
+        "description": "批量生成兑换码；数据库只保存摘要，明文只返回一次。",
+        "operationId": "generate_redemption_codes_admin_quota_redemption_codes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateCodesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_GeneratedCodesOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Redemption Codes",
+        "tags": [
+          "admin-quota"
+        ]
+      }
+    },
+    "/admin/quota/redemption-codes/access": {
+      "get": {
+        "description": "供管理页加载时确认当前会话是否具备管理员权限。",
+        "operationId": "check_admin_access_admin_quota_redemption_codes_access_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_AdminAccessOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Check Admin Access",
+        "tags": [
+          "admin-quota"
+        ]
+      }
+    },
+    "/admin/quota/redemption-codes/validate": {
+      "post": {
+        "description": "核验兑换码状态，不消费兑换码，也不修改积分数据。",
+        "operationId": "validate_redemption_code_admin_quota_redemption_codes_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateCodeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_ValidateCodeOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Redemption Code",
+        "tags": [
+          "admin-quota"
+        ]
+      }
+    },
     "/ai/chat": {
       "post": {
         "description": "Call the configured model once and return a non-streaming completion.",
@@ -3606,6 +4412,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -3706,6 +4522,70 @@
           }
         },
         "summary": "Change Password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/change-password/confirm": {
+      "post": {
+        "description": "核验当前登录账号的邮箱验证码并修改密码。",
+        "operationId": "change_password_by_email_auth_change_password_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Password By Email",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/change-password/send-code": {
+      "post": {
+        "description": "向当前登录账号的邮箱发送改密验证码。",
+        "operationId": "send_password_change_code_auth_change_password_send_code_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Send Password Change Code",
         "tags": [
           "auth"
         ]
@@ -4064,6 +4944,48 @@
           }
         },
         "summary": "Send Code",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/set-password": {
+      "post": {
+        "description": "设置初始密码（仅未设密码用户）。",
+        "operationId": "set_password_auth_set_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Password",
         "tags": [
           "auth"
         ]
@@ -4491,6 +5413,48 @@
           }
         },
         "summary": "Submit Eight View Generation",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/generation/first-frame": {
+      "post": {
+        "description": "提交锁定朝向的动作首帧:以该朝向立绘为参考,锁住朝向后换成动作起手姿态。",
+        "operationId": "submit_first_frame_generation_generation_first_frame_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterFirstFrameGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_GenerationTaskOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit First Frame Generation",
         "tags": [
           "generation"
         ]
@@ -5633,6 +6597,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAssetRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -5708,6 +6682,68 @@
           }
         },
         "summary": "Discard Outfit Asset",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/characters/{character_id}/outfits/{outfit_id}/motions": {
+      "post": {
+        "description": "给已建好的造型再烘一个动作片段。**按次计费的触发点**,只认用户的显式请求。\n\n只花绑骨那一笔:图生 3D 的产物一直留着,不重付。一份绑骨产物只带一个动作片段\n(接口一次只吃一个 MotionType),所以\"这个角色会走也会跳\"= 两份产物。",
+        "operationId": "add_outfit_motion_render3d_characters__character_id__outfits__outfit_id__motions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "outfit_id",
+            "required": true,
+            "schema": {
+              "title": "Outfit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMotionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Outfit Motion",
         "tags": [
           "render3d"
         ]
@@ -5792,17 +6828,24 @@
     },
     "/workflow-runs": {
       "get": {
-        "description": "分页查询项目下的执行记录。",
+        "description": "分页查询项目记录；未指定项目时返回当前用户的跨项目历史。",
         "operationId": "list_runs_workflow_runs_get",
         "parameters": [
           {
             "in": "query",
             "name": "project_id",
-            "required": true,
+            "required": false,
             "schema": {
-              "exclusiveMinimum": 0,
-              "title": "Project Id",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
             }
           },
           {

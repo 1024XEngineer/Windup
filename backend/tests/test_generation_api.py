@@ -28,7 +28,6 @@ def _create_project(
         "/projects",
         json={
             "project_name": name,
-            "character_perspective": 1,
             "directional_movement": directional_movement,
             "sprite_width": 64,
             "sprite_height": 64,
@@ -71,6 +70,7 @@ def _direction_set_payload(project_id: int, character_id: int, **overrides) -> d
 
 
 _MASTER_URL = "https://cdn.example.com/masters/hero.png"
+_EAST_TEMPLATE_URL = "https://cdn.example.com/masters/hero-east.png"
 
 
 def _action_payload(project_id: int, character_id: int, **overrides) -> dict:
@@ -371,6 +371,7 @@ def test_four_view_copies_confirmed_master_and_shares_image_queue(auth_client):
     assert "direction" not in body["data"]["input_payload"]
     assert publisher.enqueue.call_args.kwargs["msg_type"] == "character_image"
     assert publisher.enqueue.call_args.kwargs["payload"]["task_type"] == "character_four_view"
+    assert publisher.enqueue.call_args.kwargs["stream"] == "windup:stream:generation-image"
 
 
 def test_four_view_without_confirmed_master_is_rejected_before_queueing(auth_client):
@@ -460,6 +461,103 @@ def test_view_sheet_rejects_client_supplied_reference_url(auth_client):
     body = response.json()
     assert body["code"] == 400
     assert "reference_image_url" in body["message"] or "Extra" in body["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def _first_frame_payload(project_id: int, character_id: int, **overrides) -> dict:
+    payload = {
+        "project_id": project_id,
+        "character_id": character_id,
+        "reference_image_url": _EAST_TEMPLATE_URL,
+        "prompt": "walk first frame, left foot forward",
+        "width": 64,
+        "height": 64,
+        "direction": "east",
+        "action_type": "walk",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_first_frame_uses_heading_template_not_south_master(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client,
+        project["id"],
+        reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    body = auth_client.post(
+        "/generation/first-frame",
+        json=_first_frame_payload(project["id"], character["id"]),
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["task_type"] == "character_first_frame"
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["reference_image_url"] == _EAST_TEMPLATE_URL
+    assert body["data"]["input_payload"]["direction"] == "east"
+    assert body["data"]["input_payload"]["action_type"] == "walk"
+    assert "lock_orientation" not in body["data"]["input_payload"]
+    assert body["data"]["input_payload"]["prompt"] == "walk first frame, left foot forward"
+    assert publisher.enqueue.call_args.kwargs["msg_type"] == "character_image"
+    assert publisher.enqueue.call_args.kwargs["payload"]["task_type"] == "character_first_frame"
+    assert publisher.enqueue.call_args.kwargs["stream"] == "windup:stream:generation-image"
+
+
+def test_first_frame_without_heading_template_is_rejected_before_queueing(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    response = auth_client.post(
+        "/generation/first-frame",
+        json=_first_frame_payload(project["id"], character["id"], reference_image_url=""),
+    )
+
+    assert response.json()["code"] == 400
+    assert "该朝向已确认的立绘" in response.json()["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def test_first_frame_rejects_unidirectional_project(auth_client):
+    project = _create_project(auth_client, name="单向", directional_movement=1)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    response = auth_client.post(
+        "/generation/first-frame",
+        json=_first_frame_payload(project["id"], character["id"]),
+    )
+
+    assert response.json()["code"] == 400
+    assert "只用于四向或八向" in response.json()["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def test_first_frame_rejects_west_for_four_way_project(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    body = auth_client.post(
+        "/generation/first-frame",
+        json=_first_frame_payload(project["id"], character["id"], direction="west"),
+    ).json()
+
+    assert body["code"] == 400
+    assert "west" in body["message"]
     publisher.enqueue.assert_not_called()
 
 
@@ -581,9 +679,10 @@ def test_response_conversion_path_is_live(auth_client):
     """
     project = _create_project(auth_client)
     data = _submit_image(auth_client, project["id"])["data"]
-    for k in ("id", "status", "task_type"):
+    for k in ("id", "status", "task_type", "queue_ahead"):
         assert k in data, f"缺字段 {k}：{data}"
     assert "user_id" not in data, "响应不该暴露 user_id"
+    assert data["queue_ahead"] >= 0
 
 
 def test_validation_error_message_tells_the_user_what_is_wrong(auth_client):
@@ -910,3 +1009,156 @@ def test_frame_convention_covers_every_action_type():
     from windup_app.server.orchestrator.model import ACTION_FRAME_COUNTS, ActionType
 
     assert set(ACTION_FRAME_COUNTS) == set(ActionType)
+
+
+# ── 体型存在角色上,而不是每次请求带(#840)────────────────────────────────
+
+
+def _create_character_with_stance(auth_client, project_id: int, stance: str) -> dict:
+    """建一个存了体型的角色。
+
+    走的是**现有**的角色接口 —— ``CharacterData`` 加了字段之后它自动收下,
+    不需要新端点。这条本身就在证明这一点。
+    """
+    return auth_client.post(
+        "/characters",
+        json={
+            "project_id": project_id,
+            "workflow_run_id": 1,
+            "name": "大蛇",
+            "character_data": {"version": 1, "templates": [], "outfits": [],
+                               "stance": stance},
+        },
+    ).json()["data"]
+
+
+def test_stance_stored_on_the_character_reaches_the_engine(auth_client, monkeypatch):
+    """拦的坏例:体型只能靠每次请求带,而没有任何调用方会带。
+
+    实测(2026-08-27 生产):558/558 个任务的 input_payload 里 stance 都是未传,
+    96/96 个角色的 character_data 里也从没存过它 —— 三道按体型分流的判据因此全是
+    死代码。存在角色上才是对的:体型是角色的属性,不是这次生成的选项。
+    """
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character_with_stance(auth_client, project["id"], "serpentine")
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"]),   # 请求不带 stance
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs, "任务没被收下"
+    assert inputs[0].stance is not None, "角色上存了体型,却没被读出来"
+    assert inputs[0].stance.value == "serpentine"
+
+
+def test_an_explicit_request_stance_beats_the_one_on_the_character(auth_client, monkeypatch):
+    """请求优先。角色上那个存错了的话,得有办法单次绕过。"""
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character_with_stance(auth_client, project["id"], "serpentine")
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], stance="quadruped"),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs[0].stance.value == "quadruped"
+
+
+def test_a_character_without_a_stance_behaves_exactly_as_before(auth_client, monkeypatch):
+    """96 个存量角色没有这个字段,行为必须一个字不变。
+
+    这里断言的是 ``None`` 而不是 ``biped``:默认值只该由 ``CharacterCard.stance``
+    定义一次,在读取处再兜一个就是第二真相源,两处一定会各自漂。
+    """
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"]),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs[0].stance is None
+
+
+def test_a_garbage_stance_on_the_character_does_not_block_generation(
+    auth_client, monkeypatch, db_session
+):
+    """拦的坏例:一个脏字段把整条生成挡住。
+
+    ``character_data`` 是裸 JSONB,可能被别的写入方塞进不认识的值。当没存过处理并留
+    一条 WARNING,好过让用户拿到一个他改不动的 5xx。
+    """
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.character.model import Character
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    row = db_session.get(Character, character["id"])
+    row.character_data = {**(row.character_data or {}), "stance": "octopod"}
+    db_session.commit()
+
+    resp = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"]),
+    )
+    assert resp.status_code < 500, resp.text
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].stance is None
+
+
+def test_a_serpentine_character_now_actually_trips_the_body_part_gate(auth_client, monkeypatch):
+    """这条是 #840 的验收:那道门禁**不再是死的**。
+
+    ``stance_mismatch`` 判据一直都在(``ai_engine.prompt.lint``),但生产里 558/558 个
+    任务没传过体型、96/96 个角色没存过 —— 它一次都没触发过。非双足角色的描述里出现
+    "手臂",模型会给它凭空接上一对人的上肢,而帧数、时长、成色全部正常,没有一道会红。
+
+    这条从 HTTP 入口发起,一路走到提示词构建,断言它现在会被拒。
+    """
+    from windup_ai_engine.ports import PromptRejected
+    from windup_ai_engine.strategy.concrete import VideoFrameStrategy
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.executor import ActionTaskExecutor, ProjectConstraints
+    from windup_app.server.orchestrator.model import CharacterActionInput
+    from windup_common.models import CharacterCard
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character_with_stance(auth_client, project["id"], "serpentine")
+
+    payload = _action_payload(project["id"], character["id"])
+    payload["action_type"] = "custom"
+    payload["custom_prompt"] = "角色挥动双臂，手肘弯曲，双手向前推出。"
+    payload["loop"] = False
+    auth_client.post("/generation/action", json=payload)
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].stance.value == "serpentine", "体型没走到入参"
+
+    # 入参 → 引擎契约 → 提示词。走的是生产那条路径,不是手搓一个 ActionSpec。
+    _card, spec, _canvas = ActionTaskExecutor._action_spec(
+        object(), inputs[0], ProjectConstraints(facing="side", stylize="pixel"),
+    )
+    card = CharacterCard(name="c", desc="", stance=inputs[0].stance)
+    with pytest.raises(PromptRejected):
+        VideoFrameStrategy(video=None, matte=None)._build_prompt(spec, card.stance)

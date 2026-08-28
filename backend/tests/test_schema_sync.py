@@ -5,7 +5,7 @@ import pathlib
 import sys
 
 import pytest
-from sqlalchemy import Boolean, Column, Integer, MetaData, String, Table, create_engine, inspect, text
+from sqlalchemy import SmallInteger, Boolean, Column, Integer, MetaData, String, Table, create_engine, inspect, text
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 from schema_sync import plan  # noqa: E402
@@ -28,7 +28,7 @@ def test_a_new_nullable_column_is_planned_as_additive():
     """给已上线的表加一个可空列 —— 这正是本脚本存在的理由。"""
     live = _model()
     want = _model(Column("is_pixel_art", Boolean, nullable=True))
-    additive, manual = plan(_engine_with(live), want.metadata)
+    additive, manual, _relax = plan(_engine_with(live), want.metadata)
 
     assert manual == []
     assert [(t, c) for t, c, _ in additive] == [("proj", "is_pixel_art")]
@@ -39,21 +39,21 @@ def test_applying_the_plan_makes_the_column_real():
     live = _model()
     want = _model(Column("is_pixel_art", Boolean, nullable=True))
     eng = _engine_with(live)
-    additive, _ = plan(eng, want.metadata)
+    additive, _, _relax = plan(eng, want.metadata)
 
     with eng.begin() as conn:
         for tbl, _col, ddl in additive:
             conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {ddl}"))
 
     assert "is_pixel_art" in {c["name"] for c in inspect(eng).get_columns("proj")}
-    assert plan(eng, want.metadata) == ([], []), "补完再跑应当无事可做（幂等）"
+    assert plan(eng, want.metadata) == ([], [], []), "补完再跑应当无事可做（幂等）"
 
 
 def test_a_not_null_column_without_default_is_left_to_a_human():
     """存量行填不出值，自动加只会当场失败 —— 报出来而不是硬上。"""
     live = _model()
     want = _model(Column("owner", String(20), nullable=False))
-    additive, manual = plan(_engine_with(live), want.metadata)
+    additive, manual, _relax = plan(_engine_with(live), want.metadata)
 
     assert additive == []
     assert len(manual) == 1 and "owner" in manual[0]
@@ -63,7 +63,7 @@ def test_a_type_change_is_never_applied_silently():
     """改类型会丢数据，只报不动。"""
     live = _model(Column("sprite_width", Integer))
     want = _model(Column("sprite_width", String(20)))
-    additive, manual = plan(_engine_with(live), want.metadata)
+    additive, manual, _relax = plan(_engine_with(live), want.metadata)
 
     assert additive == []
     assert len(manual) == 1 and "类型不一致" in manual[0]
@@ -73,7 +73,7 @@ def test_a_table_that_does_not_exist_yet_is_not_our_business():
     """整张表缺失由 create_all 负责；本脚本不越界建表。"""
     want = _model(Column("is_pixel_art", Boolean, nullable=True))
     eng = create_engine("sqlite://")
-    assert plan(eng, want.metadata) == ([], [])
+    assert plan(eng, want.metadata) == ([], [], [])
 
 
 def test_it_fixes_the_real_case_a_live_table_missing_a_new_column():
@@ -93,16 +93,16 @@ def test_it_fixes_the_real_case_a_live_table_missing_a_new_column():
     with eng.begin() as conn:                  # 退回加列之前的库
         conn.execute(text(f"ALTER TABLE windup_project DROP COLUMN {new_column}"))
         conn.execute(text(
-            "INSERT INTO windup_project (id, project_name, user_id, character_perspective,"
+            "INSERT INTO windup_project (id, project_name, user_id,"
             " directional_movement, sprite_width, sprite_height, create_at, update_at)"
-            " VALUES (1,'存量项目',1,1,0,256,256,'2026-01-01','2026-01-01')"
+            " VALUES (1,'存量项目',1,0,256,256,'2026-01-01','2026-01-01')"
         ))
 
     with pytest.raises(Exception, match="sprite_sample_url"):
         with Session(eng) as s:
             s.query(Project).first()
 
-    additive, manual = plan(eng, Project.metadata)
+    additive, manual, _relax = plan(eng, Project.metadata)
     assert manual == []
     assert (Project.__tablename__, new_column) in [(t, c) for t, c, _ in additive]
 
@@ -112,14 +112,14 @@ def test_it_fixes_the_real_case_a_live_table_missing_a_new_column():
 
     with Session(eng) as s:
         assert s.query(Project).first().project_name == "存量项目"
-    assert plan(eng, Project.metadata) == ([], []), "补完再跑应当无事可做"
+    assert plan(eng, Project.metadata) == ([], [], []), "补完再跑应当无事可做"
 
 
 def test_a_narrower_type_parameter_is_flagged():
     """只比基类型的话 VARCHAR(20) 与 VARCHAR(200) 看着一样,而它正是会截断数据的那类改动。"""
     live = _model(Column("project_name", String(200)))
     want = _model(Column("project_name", String(20)))
-    additive, manual = plan(_engine_with(live), want.metadata)
+    additive, manual, _relax = plan(_engine_with(live), want.metadata)
 
     assert additive == []
     assert len(manual) == 1 and "project_name" in manual[0]
@@ -129,14 +129,51 @@ def test_identical_types_are_not_flagged():
     """归一只该吃掉排版差异;同一个类型不能因为编译串的空格差异被报成漂移。"""
     live = _model(Column("project_name", String(20)))
     want = _model(Column("project_name", String(20)))
-    assert plan(_engine_with(live), want.metadata) == ([], [])
+    assert plan(_engine_with(live), want.metadata) == ([], [], [])
 
 
 def test_a_column_removed_from_the_model_is_reported():
     """模型删了列而库里还在:不报的话巡检返回干净,那一列却带着数据留在库里。"""
     live = _model(Column("legacy_note", String(50)))
     want = _model()
-    additive, manual = plan(_engine_with(live), want.metadata)
+    additive, manual, _relax = plan(_engine_with(live), want.metadata)
 
     assert additive == []
     assert len(manual) == 1 and "legacy_note" in manual[0]
+
+
+def test_a_legacy_not_null_column_is_relaxed_not_just_reported():
+    """拦的坏例:模型删了一列、库里那列还是 NOT NULL 无默认 → **整张表插不进去**。
+
+    实测 2026-08-28 生产库:`windup_project.character_perspective` 是
+    `smallint NOT NULL` 无默认,而 #676 把它从 ORM 删掉了。新代码的 INSERT 不再点名
+    它,于是 `NotNullViolation`,再被 `project.py` 的 `except IntegrityError` 误报成
+    「项目名称已存在」(#859)—— 用户看到的名字是全新的,真实原因不在任何一条日志里。
+
+    只报不动是不够的:那条报告没人看的时候,线上就是所有人都建不了项目。
+    放宽为可空是加法方向 —— 不丢数据、不改类型、旧代码若还在跑也照样写得进。
+    """
+    live = _model(Column("dropped_by_model", SmallInteger, nullable=False))
+    want = _model()
+
+    additive, manual, relaxable = plan(_engine_with(live), want.metadata)
+    assert relaxable == [("proj", "dropped_by_model")], (
+        f"非空遗留列没被识别成可放宽:relaxable={relaxable} manual={manual}"
+    )
+    assert not any("dropped_by_model" in m for m in manual), (
+        "它同时又被丢进人工清单 —— 那样自动那条就不会执行"
+    )
+
+
+def test_a_nullable_legacy_column_is_still_left_to_a_human():
+    """反向:可空的遗留列不该被自动动。
+
+    它不挡写入,而删不删是业务决定(数据要不要留)。把它算进 relaxable 会让
+    「有事要做」的判断变噪音。
+    """
+    live = _model(Column("old_optional", String(20), nullable=True))
+    want = _model()
+
+    _add, manual, relaxable = plan(_engine_with(live), want.metadata)
+    assert relaxable == [], "可空的遗留列被自动动了"
+    assert any("old_optional" in m for m in manual), "可空遗留列应当留给人工"

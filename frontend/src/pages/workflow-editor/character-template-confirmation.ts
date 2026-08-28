@@ -12,6 +12,7 @@ import type { WorkflowController } from '@/features/workflow-controller'
 interface CharacterTemplateConfirmerDependencies {
   controller: WorkflowController
   characterApis: Pick<CharacterApis, 'create' | 'update' | 'remove'>
+  referenceDirection: ActionDirection
   getCurrentCharacter(): Character | null
   setCurrentCharacter(character: Character): void
   shouldRollbackWorkflowChange(isPersisted: (latest: WorkflowRun) => boolean): Promise<boolean>
@@ -55,7 +56,12 @@ export function createCharacterTemplateConfirmer(
     }
 
     try {
-      await prepareCharacter(dependencies.characterApis, context, write)
+      await prepareCharacter(
+        dependencies.characterApis,
+        dependencies.referenceDirection,
+        context,
+        write,
+      )
       await dependencies.controller.confirmCharacterTemplate(
         nodeId,
         context.imageUrl,
@@ -107,6 +113,7 @@ function resolveCharacterTemplateContext(
 
 async function prepareCharacter(
   characterApis: CharacterTemplateConfirmerDependencies['characterApis'],
+  referenceDirection: ActionDirection,
   context: CharacterTemplateContext,
   write: CharacterWrite,
 ) {
@@ -122,7 +129,10 @@ async function prepareCharacter(
   const templateUrl = context.selectedImages.east ?? context.imageUrl
   write.next = await characterApis.update({
     ...write.next,
-    referenceImageUrl: write.next.referenceImageUrl ?? templateUrl,
+    referenceImageUrl:
+      context.direction === referenceDirection
+        ? context.imageUrl
+        : (write.next.referenceImageUrl ?? templateUrl),
     templates: characterTemplatesFromImages(context.selectedImages),
     outfits:
       write.next.outfits.length > 0

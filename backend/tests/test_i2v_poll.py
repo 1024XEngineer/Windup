@@ -33,6 +33,7 @@ def test_schedule_persists_state_and_enqueues_delayed_poll(monkeypatch):
     assert saved["task_id"] == 9
     assert saved["job_id"] == "j1"
     assert delayed["msg_type"] == "character_action_poll"
+    assert delayed["stream"] == "windup:stream:generation-action"
     assert delayed["payload"]["task_id"] == 9
     assert delayed["dedupe_key"] == "generation:9:poll:0"
 

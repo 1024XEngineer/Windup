@@ -104,7 +104,7 @@ def store(monkeypatch):
 def api(auth_client, engine, store):
     """一个属于 user 1 的 RUNNING 动作任务,外加一条属于别人的同类任务。"""
     session = sessionmaker(bind=engine)()
-    session.add(Project(id=1, user_id=1, project_name="p", character_perspective=1,
+    session.add(Project(id=1, user_id=1, project_name="p",
                         directional_movement=1, sprite_width=64, sprite_height=64))
     session.flush()
     for task_id, user_id in ((TASK_ID, 1), (TASK_ID + 1, 2)):

@@ -8,9 +8,11 @@ from sqlalchemy.pool import StaticPool
 from windup_framework.db.base import Base
 from windup_app.server.orchestrator import billing
 from windup_app.server.orchestrator.executor import ActionTaskExecutor, ImageTaskExecutor
+from windup_app.server.orchestrator.first_frame_executor import FirstFrameTaskExecutor
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     GenerationTask,
     GenerationTaskRecord,
@@ -19,6 +21,7 @@ from windup_app.server.orchestrator.model import (
 )
 from windup_app.server.orchestrator.service import AiGenerationService
 from windup_app.server.quota.model import CreditAccount, CreditTransaction
+from windup_common.directions import ActionDirection
 from windup_common.enums.quota import CreditReason
 from windup_common.exceptions import BizException
 from windup_framework.config.quota import settings as quota_settings
@@ -88,7 +91,6 @@ def test_submit_image_generation_reserves_prepaid_credit(auth_client, db_session
         "/projects",
         json={
             "project_name": "积分项目",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,
@@ -121,7 +123,6 @@ def test_submit_image_generation_reserves_per_requested_image(auth_client, db_se
         "/projects",
         json={
             "project_name": "按张计费",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,
@@ -160,7 +161,6 @@ def test_submit_rejects_when_credit_is_insufficient(auth_client, db_session):
         "/projects",
         json={
             "project_name": "没钱项目",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,
@@ -190,7 +190,6 @@ def test_submit_rejects_when_credit_covers_one_image_but_not_three(auth_client, 
         "/projects",
         json={
             "project_name": "一张的钱不够三张",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,
@@ -424,12 +423,64 @@ def test_recover_requeues_pending_tasks_with_open_freeze(session_factory):
     assert len(enqueued) == 1
     assert enqueued[0]["dedupe_key"] == f"generation:{task_id}"
     assert enqueued[0]["msg_type"] == "character_action"
+    assert enqueued[0]["stream"] == "windup:stream:generation-action"
     assert enqueued[0]["payload"]["task_id"] == task_id
 
     with session_factory() as session:
         still = service.get_task(session, project_id=7, task_id=task_id)
         assert still.status is TaskStatus.PENDING
         assert _account(session, 1).frozen == quota_settings.generate_action_cost
+
+
+def test_recover_releases_i2v_claim_for_failed_and_missing_tasks(
+    session_factory, monkeypatch,
+):
+    from windup_app.server.mq import i2v_admit
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    publisher, _enqueued = _tracking_publisher()
+    released: list[int] = []
+
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    service = AiGenerationService()
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=2,
+    )
+    with session_factory() as session:
+        failed = service.generate_character_action(
+            session, user_id=1, project_id=7, input=action_input,
+        )
+        live = service.generate_character_action(
+            session, user_id=1, project_id=7, input=action_input,
+        )
+        task_repo.update_status(session, failed.id, TaskStatus.FAILED)
+        task_repo.update_status(session, live.id, TaskStatus.RUNNING)
+        session.commit()
+        failed_id, live_id = failed.id, live.id
+
+    monkeypatch.setattr(i2v_admit, "rebuild", lambda: None)
+    monkeypatch.setattr(
+        i2v_admit, "claimed_ids", lambda: (failed_id, live_id, 99999),
+    )
+    monkeypatch.setattr(i2v_admit, "release", lambda task_id: released.append(task_id))
+    monkeypatch.setattr(i2v_admit, "has_claim", lambda task_id: task_id == live_id)
+    monkeypatch.setattr(i2v_admit, "schedule_retry", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.recover.reschedule_if_waiting",
+        lambda *_a, **_k: False,
+    )
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(session, publisher=publisher)
+        session.commit()
+
+    assert failed_id in released
+    assert 99999 in released
+    assert live_id not in released
 
 
 def test_recover_fails_and_unfreezes_running_orphans(session_factory):
@@ -480,6 +531,7 @@ def test_prepaid_cost_scales_with_model_calls():
     assert billing.prepaid_cost(GenerationType.CHARACTER_IMAGE, 3) == unit * 3
     assert billing.prepaid_cost(GenerationType.CHARACTER_FOUR_VIEW, 2) == unit * 2
     assert billing.prepaid_cost(GenerationType.CHARACTER_EIGHT_VIEW, 4) == unit * 4
+    assert billing.prepaid_cost(GenerationType.CHARACTER_FIRST_FRAME, 3) == unit * 3
     assert billing.prepaid_cost(GenerationType.CHARACTER_ACTION, 1) == quota_settings.generate_action_cost
     with pytest.raises(ValueError, match="model_calls"):
         billing.prepaid_cost(GenerationType.CHARACTER_IMAGE, 0)
@@ -616,6 +668,7 @@ def test_recover_requeues_pending_image_tasks(session_factory):
 
     assert len(enqueued) == 1
     assert enqueued[0]["msg_type"] == "character_image"
+    assert enqueued[0]["stream"] == "windup:stream:generation-image"
     assert enqueued[0]["payload"]["task_id"] == task_id
 
 
@@ -798,3 +851,53 @@ def test_a_row_without_an_id_is_skipped_instead_of_crashing_recovery(
             session,
             publisher=_tracking_publisher()[0],
         )
+
+
+def test_first_frame_failure_releases_reserved_credit(session_factory):
+    """首帧任务失败必须置失败态并退回冻结额度。
+
+    这条盯的是**新执行器与既有结算助手的接线**,不是助手本身。把 ``run_first_frame_task``
+    的失败分支整个掏空,原先全树 2064 条一条都不红 —— 也就是"扣了钱、任务永远挂在
+    RUNNING、用户既拿不到图也拿不回积分"这一整类后果没有任何一处守着。
+    """
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    service = AiGenerationService()
+
+    def _boom(_url):
+        raise RuntimeError("朝向立绘下载失败")
+
+    executor = FirstFrameTaskExecutor(
+        image=None,
+        matte=None,
+        upload=lambda _png: "https://cdn.example.com/x.png",
+        fetch_ref=_boom,
+        session_factory=session_factory,
+    )
+    first_frame_input = CharacterFirstFrameInput(
+        character_id=1,
+        reference_image_url="https://cdn.example.com/east.png",
+        prompt="walk cycle first frame",
+        direction=ActionDirection.EAST,
+        action_type=ActionType.WALK,
+        num_images=1,
+    )
+    with session_factory() as session:
+        task = service.generate_character_first_frame(
+            session, user_id=1, project_id=1, input=first_frame_input
+        )
+        session.commit()
+        task_id = task.id
+
+    executor.run_first_frame_task(task_id, first_frame_input)
+
+    with session_factory() as session:
+        done = service.get_task(session, project_id=1, task_id=task_id)
+        account = _account(session, 1)
+        assert done.status is TaskStatus.FAILED, "任务还挂在 RUNNING —— 钱扣了,人也不知道"
+        assert account.frozen == 0
+        assert account.total_spent == 0
+        assert account.balance == quota_settings.register_gift_amount
+        assert CreditReason.REFUND in _reasons(session, 1)

@@ -27,10 +27,30 @@ export function isStageMaterial(value: string): value is StageMaterial {
   return (MATERIALS as readonly string[]).includes(value)
 }
 
+/**
+ * 要渲的动作名 → 模型里真实存在的片段名。
+ *
+ * 绑骨接口一次只烘一个动作,而片段名由它的动作库自己起(实测 08-19 与 08-27 两次任务
+ * 拿到的都是 `Armature|32795ddb244644eac67ccfd8b84060c3_remap`),**永远对不上产品动作
+ * 名**。所以只有一个片段时就用它 ——
+ * 这不是兜底:只有一个候选就不存在"选错"。"这份资产会不会这个动作"由派单那一侧保证
+ * (资产只烘了一个动作,别的动作在编排层就被拒了),不由片段名保证。
+ *
+ * 多于一个片段还对不上名字仍然抛:那时候选谁都是猜,而猜错会渲出另一个动作,
+ * 帧数、时长、成色全部正常,没有一道会红。
+ */
+export function resolveClip(want: string, available: string[]): string {
+  if (available.includes(want)) return want
+  if (available.length === 1) return available[0]
+  throw new StageError(`模型里没有片段 ${JSON.stringify(want)};有的是 ${JSON.stringify(available)}`)
+}
+
 export interface StageRigInfo {
   loader: string
   rootBone: string | null
   bones: number
+  /** 骨名列表。挂点的来源——武器握持按骨名定位，不必重新标定。 */
+  boneNames: string[]
   skinned: number
   verts: number
   orthoH: number
@@ -70,6 +90,8 @@ export class BakeStage {
   private rootBone: string | null = null
   private loader = 'gltf'
   private probe: HTMLCanvasElement | null = null
+  private rootMotion: Record<string, Array<[number, number]>> = {}
+  private scale = 1
 
   private constructor(options: StageOptions) {
     if (!isStageMaterial(options.material)) {
@@ -150,7 +172,8 @@ export class BakeStage {
     if (!Number.isFinite(rawH) || rawH <= 0) {
       throw new StageError('模型包围盒量不出高度 —— 空模型或坏 GLB')
     }
-    this.model.scale.setScalar(1.0 / rawH)
+    this.scale = 1.0 / rawH
+    this.model.scale.setScalar(this.scale)
     this.model.updateMatrixWorld(true)
     box = new THREE.Box3().setFromObject(this.model)
     this.model.position.y -= box.min.y
@@ -248,10 +271,23 @@ export class BakeStage {
     const values = track.values
     const x0 = values[0]
     const z0 = values[2]
+    // 压平之前先把位移抽出来存着 —— 压平是为了让帧原地不动,位移本身仍是产物的一部分,
+    // 引擎侧要靠它让角色真的走起来(#774:此前算完即丢)。单位与归一化口径一致。
+    const disp: Array<[number, number]> = []
     for (let i = 0; i < values.length; i += 3) {
+      disp.push([
+        +((values[i] - x0) * this.scale).toFixed(5),
+        +((values[i + 2] - z0) * this.scale).toFixed(5),
+      ])
       values[i] = x0
       values[i + 2] = z0
     }
+    this.rootMotion[clip.name] = disp
+  }
+
+  /** 本片段的逐帧 (dx, dz)。片段没有根骨位置轨时为空数组。 */
+  rootMotionOf(clip: string): Array<[number, number]> {
+    return this.rootMotion[clip] ?? []
   }
 
   /**
@@ -353,8 +389,12 @@ export class BakeStage {
     let bones = 0
     let skinned = 0
     let verts = 0
+    const boneNames: string[] = []
     this.model.traverse((node) => {
-      if ((node as THREE.Bone).isBone) bones++
+      if ((node as THREE.Bone).isBone) {
+        bones++
+        boneNames.push(node.name)
+      }
       const mesh = node as THREE.SkinnedMesh
       if (mesh.isSkinnedMesh) skinned++
       if (mesh.isMesh) verts += mesh.geometry.attributes.position.count
@@ -363,6 +403,7 @@ export class BakeStage {
       loader: this.loader,
       rootBone: this.rootBone,
       bones,
+      boneNames,
       skinned,
       verts,
       orthoH: +this.orthoH.toFixed(4),

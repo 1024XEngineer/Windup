@@ -41,37 +41,62 @@ describe('account profile state', () => {
 })
 
 describe('account security state', () => {
-  it('preserves password fields when a password change fails', () => {
-    const withOldPassword = securityReducer(initialSecurityState, {
-      type: 'oldPasswordChanged',
-      password: 'old-password',
+  it('preserves verification and password fields when a password reset fails', () => {
+    const withCode = securityReducer(initialSecurityState, {
+      type: 'codeChanged',
+      code: '123456',
     })
-    const withPasswords = securityReducer(withOldPassword, {
+    const withPassword = securityReducer(withCode, {
       type: 'newPasswordChanged',
       password: 'new-password-123',
     })
+    const withPasswords = securityReducer(withPassword, {
+      type: 'confirmPasswordChanged',
+      password: 'new-password-123',
+    })
     const changing = securityReducer(withPasswords, { type: 'changeStarted' })
-    const failed = securityReducer(changing, { type: 'changeFailed', error: '当前密码错误' })
+    const failed = securityReducer(changing, { type: 'changeFailed', error: '验证码错误' })
 
     expect(failed).toEqual({
-      oldPassword: 'old-password',
+      code: '123456',
       newPassword: 'new-password-123',
+      confirmPassword: 'new-password-123',
+      isSendingCode: false,
       isChanging: false,
-      error: '当前密码错误',
+      cooldownUntil: null,
+      error: '验证码错误',
+      success: null,
+    })
+  })
+
+  it('tracks a sent verification code and its resend cooldown', () => {
+    const sending = securityReducer(initialSecurityState, { type: 'sendStarted' })
+    const sent = securityReducer(sending, { type: 'sendSucceeded', cooldownUntil: 123_000 })
+
+    expect(sent).toMatchObject({
+      isSendingCode: false,
+      cooldownUntil: 123_000,
+      error: null,
+      success: '验证码已发送，请在 5 分钟内使用。',
     })
   })
 
   it('clears sensitive fields and feedback when the active section changes', () => {
     const populated = {
-      oldPassword: 'old-password',
+      code: '123456',
       newPassword: 'new-password-123',
+      confirmPassword: 'new-password-123',
+      isSendingCode: false,
       isChanging: true,
+      cooldownUntil: 123_000,
       error: '旧错误',
+      success: '旧提示',
     }
 
     expect(securityReducer(populated, { type: 'sectionChanged' })).toEqual({
       ...initialSecurityState,
       isChanging: true,
+      cooldownUntil: 123_000,
     })
   })
 })

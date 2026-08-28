@@ -137,11 +137,14 @@ class SqlAlchemyProjectService(ProjectService):
         *,
         project_name: str | None = None,
         game_style: str | None | UnsetType = UNSET,
+        auto_pixelate: bool | UnsetType = UNSET,
     ) -> Project:
         if project_name is not None:
             project.project_name = project_name
         if not isinstance(game_style, UnsetType):
             project.game_style = game_style
+        if not isinstance(auto_pixelate, UnsetType):
+            project.auto_pixelate = auto_pixelate
         session.flush()
         return project
 

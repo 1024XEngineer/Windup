@@ -5,6 +5,7 @@ export interface User {
   nickname: string | null
   emailVerifiedAt: string | null
   statusCode: number
+  hasPassword: boolean
 }
 
 /** 一次认证成功后由后端签发的完整会话材料。 */
@@ -33,7 +34,11 @@ export interface UserApis {
   logout(refreshToken: string): Promise<void>
   me(): Promise<User>
   updateNickname(nickname: string): Promise<User>
+  setPassword(input: { newPassword: string }): Promise<void>
   changePassword(input: { oldPassword: string; newPassword: string }): Promise<void>
+  resetPassword(input: { email: string; code: string; newPassword: string }): Promise<void>
+  sendPasswordChangeCode(): Promise<void>
+  changePasswordWithCode(input: { code: string; newPassword: string }): Promise<void>
 }
 
 export { createUserApis, userApis } from './api'

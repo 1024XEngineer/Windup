@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import pathlib
+from collections.abc import Mapping
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -61,6 +62,21 @@ logger = logging.getLogger(__name__)
 # 字面量** —— 待审模型"在哪"这件事有两个说法时,放行与展示会指向不同的文件。
 RAW_KEY_PREFIX = "raw:"
 
+#: 图生 3D 产物在**上游**那边的 URL。给绑骨当云到云的输入(#860)。
+#: 与 ``RAW_KEY_PREFIX`` 那份 bytes 分开存:两个用途、两种寿命 —— bytes 给人工确认闸
+#: 渲给人看、要在整个审核期内稳定,而上游这个 URL 实测 24 小时过期。
+URL_KEY_PREFIX = "rawurl:"
+# 已提交、已计费、还没取回来的绑骨任务号。**费在提交那一刻就扣了**,之后的每一步
+# (等待、下载、进程存活)都可能失败,而失败一次就重新提交等于再扣一次。存着它,
+# 下次进来先零成本续取。取回来就删 —— 留着会让下一次真正的新请求被续取顶掉。
+RIGJOB_KEY_PREFIX = "rigjob:"
+# 连续几轮续不回来才放弃这个任务号。
+# 不能"续取一失败就删":``JobTimeoutError`` 的意思是**任务还在上游跑、费已经扣了**,
+# 而产物下载失败也照样抛 ``JobFailedError`` —— 两种都不代表任务没了。删掉再提交
+# 就是同一份产物付两次钱,正是本机制要防的。反过来永远不删也不行:任务真的失效时
+# 会卡死在续取上,谁也建不出资产。所以留几轮,超了才当它没了。
+RIGJOB_MAX_RESUMES = 3
+
 # 两段的报价。**不在这里抄数字**,从计费实现取 —— 抄一份过去,供应商调价时两处会分叉,
 # 而分叉的那一份正是给用户看的成本提示(告知了错的价钱比不告知更糟)。
 # ``CREDITS["Normal"]`` 是本管线用的生成模式(非 PBR、单视图),与 ``TencentModel3DProvider``
@@ -68,6 +84,49 @@ RAW_KEY_PREFIX = "raw:"
 MODEL3D_CREDITS = CREDITS["Normal"]
 AUTORIG_CREDITS = RIG_CREDITS
 BUILD_CREDITS = MODEL3D_CREDITS + AUTORIG_CREDITS
+
+# ── 产品动作 → 绑骨预设动作 ─────────────────────────────────────────────────
+#
+# 绑骨接口一次只吃一个 ``MotionType``,**一次绑骨 = 一个动作片段**。所以这张表回答的是
+# "某个产品动作该烘哪个预设",而不是"一份资产能出哪些动作"(后者恒为一个)。
+#
+# 值为 ``None`` 表示**这条路线不接这个动作**,不是待补:
+#
+#   - ``attack``:预设库里只有 thrust(16)/ kick(18) 两个近似项,而产品的攻击按运动
+#     拓扑分四型(sweep / thrust / project / lunge,见 ``AttackArchetype``)。拿 thrust
+#     顶 sweep 会渲出一段"直刺"冒充"横挥" —— 帧数、时长、成色全部正常,没有一道会红。
+#     要接它得先实测出 sweep 类预设的编号,那是另一件事。
+#   - ``custom``:用户自述动作,预设库里按定义就没有对应项;映射到任何一个预设都是拿
+#     别的动作冒充。
+#
+# 两者继续走 i2v —— 那条路线本来就吃自然语言描述,不是降级。
+#
+# 键取 ``orchestrator.model.ActionType`` 的取值(不 import 那个枚举:本模块是准备整体
+# 搬去产品仓的,它不该依赖 ORM 层)。取值域由 ``test_render3d_motion`` 钉住。
+ACTION_MOTIONS: Mapping[str, str | None] = {
+    "walk": "walk",
+    "idle": "idle",
+    "jump": "jump",
+    "attack": None,
+    "custom": None,
+}
+
+# 建资产时烘进模型的那个动作。**是常量,不是部署开关。**
+#
+# 一份绑骨产物只带一个动作片段,"这份资产会哪个动作"必须与它真实烘进去的那个永远一致。
+# 做成开关的话,改开关会让**已经建好的**资产开始声称自己会另一个动作,而渲出来的仍是
+# 旧的那段 —— 又是一次"帧数、时长、成色全正常"的静默错。要按造型选动作,得先有一个
+# 能承载"每动作一份资产"的落点与 URL 字段(见本模块开头的成本说明)。
+#
+# 选 walk 而不是 idle:走 / 跑正是另外两条路线做不好的部分(i2v 各朝向互不一致、逐帧
+# 路线腿不左右交替),而 idle 已经由 i2v 覆盖得不错。
+BUILD_MOTION = "walk"
+
+# 走本路线出得了的动作。资产只烘了 ``BUILD_MOTION``,别的动作**必须在派单之前被拒**:
+# 模型里那唯一一个片段照样渲得出 32 张帧,拿走路帧当攻击交付不会有任何一处报错。
+RENDERABLE_ACTIONS = frozenset(
+    action for action, motion in ACTION_MOTIONS.items() if motion == BUILD_MOTION
+)
 
 
 class Render3DAssetState(str, Enum):
@@ -283,7 +342,8 @@ class Render3DAssetBuilder:
         self._store.delete(f"{RAW_KEY_PREFIX}{outfit_key}")
         self._review.discard(outfit_key)
 
-    def ensure(self, outfit_key: str, master: bytes, progress: ProgressPort) -> bytes:
+    def ensure(self, outfit_key: str, master: bytes, progress: ProgressPort,
+               extra_views: Mapping[str, bytes] | None = None) -> bytes:
         """取该造型的绑骨模型;没有且获准时才现建。
 
         建一次的计费 = 图生 3D + 绑骨,取值见本模块顶部常量,**每造型一次性**。
@@ -305,14 +365,20 @@ class Render3DAssetBuilder:
                 f"绑骨 {AUTORIG_CREDITS})。要现建请显式授权花钱,"
                 "或先把资产备好,或改走 video_i2v。"
             )
-        return self._build(outfit_key, master, progress)
+        return self._build(outfit_key, master, progress, extra_views)
 
     # ── 内部 ─────────────────────────────────────────────────────────────
-    def _build(self, key: str, master: bytes, progress: ProgressPort) -> bytes:
-        """① 图生 3D →(人工确认)→ ② 绑骨。**按次计费,每造型一次性。**
+    def _build(self, key: str, master: bytes, progress: ProgressPort,
+               extra_views: Mapping[str, bytes] | None = None) -> bytes:
+        """① 图生 3D →(人工确认)→ ② 绑骨并烘入 :data:`BUILD_MOTION`。**按次计费,每造型一次性。**
 
         中间那道人工确认是硬停点,原因见 :class:`ModelReviewGate`:模型不可事后修改,
         坏模型只能重生成,所以要在**花绑骨的钱之前**让人看一眼。
+
+        **绑骨必须带动作。** 不带 ``MotionType`` 的请求接口照样受理、照样扣 10 积分,
+        只是产物里零个动画片段(实测:带 walk 的产物 1 个 AnimationStack,不带的 0 个;
+        图生 3D 出的原始模型本身也是 0 个)。出帧台拿到零片段就出不了动作,而绑骨、
+        取件、落点每一步都"成功"。
         """
         raw_key = f"{RAW_KEY_PREFIX}{key}"
 
@@ -321,9 +387,16 @@ class Render3DAssetBuilder:
         model = self._store.get(raw_key)
         if model is None:
             progress.step("assets", 0, 2, "造型级 3D 资产未就绪:图生 3D(按次计费)")
-            model = self._model3d.image_to_3d(master, want="GLB")
+            model, upstream_url = _image_to_3d(self._model3d, master, extra_views)
             self._store.put(raw_key, model)
-            logger.info("图生 3D 产物已落点 key=%s bytes=%d", raw_key, len(model))
+            if upstream_url:
+                # 上游那个 URL 单独存一份,给绑骨当**云到云**的输入 —— 它是上游自家的
+                # 文件,交回给同一个上游就不用我们中转(省每资产约 36MB,#860)。
+                # 与 raw_key 那份 bytes 是两个用途:bytes 给人工确认闸渲给人看,
+                # 那个 URL 必须在整个审核期内稳定;上游这个 24 小时会过期。
+                self._store.put(f"{URL_KEY_PREFIX}{key}", upstream_url.encode())
+            logger.info("图生 3D 产物已落点 key=%s bytes=%d 云到云=%s",
+                        raw_key, len(model), bool(upstream_url))
 
         where = self._review.submit(key, model, "GLB")
         if not self._review.is_approved(key):
@@ -337,10 +410,153 @@ class Render3DAssetBuilder:
                 "不合格则删掉待审模型重新生成 —— 混元的模型改不动,只能重生成",
             )
 
-        progress.step("assets", 1, 2, "模型已确认,自动绑骨(按次计费)")
-        rigged: RiggedModel = self._autorig.rig(model, want="GLB")
+        progress.step("assets", 1, 2, f"模型已确认,自动绑骨并烘入 {BUILD_MOTION} 动作(按次计费)")
+        rigged: RiggedModel = _rig(self._autorig, model,
+                                   self._store.get(f"{URL_KEY_PREFIX}{key}"),
+                                   motion=BUILD_MOTION,
+                                   store=self._store,
+                                   job_key=f"{RIGJOB_KEY_PREFIX}{key}#{BUILD_MOTION}")
+        if rigged.motion is None:
+            # 不带动作的绑骨产物在下游**每一道闸前都是正常的**:格式对、28 骨对、体积对,
+            # 只是出帧台拿到零个动画片段。存下来就等于把 10 积分买来的哑模型挂成 READY,
+            # 用户侧的症状是"三渲二根本出不了动作",而没有任何一处报错指向绑骨这一步。
+            raise RuntimeError(
+                f"绑骨产物里没有动作片段(请求的是 {BUILD_MOTION!r})—— 拒绝当成就绪资产存下。"
+                "绑骨请求体缺 MotionType 时接口照样成功、照样扣费,产物只是零动画。"
+            )
 
         # 存的是**绑骨后**的产物:它是渲帧真正要的那个,存中间的 model 等于下次还得再绑一次。
         self._store.put(key, rigged.data)
         logger.info("造型级 3D 资产已落点 key=%s fmt=%s", key, rigged.fmt)
         return rigged.data
+
+    def add_motion(self, key: str, motion: str, progress: ProgressPort) -> bytes:
+        """给**已建好**的造型再烘一个动作片段。**只花绑骨那一笔**(见 AUTORIG_CREDITS)。
+
+        为什么能只花一笔:图生 3D 的产物一直留在 ``raw:`` 那份落点上(只有 discard 会删
+        它),所以这里直接拿它再绑一次骨,不重付图生 3D。这也是这个方法存在的全部理由 ——
+        用 ``ensure`` 再跑一遍会连图生 3D 一起重付,而那份模型明明还在。
+
+        一份绑骨产物只带一个动作片段(接口一次只吃一个 MotionType),所以每个动作各存一份,
+        键是 ``{造型键}#{动作}``。**不覆盖主产物** —— 覆盖等于用户为第二个动作付的钱把
+        第一个顶掉。
+
+        Raises:
+            ValueError: 这个造型还没建过资产(没有 raw),或动作名不在 ``ACTION_MOTIONS``
+                的可烘集合里。两种都在花钱之前拒。
+        """
+        want = ACTION_MOTIONS.get(motion)
+        if want is None:
+            bakeable = sorted(a for a, m in ACTION_MOTIONS.items() if m)
+            raise ValueError(
+                f"{motion!r} 走不了三渲二(可烘的是 {bakeable});"
+                "attack / custom 的运动拓扑没有对应的预设动作,继续走 i2v。"
+            )
+        raw = self._store.get(f"{RAW_KEY_PREFIX}{key}")
+        if raw is None:
+            raise ValueError(
+                "这个造型还没有 3D 模型,先建资产再加动作 —— 现建的话要连图生 3D 一起付。"
+            )
+        if not self._review.is_approved(key):
+            raise ValueError("这个造型的 3D 模型还没被确认放行,先看过模型再加动作。")
+
+        motion_key = f"{key}#{want}"
+        cached = self._store.get(motion_key)
+        if cached is not None:
+            return cached                      # 已经烘过这个动作,不重复付费
+
+        progress.step("assets", 0, 1, f"为 {motion} 再绑一次骨并烘入(按次计费)")
+        # 追加动作同样走云到云:上游 URL 还在就不用把 18MB 再中转一遍(#860)。
+        rigged: RiggedModel = _rig(self._autorig, raw,
+                                   self._store.get(f"{URL_KEY_PREFIX}{key}"),
+                                   motion=want,
+                                   store=self._store,
+                                   job_key=f"{RIGJOB_KEY_PREFIX}{key}#{want}")
+        if rigged.motion is None:
+            # 与主产物那条同一个理由:零片段的产物在下游每一道闸前都正常,存下来就是
+            # 把 10 积分买来的哑模型挂成可用。
+            raise RuntimeError(
+                f"绑骨产物里没有动作片段(请求的是 {want!r})—— 拒绝当成就绪资产存下。"
+            )
+        self._store.put(motion_key, rigged.data)
+        logger.info("造型追加动作已落点 key=%s motion=%s", motion_key, want)
+        return rigged.data
+
+def _image_to_3d(provider, master: bytes,
+                 extra_views: Mapping[str, bytes] | None = None) -> tuple[bytes, str | None]:
+    """图生 3D,顺带取回上游那个产物 URL。
+
+    provider 没有 ``image_to_3d_with_url`` 时退回旧方法、URL 给 None —— 测试里的桩与
+    别的实现不该因为这个新增能力而全部要改。
+    """
+    fn = getattr(provider, "image_to_3d_with_url", None)
+    # 没有多视图时**不传这个关键字** —— 不接它的实现(测试替身、别家 provider)
+    # 收到就是 TypeError,而那时它本来就没这件事要做。
+    kw = {"extra_views": extra_views} if extra_views else {}
+    if fn is None:
+        return provider.image_to_3d(master, want="GLB", **kw), None
+    return fn(master, want="GLB", **kw)
+
+
+def _model_not_public():
+    """上游 URL 不可取时那个异常类型。局部取,免得模块顶层耦合到具体 provider。"""
+    from windup_framework.providers.render3d import ModelNotPublicError
+
+    return ModelNotPublicError
+
+
+_MODEL_NOT_PUBLIC = _model_not_public()
+
+
+def _rig(provider, model: bytes, upstream_url: bytes | None, *, motion: str,
+         store: CharacterAssetStore | None = None, job_key: str = ""):
+    """绑骨。有上游 URL 就走**云到云**,没有就退回传 bytes。
+
+    退回不是可有可无的:上游 URL 会过期(24 小时),而人可能隔天才放行;
+    存量资产也没有这份 URL。退回那条路仍然可用,只是要多走一次中转。
+
+    给了 ``store``/``job_key`` 就带**断点续取**:提交成功即落盘任务号,下一次进来
+    先零成本取一遍那个任务的产物。没有它的话,提交之后的任何失败都让已扣的费作废。
+    """
+    # 续取与落盘是一对,缺一没意义,所以一起按 provider 是否有 fetch 来开关。
+    resumable = store is not None and bool(job_key) and hasattr(provider, "fetch")
+    if resumable:
+        prior = store.get(job_key)
+        if prior:
+            job_id, _, tried = prior.decode().partition("|")
+            n = int(tried or 0)
+            try:
+                got = provider.fetch(job_id, want="GLB", motion=motion)
+                logger.info("续取上次已计费的绑骨产物 JobId=%s,没有重复提交", job_id)
+                store.delete(job_key)
+                return got
+            except Exception as exc:      # noqa: BLE001 —— 什么错都不足以断定任务没了
+                n += 1
+                if n < RIGJOB_MAX_RESUMES:
+                    # **不退回重新提交** —— 退回就是再扣一次,而这一单大概率还在上游跑。
+                    store.put(job_key, f"{job_id}|{n}".encode())
+                    raise
+                logger.info("JobId=%s 连续 %d 轮续不回来(%s),当它没了,按新任务提交",
+                            job_id, n, exc)
+                store.delete(job_key)
+
+    # 只有支持续取的 provider 才收得下这个钩子。不支持的(测试替身、别家实现)连
+    # 关键字都不该看见 —— 传过去是 TypeError,而这里本来就没它的事。
+    hook = ({"on_submitted": lambda job_id: store.put(job_key, job_id.encode())}
+            if resumable else {})
+    url = (upstream_url or b"").decode() if upstream_url else ""
+    fn = getattr(provider, "rig_from_url", None)
+    got = None
+    if url and fn is not None:
+        try:
+            got = fn(url, "GLB", want="GLB", motion=motion, **hook)
+        except _MODEL_NOT_PUBLIC:
+            # URL 过期或不再可取 —— 退回中转,别让整条建资产失败。
+            logger.info("上游 URL 不可用,退回经应用机中转绑骨")
+    if got is None:
+        got = provider.rig(model, want="GLB", motion=motion, **hook)
+    if resumable:
+        # 取回来了就把任务号清掉。留着的话,这个造型下次被丢弃重建时会**续到上一版
+        # 模型的绑骨产物** —— 拿到的是别的模型,而且哪一道闸都拦不住。
+        store.delete(job_key)
+    return got

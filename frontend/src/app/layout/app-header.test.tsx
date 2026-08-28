@@ -14,6 +14,7 @@ const user = {
   nickname: 'Reader',
   emailVerifiedAt: '2026-08-07T01:02:03Z',
   statusCode: 0,
+  hasPassword: true,
 }
 
 function tokens(): AuthTokens {
@@ -30,7 +31,11 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => user),
     updateNickname: vi.fn(async () => user),
+    setPassword: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
+    resetPassword: vi.fn(async () => undefined),
+    sendPasswordChangeCode: vi.fn(async () => undefined),
+    changePasswordWithCode: vi.fn(async () => undefined),
   }
 }
 
@@ -164,7 +169,7 @@ describe('AppHeader 进行中任务入口', () => {
     expect(document.querySelector('[data-active-run-bot]')).toBeNull()
 
     act(() => rememberActiveRun('7', '77'))
-    const entry = screen.getByRole('button', { name: '创作，有任务进行中' })
+    const entry = await screen.findByRole('button', { name: '创作，有任务进行中' })
     const bot = entry.querySelector('[data-active-run-bot]')
     expect(bot).toBeTruthy()
     // 文字保留：这一项不该在图标和文字之间换形态。
@@ -494,6 +499,9 @@ describe('AppHeader', () => {
     expect(menuSurface.getAttribute('aria-hidden')).toBeNull()
     const account = screen.getByRole('link', { name: '打开账号中心' })
     expect(account.getAttribute('href')).toBe('/account')
+    expect(screen.getByRole('link', { name: '修改密码' }).getAttribute('href')).toBe(
+      '/account?section=security',
+    )
     expect(account.getAttribute('aria-current')).toBe('page')
     expect(accountMenu.textContent).toContain('Reader')
     expect(screen.queryByText('资料与登录安全')).toBeNull()

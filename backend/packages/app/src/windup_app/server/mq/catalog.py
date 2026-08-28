@@ -14,6 +14,7 @@
        - ``recover_as``：PENDING 任务按此 GenerationType 值重入队；轮询类留 None
     3. 在 handlers 的 ``HANDLERS`` 登记可调用对象
 
+图片与动作分两条 Stream，出队互不堵。旧 ``GENERATION_STREAM`` 只给过渡 drain。
 不在此表里塞积分账本或 SSE EventBus。是否新开 Stream 仍按 SLA 决定。
 """
 
@@ -31,9 +32,13 @@ from windup_framework.sse.bridge import SSE_REDIS_CHANNEL
 
 EMAIL_STREAM = "windup:stream:email"
 GENERATION_STREAM = "windup:stream:generation"
+GENERATION_IMAGE_STREAM = "windup:stream:generation-image"
+GENERATION_ACTION_STREAM = "windup:stream:generation-action"
 
 EMAIL_GROUP = "email"
 GENERATION_GROUP = "generation"
+GENERATION_IMAGE_GROUP = "generation-image"
+GENERATION_ACTION_GROUP = "generation-action"
 
 MSG_TYPE_VERIFICATION_CODE = "verification_code"
 MSG_TYPE_CHARACTER_IMAGE = "character_image"
@@ -72,17 +77,17 @@ class TypeSpec:
 
 
 def generation_image_concurrency() -> int:
-    # executor 已短 session:生成/上传不再占连接,默认不再被 15 连接池卡住。
-    return _env_int("WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", 16)
+    # 默认对齐现网：图与动作分队后各自限流，避免无环境变量时按 16/8 打上游。
+    return _env_int("WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", 4)
 
 
 def generation_action_concurrency() -> int:
-    return _env_int("WINDUP_MQ_GENERATION_ACTION_CONCURRENCY", 8)
+    return _env_int("WINDUP_MQ_GENERATION_ACTION_CONCURRENCY", 2)
 
 
 def generation_poll_concurrency() -> int:
-    # 单次 inspect + 偶尔下载,不 sleep,默认高于 action 建单并发。
-    return _env_int("WINDUP_MQ_GENERATION_POLL_CONCURRENCY", 16)
+    # 单次 inspect + 偶尔下载,不 sleep；与动作提交分池，不占提交槽。
+    return _env_int("WINDUP_MQ_GENERATION_POLL_CONCURRENCY", 2)
 
 
 def type_specs() -> tuple[TypeSpec, ...]:
@@ -96,7 +101,7 @@ def type_specs() -> tuple[TypeSpec, ...]:
         ),
         TypeSpec(
             msg_type=MSG_TYPE_CHARACTER_IMAGE,
-            stream=GENERATION_STREAM,
+            stream=GENERATION_IMAGE_STREAM,
             pool=POOL_SHARED,
             concurrency=generation_image_concurrency(),
             limit=True,
@@ -104,7 +109,7 @@ def type_specs() -> tuple[TypeSpec, ...]:
         ),
         TypeSpec(
             msg_type=MSG_TYPE_CHARACTER_ACTION,
-            stream=GENERATION_STREAM,
+            stream=GENERATION_ACTION_STREAM,
             pool=POOL_SHARED,
             concurrency=generation_action_concurrency(),
             limit=True,
@@ -112,14 +117,14 @@ def type_specs() -> tuple[TypeSpec, ...]:
         ),
         TypeSpec(
             msg_type=MSG_TYPE_CHARACTER_ACTION_POLL,
-            stream=GENERATION_STREAM,
+            stream=GENERATION_ACTION_STREAM,
             pool=POOL_POLL,
             concurrency=generation_poll_concurrency(),
             limit=True,
         ),
         TypeSpec(
             msg_type=MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE,
-            stream=GENERATION_STREAM,
+            stream=GENERATION_ACTION_STREAM,
             pool=POOL_POLL,
             concurrency=generation_poll_concurrency(),
             limit=True,
@@ -135,7 +140,23 @@ def type_spec(msg_type: str) -> TypeSpec | None:
 
 
 def types_for_stream(stream: str) -> tuple[TypeSpec, ...]:
-    return tuple(spec for spec in type_specs() if spec.stream == stream)
+    matched = tuple(spec for spec in type_specs() if spec.stream == stream)
+    if stream != GENERATION_STREAM:
+        return matched
+    # 旧产线 Stream 过渡 drain：切流后仍要按图/动作类型处理残留消息。
+    drained = tuple(
+        spec
+        for spec in type_specs()
+        if spec.stream in (GENERATION_IMAGE_STREAM, GENERATION_ACTION_STREAM)
+    )
+    return matched + drained
+
+
+def stream_for_msg_type(msg_type: str) -> str:
+    spec = type_spec(msg_type)
+    if spec is None:
+        raise ValueError(f"未知消息类型: {msg_type}")
+    return spec.stream
 
 
 def msg_type_for_generation(task_type: str) -> str:
@@ -144,7 +165,10 @@ def msg_type_for_generation(task_type: str) -> str:
         "character_direction_set",
         "character_four_view",
         "character_eight_view",
+        "character_first_frame",
     ):
+        # 与单张立绘同一图像并发池。payload.task_type 才是执行器分叉,
+        # 不要另开 TypeSpec,否则会把线程池和信号量再加一倍。
         # 与单张立绘同一图像并发池。payload.task_type 才是执行器分叉,
         # 不要另开 TypeSpec,否则会把线程池和信号量再加一倍。
         return MSG_TYPE_CHARACTER_IMAGE
@@ -157,8 +181,8 @@ def msg_type_for_generation(task_type: str) -> str:
 def _pool_size(stream: str, pool: str) -> int:
     return sum(
         spec.concurrency
-        for spec in type_specs()
-        if spec.stream == stream and spec.pool == pool
+        for spec in types_for_stream(stream)
+        if spec.pool == pool
     )
 
 
@@ -170,13 +194,31 @@ def email_stream_spec() -> StreamSpec:
     )
 
 
+def generation_image_stream_spec() -> StreamSpec:
+    return StreamSpec(
+        stream=GENERATION_IMAGE_STREAM,
+        group=GENERATION_IMAGE_GROUP,
+        concurrency=_pool_size(GENERATION_IMAGE_STREAM, POOL_SHARED),
+    )
+
+
+def generation_action_stream_spec() -> StreamSpec:
+    return StreamSpec(
+        stream=GENERATION_ACTION_STREAM,
+        group=GENERATION_ACTION_GROUP,
+        concurrency=_pool_size(GENERATION_ACTION_STREAM, POOL_SHARED),
+    )
+
+
 def generation_worker_pool_size() -> int:
-    # image/action 共用一个线程池。poll 走独立 pool 名,不能加进这个数字,
-    # 否则 image 占满线程后 poll 只能排队。
-    return _pool_size(GENERATION_STREAM, POOL_SHARED)
+    # 旧 Stream drain 的共享池：图+动作合计。poll 不进这个数字。
+    return _pool_size(GENERATION_IMAGE_STREAM, POOL_SHARED) + _pool_size(
+        GENERATION_ACTION_STREAM, POOL_SHARED
+    )
 
 
 def generation_stream_spec() -> StreamSpec:
+    """旧 ``generation`` Stream 的过渡 drain 规格。新任务不要再往这里投。"""
     return StreamSpec(
         stream=GENERATION_STREAM,
         group=GENERATION_GROUP,
@@ -184,8 +226,12 @@ def generation_stream_spec() -> StreamSpec:
     )
 
 
-def all_stream_specs() -> tuple[StreamSpec, StreamSpec]:
-    return email_stream_spec(), generation_stream_spec()
+def all_stream_specs() -> tuple[StreamSpec, ...]:
+    return (
+        email_stream_spec(),
+        generation_image_stream_spec(),
+        generation_action_stream_spec(),
+    )
 
 
 __all__ = [
@@ -194,9 +240,14 @@ __all__ = [
     "EMAIL_HANDLER_RETRIES",
     "GENERATION_STREAM",
     "GENERATION_GROUP",
+    "GENERATION_IMAGE_STREAM",
+    "GENERATION_IMAGE_GROUP",
+    "GENERATION_ACTION_STREAM",
+    "GENERATION_ACTION_GROUP",
     "GENERATION_PENDING_MAX_AGE_SECONDS",
     "GENERATION_RUNNING_STALE_SECONDS",
     "MSG_TYPE_CHARACTER_ACTION",
+    "MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE",
     "MSG_TYPE_CHARACTER_ACTION_POLL",
     "MSG_TYPE_CHARACTER_IMAGE",
     "MSG_TYPE_VERIFICATION_CODE",
@@ -208,11 +259,14 @@ __all__ = [
     "all_stream_specs",
     "email_stream_spec",
     "generation_action_concurrency",
+    "generation_action_stream_spec",
     "generation_image_concurrency",
+    "generation_image_stream_spec",
     "generation_poll_concurrency",
     "generation_stream_spec",
     "generation_worker_pool_size",
     "msg_type_for_generation",
+    "stream_for_msg_type",
     "type_spec",
     "type_specs",
     "types_for_stream",

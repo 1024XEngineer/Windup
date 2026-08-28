@@ -28,6 +28,13 @@ import './account.css'
 import { createProfileState, initialSecurityState, profileReducer, securityReducer } from './state'
 
 const MAX_NICKNAME_LENGTH = 50
+const SECURITY_CODE_COOLDOWN_MS = 60_000
+
+type AccountSection = 'profile' | 'security' | 'quota' | 'invite'
+
+function accountSection(value: string | null): AccountSection {
+  return value === 'security' || value === 'quota' || value === 'invite' ? value : 'profile'
+}
 
 function localDateStart(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
@@ -483,13 +490,14 @@ function QuotaSection() {
 
 /** 账号页以 /auth/me 为事实来源；会话层负责把刷新和编辑结果同步给 Header。 */
 export function AccountPage() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const requestedSection = searchParams.get('section')
   const session = useAuthSession()
   const {
-    changePassword: changeSessionPassword,
+    changePasswordWithCode,
     logout,
     refreshCurrentUser,
+    sendPasswordChangeCode,
     updateNickname,
   } = session
   const currentUser = session.state.status === 'authenticated' ? session.state.user : null
@@ -500,12 +508,14 @@ export function AccountPage() {
     createProfileState,
   )
   const [security, dispatchSecurity] = useReducer(securityReducer, initialSecurityState)
-  const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'quota' | 'invite'>(
-    requestedSection === 'invite' ? 'invite' : 'profile',
+  const [activeSection, setActiveSection] = useState<AccountSection>(() =>
+    accountSection(requestedSection),
   )
+  const [securityNow, setSecurityNow] = useState(() => Date.now())
   const nicknameId = useId()
-  const oldPasswordId = useId()
+  const securityCodeId = useId()
   const newPasswordId = useId()
+  const confirmPasswordId = useId()
 
   useEffect(() => {
     let active = true
@@ -526,8 +536,19 @@ export function AccountPage() {
   }, [refreshCurrentUser])
 
   useEffect(() => {
-    if (requestedSection === 'invite') selectSection('invite')
+    const section = accountSection(requestedSection)
+    setActiveSection(section)
+    dispatchProfile({ type: 'sectionChanged' })
+    dispatchSecurity({ type: 'sectionChanged' })
   }, [requestedSection])
+
+  useEffect(() => {
+    const cooldownUntil = security.cooldownUntil
+    const remaining = cooldownUntil === null ? 0 : cooldownUntil - Date.now()
+    if (remaining <= 0) return
+    const timer = window.setTimeout(() => setSecurityNow(Date.now()), Math.min(1_000, remaining))
+    return () => window.clearTimeout(timer)
+  }, [security.cooldownUntil, securityNow])
 
   async function saveNickname(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -551,22 +572,44 @@ export function AccountPage() {
     }
   }
 
+  async function sendSecurityCode() {
+    const cooldownSeconds = securityCooldownSeconds()
+    if (security.isSendingCode || security.isChanging || cooldownSeconds > 0 || !currentUser) return
+
+    dispatchSecurity({ type: 'sendStarted' })
+    try {
+      await sendPasswordChangeCode()
+      const sentAt = Date.now()
+      setSecurityNow(sentAt)
+      dispatchSecurity({
+        type: 'sendSucceeded',
+        cooldownUntil: sentAt + SECURITY_CODE_COOLDOWN_MS,
+      })
+    } catch (error) {
+      dispatchSecurity({ type: 'sendFailed', error: errorMessage(error) })
+    }
+  }
+
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (security.isChanging) return
-    if (!security.oldPassword) {
-      dispatchSecurity({ type: 'validationFailed', error: '请输入当前密码' })
+    if (security.isChanging || !currentUser) return
+    if (!/^\d{6}$/.test(security.code)) {
+      dispatchSecurity({ type: 'validationFailed', error: '请输入 6 位邮箱验证码' })
       return
     }
     if (security.newPassword.length < 8 || security.newPassword.length > 128) {
       dispatchSecurity({ type: 'validationFailed', error: '新密码需为 8–128 位' })
       return
     }
+    if (security.newPassword !== security.confirmPassword) {
+      dispatchSecurity({ type: 'validationFailed', error: '两次输入的新密码不一致' })
+      return
+    }
 
     dispatchSecurity({ type: 'changeStarted' })
     try {
-      await changeSessionPassword({
-        oldPassword: security.oldPassword,
+      await changePasswordWithCode({
+        code: security.code,
         newPassword: security.newPassword,
       })
     } catch (error) {
@@ -578,16 +621,28 @@ export function AccountPage() {
     void logout().catch(() => undefined)
   }
 
-  function selectSection(section: 'profile' | 'security' | 'quota' | 'invite') {
+  function securityCooldownSeconds(): number {
+    return security.cooldownUntil === null
+      ? 0
+      : Math.max(0, Math.ceil((security.cooldownUntil - securityNow) / 1_000))
+  }
+
+  function selectSection(section: AccountSection) {
     setActiveSection(section)
     dispatchProfile({ type: 'sectionChanged' })
     dispatchSecurity({ type: 'sectionChanged' })
+    const next = new URLSearchParams(searchParams)
+    if (section === 'profile') next.delete('section')
+    else next.set('section', section)
+    setSearchParams(next, { replace: true })
   }
 
   if (!currentUser) return null
 
+  const hasPassword = currentUser.hasPassword
   const displayName = currentUser.nickname || currentUser.email.split('@')[0]
   const initial = Array.from(displayName)[0]?.toUpperCase() ?? 'W'
+  const cooldownSeconds = securityCooldownSeconds()
 
   return (
     <div data-account-page className="min-h-[100dvh] bg-app-canvas text-app-ink">
@@ -638,7 +693,7 @@ export function AccountPage() {
               {(
                 [
                   ['profile', '个人资料'],
-                  ['security', '登录安全'],
+                  ['security', '修改密码'],
                   ['quota', '积分账户'],
                   ['invite', '邀请奖励'],
                 ] as const
@@ -768,42 +823,71 @@ export function AccountPage() {
               <div>
                 <header>
                   <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">
-                    登录安全
+                    修改密码
                   </h2>
                   <p className="mt-1.5 text-sm leading-6 text-app-muted">
-                    修改密码后，当前会话会退出。
+                    {hasPassword
+                      ? '验证当前账号邮箱后设置新密码。修改成功后，当前会话会退出。'
+                      : '验证当前账号邮箱后设置密码。设置成功后，当前会话会退出，之后可使用密码登录。'}
                   </p>
                 </header>
 
                 <form className="mt-5 grid max-w-xl gap-4" onSubmit={changePassword} noValidate>
+                  <div className="grid gap-1.5">
+                    <span className="text-sm font-medium text-app-ink-soft">验证邮箱</span>
+                    <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-app-line bg-app-surface-muted px-3">
+                      <span className="min-w-0 truncate text-sm text-app-ink-soft">
+                        {currentUser.email}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void sendSecurityCode()}
+                        disabled={
+                          security.isSendingCode || security.isChanging || cooldownSeconds > 0
+                        }
+                        aria-label={
+                          cooldownSeconds > 0 ? `${cooldownSeconds}s 后重发` : '发送验证码'
+                        }
+                        className="shrink-0 rounded-md px-2 py-1 text-sm font-medium text-app-accent transition-colors hover:bg-app-accent-muted disabled:cursor-not-allowed disabled:text-app-faint"
+                      >
+                        {security.isSendingCode
+                          ? '正在发送…'
+                          : cooldownSeconds > 0
+                            ? `${cooldownSeconds}s 后重发`
+                            : '发送验证码'}
+                      </button>
+                    </div>
+                  </div>
                   <label
-                    htmlFor={oldPasswordId}
+                    htmlFor={securityCodeId}
                     className="grid gap-1.5 text-sm font-medium text-app-ink-soft"
                   >
-                    当前密码
+                    邮箱验证码
                     <input
-                      id={oldPasswordId}
-                      type="password"
-                      autoComplete="current-password"
-                      value={security.oldPassword}
-                      disabled={security.isChanging}
+                      id={securityCodeId}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={security.code}
+                      disabled={security.isChanging || security.isSendingCode}
                       onChange={(event) =>
                         dispatchSecurity({
-                          type: 'oldPasswordChanged',
-                          password: event.target.value,
+                          type: 'codeChanged',
+                          code: event.target.value.replace(/\D/g, '').slice(0, 6),
                         })
                       }
                       className="account-field"
                     />
                   </label>
                   <div className="grid gap-1.5 text-sm font-medium text-app-ink-soft">
-                    <label htmlFor={newPasswordId}>新密码</label>
+                    <label htmlFor={newPasswordId}>{hasPassword ? '新密码' : '密码'}</label>
                     <input
                       id={newPasswordId}
                       type="password"
                       autoComplete="new-password"
                       value={security.newPassword}
-                      disabled={security.isChanging}
+                      disabled={security.isChanging || security.isSendingCode}
                       onChange={(event) =>
                         dispatchSecurity({
                           type: 'newPasswordChanged',
@@ -820,6 +904,26 @@ export function AccountPage() {
                       8–128 位
                     </span>
                   </div>
+                  <label
+                    htmlFor={confirmPasswordId}
+                    className="grid gap-1.5 text-sm font-medium text-app-ink-soft"
+                  >
+                    {hasPassword ? '确认新密码' : '确认密码'}
+                    <input
+                      id={confirmPasswordId}
+                      type="password"
+                      autoComplete="new-password"
+                      value={security.confirmPassword}
+                      disabled={security.isChanging || security.isSendingCode}
+                      onChange={(event) =>
+                        dispatchSecurity({
+                          type: 'confirmPasswordChanged',
+                          password: event.target.value,
+                        })
+                      }
+                      className="account-field"
+                    />
+                  </label>
                   {security.error && (
                     <p
                       role="alert"
@@ -828,12 +932,26 @@ export function AccountPage() {
                       {security.error}
                     </p>
                   )}
+                  {security.success && (
+                    <p
+                      role="status"
+                      className="rounded-lg bg-app-accent-muted px-3 py-2.5 text-sm text-app-accent"
+                    >
+                      {security.success}
+                    </p>
+                  )}
                   <button
                     type="submit"
-                    disabled={security.isChanging}
+                    disabled={security.isChanging || security.isSendingCode}
                     className="account-primary-button justify-self-start"
                   >
-                    {security.isChanging ? '正在修改…' : '修改密码'}
+                    {security.isChanging
+                      ? hasPassword
+                        ? '正在修改…'
+                        : '正在设置…'
+                      : hasPassword
+                        ? '验证并修改密码'
+                        : '验证并设置密码'}
                   </button>
                 </form>
               </div>

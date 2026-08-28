@@ -4,7 +4,14 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -39,7 +46,9 @@ def _legacy_style_or_none(value: object) -> ArtStyle | str | None:
     try:
         return ArtStyle(value.strip())
     except ValueError:
-        return ArtStyle.PIXEL if ArtStyle.from_stored(value) is ArtStyle.PIXEL else value
+        return (
+            ArtStyle.PIXEL if ArtStyle.from_stored(value) is ArtStyle.PIXEL else value
+        )
 
 
 def _stored_style(style: ArtStyle | str | None) -> str | None:
@@ -53,16 +62,20 @@ def _stored_style(style: ArtStyle | str | None) -> str | None:
 
 
 class ProjectCreate(BaseModel):
-    """创建项目请求。"""
+    """创建项目请求。
+
+    ``character_perspective`` 已退役(#664):旧客户端多传该字段会被忽略,
+    方向规格只认 ``directional_movement``。
+    """
 
     workflow_id: int | None = None
     project_name: str | None = Field(default=None, min_length=1, max_length=20)
     name_context: str | None = None
-    character_perspective: int = Field(ge=1, le=3)
-    directional_movement: int = Field(ge=1, le=3)
+    directional_movement: int = Field(ge=1, le=3, description="1=单向 2=四向 3=八向")
     sprite_width: int = Field(ge=32, le=2048)
     sprite_height: int = Field(ge=32, le=2048)
     game_style: ArtStyle | str = ArtStyle.UNSPECIFIED
+    auto_pixelate: bool = True
     sprite_sample_url: str | None = None
 
     @field_validator("game_style", mode="before")
@@ -77,34 +90,47 @@ class ProjectPatch(BaseModel):
 
     project_name: str | None = Field(default=None, min_length=1, max_length=20)
     game_style: ArtStyle | str | None = None
+    auto_pixelate: bool | None = None
 
-    _accept_legacy = field_validator("game_style", mode="before")(
-        _legacy_style_or_none
-    )
+    _accept_legacy = field_validator("game_style", mode="before")(_legacy_style_or_none)
 
     @model_validator(mode="after")
     def _at_least_one(self) -> "ProjectPatch":
-        if self.project_name is None and self.game_style is None:
+        if (
+            self.project_name is None
+            and self.game_style is None
+            and self.auto_pixelate is None
+        ):
             raise ValueError("至少要改一个字段")
         return self
 
 
 class ProjectOut(BaseModel):
-    """项目响应。"""
+    """项目响应。
+
+    ``character_perspective`` 不再落库,由 ``directional_movement`` 派生,
+    让尚未对齐的前端读列表/详情时不至于映射失败。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     workflow_id: int | None
     project_name: str
-    character_perspective: int
     directional_movement: int
     sprite_width: int
     sprite_height: int
     game_style: ArtStyle | str
+    auto_pixelate: bool
     sprite_sample_url: str | None
     create_at: datetime
     update_at: datetime
+
+    @computed_field
+    @property
+    def character_perspective(self) -> int:
+        """与朝向 1:1:单向→横版、四向→俯视、八向→2.5D。"""
+        return self.directional_movement
 
     @field_validator("game_style", mode="before")
     @classmethod
@@ -121,13 +147,45 @@ class ProjectOut(BaseModel):
         try:
             return ArtStyle(text)
         except ValueError:
-            return ArtStyle.PIXEL if ArtStyle.from_stored(text) is ArtStyle.PIXEL else text
+            return (
+                ArtStyle.PIXEL if ArtStyle.from_stored(text) is ArtStyle.PIXEL else text
+            )
 
 
 class ProjectListOut(ProjectOut):
     """项目列表项；预览是读取投影，不写回 Project。"""
 
     preview_url: str | None
+
+
+#: 项目名唯一约束的名字。判别 ``IntegrityError`` 到底是不是重名,靠它而不是靠
+#: "反正这一段只可能重名"。
+_NAME_UNIQUE = "uq_windup_project_user_name"
+
+
+def _is_duplicate_name(exc: IntegrityError) -> bool:
+    """这个完整性错误是不是**项目重名**。
+
+    不是就返回 False,让它原样抛出去 —— 原先这两处一律当重名,于是**任何**约束违约
+    都被伪装成「项目名称已存在」。实测的形态(#676 评审):某一列是 ``NOT NULL`` 且无
+    默认值,INSERT 不点名它就违约,用户看到的是「项目名称已存在」而那个名字是全新的,
+    日志里刷 100 条「创建并发重名」,真实原因不在任何一条日志里 ——
+    **比静默更糟:它给出一个自信且错误的诊断。**
+
+    判别取约束名 + 驱动的 SQLSTATE。取不到 ``orig`` 时保守当成重名:那是原先的行为,
+    在判别不了的场合不改变既有语义。
+    """
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return True
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate is not None:
+        # 23505 = unique_violation。非唯一约束(23502 not_null / 23503 foreign_key /
+        # 23514 check)一律不是重名。
+        return str(sqlstate) == "23505"
+    # 没有 SQLSTATE 的驱动(如 SQLite)退回看文本里有没有那个约束名。
+    text = f"{orig}".lower()
+    return _NAME_UNIQUE in text or ("unique" in text and "project_name" in text)
 
 
 @router.post("", response_model=Response[ProjectOut])
@@ -138,7 +196,9 @@ def create_project(
 ) -> Response[ProjectOut]:
     user_id = request.state.current_user.id
     automatic_name = not (body.project_name or "").strip()
-    base_name = resolve_project_name(body.project_name, body.name_context, service._namer)
+    base_name = resolve_project_name(
+        body.project_name, body.name_context, service._namer
+    )
     fields = body.model_dump(exclude={"project_name", "name_context"})
     fields["game_style"] = _stored_style(body.game_style)
 
@@ -159,14 +219,25 @@ def create_project(
             project = service.create_project(
                 session, user_id=user_id, project_name=project_name, **fields
             )
-            return Response.success(ProjectOut.model_validate(project), message="创建成功")
-        except IntegrityError:
+            return Response.success(
+                ProjectOut.model_validate(project), message="创建成功"
+            )
+        except IntegrityError as exc:
+            session.rollback()
+            if not _is_duplicate_name(exc):
+                # 不是重名就别冒充重名。原样抛出去,让它以 500 + 真实堆栈出现 ——
+                # 一个查得到原因的 500,好过一个查不到原因的 400。
+                logger.exception(
+                    "[WINDUP] 创建项目完整性错误(非重名) | user_id=%s project_name=%s",
+                    user_id,
+                    project_name,
+                )
+                raise
             logger.warning(
                 "[WINDUP] 创建并发重名 | user_id=%s project_name=%s",
                 user_id,
                 project_name,
             )
-            session.rollback()
             if not automatic_name:
                 break
     raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
@@ -238,9 +309,15 @@ def update_project(
             game_style=(
                 UNSET if body.game_style is None else _stored_style(body.game_style)
             ),
+            auto_pixelate=(UNSET if body.auto_pixelate is None else body.auto_pixelate),
         )
-    except IntegrityError:
+    except IntegrityError as exc:
         session.rollback()
+        if not _is_duplicate_name(exc):
+            logger.exception(
+                "[WINDUP] 改项目完整性错误(非重名) | project_id=%s", project_id,
+            )
+            raise
         raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST) from None
     return Response.success(ProjectOut.model_validate(project), message="修改成功")
 

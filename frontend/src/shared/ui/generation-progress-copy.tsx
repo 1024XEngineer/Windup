@@ -5,6 +5,7 @@ import './generation-progress-copy.css'
 
 export type GenerationProgressKind =
   | 'character-template'
+  | 'character-view-sheet'
   | 'action-first-frame'
   | 'action-full-frame'
   | 'pixel-perfect'
@@ -18,6 +19,14 @@ const GENERATION_PROGRESS_MESSAGES: Record<GenerationProgressKind, readonly Kine
       { lines: ['添上表情'] },
       { lines: ['处理一下光影'] },
       { lines: ['补齐画面细节'] },
+    ],
+    'character-view-sheet': [
+      { lines: ['按罗盘生成朝向'] },
+      { lines: ['补齐角色侧视'] },
+      { lines: ['校准角色背面'] },
+      { lines: ['保持各方向身份一致'] },
+      { lines: ['整理镜像方向'] },
+      { lines: ['拼成立绘方向集'] },
     ],
     'action-first-frame': [
       { lines: ['摆好动作姿态'] },

@@ -1,3 +1,5 @@
+import { applyPalette, GIFEncoder, quantize } from 'gifenc'
+
 import {
   EXPORT_PACKAGE_JSON_SCHEMA_TEXT,
   EXPORT_PACKAGE_SCHEMA_VERSION,
@@ -39,6 +41,7 @@ export interface PlannedSequence {
   exportName: string
   framesFolder: string
   atlasFile: string
+  previewGifFile: string
   columns: number
   rows: number
   frames: readonly PlannedFrame[]
@@ -139,6 +142,7 @@ export function createAssetExportPlan(model: ExportPackageModel): readonly Plann
           exportName,
           framesFolder: `frames/${exportName}`,
           atlasFile: `atlas/${exportName}.png`,
+          previewGifFile: `preview/${exportName}.gif`,
           columns,
           rows: Math.ceil(sequence.frames.length / columns),
           frames: sequence.frames.map((currentFrame) => {
@@ -263,16 +267,19 @@ async function loadSequence(
   const settled = await Promise.allSettled(
     item.frames.map(async (frame) => {
       const loaded = await loadFrame(frame, runtime, cache)
+      const resolved = item.sequence.mirrorX
+        ? await mirrorLoadedFrame(loaded, model, runtime)
+        : loaded
       if (
-        loaded.decoded.width !== model.canvas.width ||
-        loaded.decoded.height !== model.canvas.height
+        resolved.decoded.width !== model.canvas.width ||
+        resolved.decoded.height !== model.canvas.height
       ) {
-        loaded.decoded.close()
+        resolved.decoded.close()
         throw new Error(
           `${frame.relativeFile}: 画布应为 ${model.canvas.width}x${model.canvas.height}，实际为 ${loaded.decoded.width}x${loaded.decoded.height}`,
         )
       }
-      return loaded
+      return resolved
     }),
   )
 
@@ -286,6 +293,27 @@ async function loadSequence(
   }
 
   return { item, frames: fulfilled }
+}
+
+async function mirrorLoadedFrame(
+  loaded: LoadedFrame,
+  model: ExportPackageModel,
+  runtime: AssetExportRuntime,
+): Promise<LoadedFrame> {
+  const canvas = runtime.createCanvas(model.canvas.width, model.canvas.height)
+  const context = context2d(canvas, loaded.relativeFile)
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  context.save()
+  context.translate(canvas.width, 0)
+  context.scale(-1, 1)
+  context.drawImage(loaded.decoded.source, 0, 0)
+  context.restore()
+  const data = await bytes(await canvasPng(canvas))
+  loaded.decoded.close()
+  const decoded = await runtime.decodeFrame(
+    new Blob([data.buffer as ArrayBuffer], { type: 'image/png' }),
+  )
+  return { ...loaded, data, decoded }
 }
 
 async function loadStaticAssets(
@@ -360,6 +388,40 @@ async function renderAtlas(
   return canvasPng(canvas)
 }
 
+function renderGif(
+  loaded: LoadedSequence,
+  model: ExportPackageModel,
+  runtime: AssetExportRuntime,
+): Uint8Array {
+  try {
+    const canvas = runtime.createCanvas(model.canvas.width, model.canvas.height)
+    const context = context2d(canvas, loaded.item.previewGifFile)
+    const gif = GIFEncoder()
+
+    for (const frame of loaded.frames) {
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(frame.decoded.source, 0, 0)
+      const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data
+      const palette = quantize(rgba, 256, { format: 'rgba4444', oneBitAlpha: true })
+      const indexed = applyPalette(rgba, palette, 'rgba4444')
+      const transparentIndex = palette.findIndex((color) => color[3] === 0)
+      gif.writeFrame(indexed, canvas.width, canvas.height, {
+        palette,
+        delay: frame.frame.durationMs,
+        repeat: loaded.item.sequence.loop ? 0 : -1,
+        transparent: transparentIndex >= 0,
+        transparentIndex,
+      })
+    }
+
+    gif.finish()
+    return gif.bytes()
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : '未知错误'
+    throw new Error(`${loaded.item.previewGifFile}: GIF 编码失败（${reason}）`)
+  }
+}
+
 function createMetadata(
   model: ExportPackageModel,
   plan: readonly PlannedSequence[],
@@ -390,6 +452,7 @@ function createMetadata(
       frames: item.frames.map((frame) => ({ index: frame.index, file: frame.filename })),
       anchor: { ...item.sequence.anchor },
       foot_y: item.sequence.footY,
+      preview_gif: item.previewGifFile,
       atlas: {
         file: item.atlasFile,
         cols: item.columns,
@@ -419,6 +482,7 @@ function createReadme(model: ExportPackageModel): string {
 - \`meta.json\`: 动作、帧率、循环、画布、锚点、脚底线、图集与生成记录。
 - \`frames/<action>/\`: 连续编号的透明 PNG 原始帧。
 - \`atlas/<action>.png\`: 按 \`meta.json\` 中 cols、rows 和 cell 切分的图集。
+- \`preview/<action>.gif\`: 按逐帧时长生成的 GIF 快速预览；PNG 原始帧仍是无损源。
 - \`schema.json\`: 校验 \`meta.json\` 的 JSON Schema。
 - \`targets/<target>/\`: 可选引擎适配器产生的原生文件。
 
@@ -570,6 +634,10 @@ export async function exportGameAssets(
       entries.push({
         name: `${root}/${current.item.atlasFile}`,
         data: await bytes(await renderAtlas(current, model, runtime)),
+      })
+      entries.push({
+        name: `${root}/${current.item.previewGifFile}`,
+        data: renderGif(current, model, runtime),
       })
     } finally {
       current.frames.forEach((frame) => frame.decoded.close())

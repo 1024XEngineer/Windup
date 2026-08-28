@@ -33,13 +33,44 @@ class AIProviderSettings(BaseSettings):
     # 运行期 —— 字段塞错不会立刻报错,任务照常 queued,直到生成阶段才 failed,
     # 而费用可能已经产生(2026-07-29 实测)。
     chat_model: str = "gpt-4o-mini"
-    video_model: str = "kling-v2-5-turbo"
+    # 2026-08-27 起默认 kling v3 turbo:同一角色同一提示词的对照里它明显更好。
+    # 交付率也支持这个方向 —— 按首选型号统计线上动作任务的最终状态:
+    # agnes-video-2.5-flash 15 完成 / 6 失败(71%),kling-v2-5-turbo 56 完成 / 1 失败(95%)。
+    # 口径注意:``windup_ai_gateway_attempt`` 只记 ``submit`` 这一相,提交成功 ≠ 出片
+    # (agnes 21 次提交全部 200,但其中 6 个任务最终 failed),所以交付率必须回到任务状态看。
+    # **部署侧的 AI_VIDEO_MODEL 会覆盖这里**,改默认值不等于线上生效,还要动 .env。
+    video_model: str = "kling-v3-turbo-std"
     image_model: str = "gpt-image-2"
     # 判官是**看图的聊天模型**,不是图像生成模型:它要读一张图然后回一段 JSON,而
     # ``image_model`` 那个型号只会回图;共用一个字段的话,换判官会连带把出图换掉。
     # 本默认值未在本仓实测过 —— 网关目录里没有它时,``_post`` 的 400/404 分支会指到
     # ``GET /models`` 去核对。
     judge_model: str = "gemini-2.5-flash"
+
+    # veo 走 FAL 队列面,与 kling 的 OpenAI 面是两套请求形状与两条计费档。默认关的理由
+    # 不是"没实现",而是**开着就会被选中**:它一旦进链,兜底那一跳就可能落到它身上,
+    # 而它最贵的一档(8s + 有声)是最便宜一档的 4 倍。关着时它不进链,
+    # ``_resolve_video_model`` 也就选不到它 —— 对客户不可见,出事随时能关回去。
+    # veo3.1 只对**逐个列出的用户**开放,不是部署级开关。它按秒计费且比 kling 贵,
+    # 用途是组内做高质量素材,不面向客户。空值 = 没有任何人可用(默认)。
+    # 逗号分隔的用户 id,如 "1,7,12"。
+    video_veo_user_ids: str = ""
+
+    # 不受 3D 资产额度限制的用户。用途与 ``video_veo_user_ids`` 一样是**组内做素材**,
+    # 但**单独一个字段** —— 两件事的开关合并的话,给某人开 veo 会连带解掉他的 3D 额度,
+    # 而那两笔钱的量级完全不同(veo 按秒计费,3D 是每资产 30 积分且可无限累积)。
+    # 空值 = 所有人都受额度限制(默认)。逗号分隔的用户 id,如 "1,2,3"。
+    render3d_unlimited_user_ids: str = ""
+
+    # ── 图生 3D 的三个建模参数 ────────────────────────────────────────────
+    # 接出来是因为原先它们只有构造默认值,部署上改不动 —— 而其中 face_count 直接决定
+    # 用户要下多大的模型:实测线上产物 45 万顶点、FBX 20.7MB,而出帧最终只渲成
+    # 1536x2560 的平面精灵,面数用不上。降不降、降到多少要靠实测,前提是得能改。
+    #
+    # 空值 = 沿用 provider 的构造默认(Normal / 150000 / 关),行为与接出来之前一致。
+    render3d_generate_type: str = ""      # Normal 20 / Geometry 15 / LowPoly 25 / Sketch 25 积分
+    render3d_face_count: int = 0          # 0 = 不覆盖
+    render3d_enable_pbr: bool = False     # 开启 +10 积分。出帧走平面着色,PBR 材质用不上
 
     chat_fallbacks: str = ""
     image_fallbacks: str = "gemini-3.1-flash-image-preview"

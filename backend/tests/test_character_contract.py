@@ -70,8 +70,8 @@ def test_action_spec_restricted_fields_reject_typos(field, bad, good, member):
     assert getattr(ActionSpec(action=ActionType.WALK, **{field: good}), field) is member
 
 
-def test_character_view_rejects_typos_and_matches_perspective_mapping():
-    """view 固定映射 perspective：1 side / 2 top-down / 3 isometric。
+def test_character_view_rejects_typos_and_matches_movement_mapping():
+    """view 固定映射朝向规格：1 side / 2 top-down / 3 isometric。
 
     字符串必须逐字一致，免得将来做 int↔str 映射时出现
     topdown / top_down / top-down 三种写法。
@@ -219,8 +219,15 @@ def test_prompt_builders_expose_facing_only(build):
 
     attack 多一个 ``archetype``：它选的是运动拓扑(身体怎么发力)、取值是枚举、且真有写入方
     (``ActionSpec.archetype`` → ``_build_prompt``)，与"没人传的装备参数"不是一类。
+
+    ``detail`` 同理(#838)：写入方是 ``ActionSpec.detail`` → ``_build_prompt``，再往上是
+    入口的 ``custom_prompt``——前端每次都发。它不是"没人传的参数"，恰恰相反：它补的是
+    原先**发了却没人读**的那一半。真正保证它没退化成死参数的是行为测试
+    ``test_action_detail_reaches_prompt.py``（回滚实现即变红），不是这里的签名断言。
     """
-    allowed = ["facing", "archetype"] if build is build_attack_prompt else ["facing"]
+    allowed = ["facing", "archetype", "detail"] if build is build_attack_prompt else [
+        "facing", "detail"
+    ]
     assert list(inspect.signature(build).parameters) == allowed
 
 

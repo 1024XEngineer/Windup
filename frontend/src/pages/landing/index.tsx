@@ -3,11 +3,17 @@ import type { CSSProperties } from 'react'
 import { Link } from 'react-router'
 
 import characterJourney from '@/assets/landing/illustrations/character-journey.webp'
+import characterViewFront from '@/assets/landing/characters/four-view/front.png'
+import characterViewBack from '@/assets/landing/characters/four-view/back.png'
+import characterViewLeft from '@/assets/landing/characters/four-view/left.png'
+import characterViewRight from '@/assets/landing/characters/four-view/right.png'
 import gongbiBirdLeft from '@/assets/landing/illustrations/gongbi-tit-flight-up.webp'
 import gongbiBirdRight from '@/assets/landing/illustrations/gongbi-tit-flight-down.webp'
 import { useAuthSession } from '@/features/auth-session'
 import { usePrefersReducedMotion } from '@/shared/hooks'
 import { CapabilitiesRail } from './capabilities-rail'
+import { WorkflowDemoVideo, WorkflowEditorProductionVideo } from './workflow-demo-video'
+import { HeroDitherBackground } from './hero-dither-background'
 import { MarketingHeader } from './marketing-header'
 import './landing-motion.css'
 
@@ -63,20 +69,6 @@ const styleShowcaseItems = [
     placeholder: '此处将展示项目自定义风格的生成结果。',
     title: '项目风格',
   },
-] as const
-
-const pipelineStages = [
-  ['01', '角色约束', '母版与项目风格'],
-  ['02', '动作意图', '姿态与节奏目标'],
-  ['03', '首帧确认', '先判断，再展开'],
-  ['04', '完整动画', '按策略生成'],
-  ['05', '审核入库', '留下可继续的资产'],
-] as const
-
-const pipelineTradeoffs = [
-  ['早期探索', '确认方向可读', '优先缩短等待', '控制投入'],
-  ['关键动作', '确认角色一致', '保持制作节奏', '按需投入'],
-  ['交付之前', '完成逐帧审核', '为质量让位', '集中投入'],
 ] as const
 
 const primaryCta =
@@ -156,7 +148,41 @@ function WorkflowCanvasScene() {
   )
 }
 
-function CapabilityStory() {
+export function StaticCapabilityStory() {
+  return (
+    <div className="relative isolate min-h-[46rem] overflow-hidden bg-paper-sunken px-4 py-20 sm:min-h-[50rem] sm:px-8 lg:min-h-[46rem] lg:px-12">
+      <header className="relative z-10 mx-auto flex min-h-[34rem] max-w-[64rem] flex-col items-center justify-center text-center">
+        <h2 className="text-display text-ink">角色不只被生成一次。</h2>
+        <p className="mt-5 font-serif text-subtitle text-ink">让角色留下来，而不是生成完就散场。</p>
+        <p className="mx-auto mt-3 max-w-[32rem] text-body text-ink-muted">
+          Windup
+          把角色、造型、动作和每一帧收进同一个项目资产库。今天确认的角色，明天仍然可以回来增加新的动作，创作不会在一次生成后重新归零。
+        </p>
+      </header>
+
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        <article
+          data-floating-artifact
+          className="absolute top-[19%] left-[1%] h-36 w-52 -rotate-4 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-4rem]"
+        />
+        <article
+          data-floating-artifact
+          className="absolute top-[16%] right-[6%] h-40 w-44 rotate-3 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]"
+        />
+        <article
+          data-floating-artifact
+          className="absolute bottom-[8%] left-[8%] h-28 w-72 rotate-2 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-3rem]"
+        />
+        <article
+          data-floating-artifact
+          className="absolute right-[7%] bottom-[12%] h-32 w-56 -rotate-3 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]"
+        />
+      </div>
+    </div>
+  )
+}
+
+export function CapabilityStory() {
   const storyRef = useRef<HTMLDivElement>(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const reduceMotion = usePrefersReducedMotion()
@@ -350,7 +376,7 @@ function CapabilityStory() {
   )
 }
 
-function StyleGenerationShowcase() {
+export function StyleGenerationShowcase() {
   const reduceMotion = usePrefersReducedMotion()
   const [activeStyle, setActiveStyle] = useState(0)
   const [isPaused, setIsPaused] = useState(false)
@@ -401,101 +427,6 @@ function StyleGenerationShowcase() {
           <p className="mt-8 border-l border-spark pl-5 font-serif text-subtitle text-ink">
             改变画面的语言，不丢掉角色的来路。
           </p>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function GenerationPipeline() {
-  return (
-    <section
-      id="pipeline"
-      className="border-b border-rule bg-[#f1f1ee] px-12 py-32 max-lg:px-4 max-lg:py-20"
-    >
-      <div className="mx-auto max-w-[82rem]">
-        <div className="grid grid-cols-[minmax(0,0.72fr)_minmax(30rem,1.28fr)] items-end gap-20 max-lg:grid-cols-1 max-lg:gap-10">
-          <div>
-            <p className="font-mono text-meta text-ink-faint">GENERATION STRATEGY</p>
-            <h2 className="mt-6 max-w-[8em] text-display text-ink">
-              不是每一步，都值得付出同样的代价。
-            </h2>
-          </div>
-          <div className="pb-2">
-            <p className="max-w-[37rem] text-lead text-ink-muted">
-              探索时先快一点，确认后再把资源交给质量。Windup
-              让角色约束、生成策略与审核结果留在同一条管线上，团队看得见每一次取舍发生在哪里。
-            </p>
-            <p className="mt-5 font-mono text-meta text-ink-faint">
-              下方为策略关系示意，不代表实测耗时或成本数据。
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-16 overflow-hidden rounded-xl bg-white max-lg:overflow-x-auto">
-          <ol className="grid grid-cols-5 max-lg:min-w-[48rem]" aria-label="角色生成管线">
-            {pipelineStages.map(([number, title, detail], index) => (
-              <li
-                key={title}
-                className={`min-h-[11.5rem] px-6 py-8 ${
-                  index === pipelineStages.length - 1 ? '' : 'border-r border-[#e5e5e1]'
-                }`}
-              >
-                <span className="font-mono text-[0.62rem] tracking-[0.1em] text-[#8a8d87]">
-                  {number}
-                </span>
-                <strong className="mt-[2.4rem] block text-[0.9rem] font-semibold text-[#242724]">
-                  {title}
-                </strong>
-                <small className="mt-[0.55rem] block text-[0.66rem] text-[#737771]">{detail}</small>
-              </li>
-            ))}
-          </ol>
-
-          <div
-            className="border-t border-[#dedfda] max-lg:min-w-[48rem]"
-            role="table"
-            aria-label="不同制作阶段的取舍"
-          >
-            <div role="row" className="grid grid-cols-[1.15fr_repeat(3,1fr)] bg-[#f7f7f5]">
-              {['制作阶段', '质量', '效率', '资源投入'].map((heading, index) => (
-                <span
-                  key={heading}
-                  role="columnheader"
-                  className={`min-h-[3.6rem] px-6 py-[1.15rem] font-mono text-[0.58rem] font-normal tracking-[0.08em] text-[#888b85] ${
-                    index === 3 ? '' : 'border-r border-[#ededeb]'
-                  }`}
-                >
-                  {heading}
-                </span>
-              ))}
-            </div>
-            {pipelineTradeoffs.map(([stage, quality, efficiency, cost]) => (
-              <div
-                key={stage}
-                role="row"
-                className="grid grid-cols-[1.15fr_repeat(3,1fr)] border-t border-[#ededeb]"
-              >
-                <strong
-                  role="cell"
-                  className="min-h-[3.6rem] border-r border-[#ededeb] px-6 py-[1.15rem] text-[0.7rem] font-semibold text-[#252825]"
-                >
-                  {stage}
-                </strong>
-                {[quality, efficiency, cost].map((value, index) => (
-                  <span
-                    key={value}
-                    role="cell"
-                    className={`min-h-[3.6rem] px-6 py-[1.15rem] text-[0.7rem] font-normal text-[#5f635d] ${
-                      index === 2 ? '' : 'border-r border-[#ededeb]'
-                    }`}
-                  >
-                    {value}
-                  </span>
-                ))}
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </section>
@@ -642,25 +573,19 @@ export function LandingPage() {
           >
             <div
               data-testid="workflow-editor-placeholder"
-              className="landing-hero-product-window__surface aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
-            />
+              className="landing-hero-product-window__surface relative aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
+            >
+              <HeroDitherBackground />
+            </div>
           </figure>
         </section>
 
         <CapabilitiesRail />
 
-        <section id="workflow" className="scroll-mt-20 border-b border-rule bg-paper-sunken">
-          <CapabilityStory />
-        </section>
-
-        <StyleGenerationShowcase />
-
-        <GenerationPipeline />
-
         <section className="border-b border-rule px-8 py-28 max-lg:px-4 max-lg:py-20 lg:px-12">
           <div className="mx-auto grid max-w-[82rem] gap-16 max-lg:gap-12 lg:grid-cols-[minmax(18rem,0.5fr)_minmax(0,1fr)] lg:items-center">
             <div>
-              <h2 className="max-w-[7.4em] text-title text-ink">同一份创作，两种进入方式。</h2>
+              <h2 className="max-w-[7.4em] text-title text-ink">一句话，到一个角色</h2>
               <dl className="mt-12 grid gap-8">
                 <div className="border-t border-rule pt-6">
                   <dt className="text-subtitle font-semibold text-ink">Quick Start</dt>
@@ -668,25 +593,81 @@ export function LandingPage() {
                     用自然语言描述角色和动作，系统建立标准流程，并在需要判断的地方停下来等你确认。
                   </dd>
                 </div>
-                <div className="border-t border-rule pt-6">
-                  <dt className="text-subtitle font-semibold text-ink">Workflow Editor</dt>
-                  <dd className="mt-3 max-w-[26em] text-body text-ink-muted">
-                    打开同一条
-                    WorkflowRun，看清角色母版、动作首帧、完整动画和审核状态，再继续新的动作。
-                  </dd>
-                </div>
               </dl>
             </div>
-
             <figure>
-              <div
-                data-testid="workflow-editor-placeholder"
-                className="aspect-[16/10] overflow-hidden rounded-xl border border-rule bg-paper-sunken"
-              />
+              <WorkflowDemoVideo />
               <figcaption className="mt-4 text-body text-ink-faint">
                 真实 WorkflowRun 会保留画布中的每一次确认结果。
               </figcaption>
             </figure>
+          </div>
+        </section>
+
+        <section className="border-b border-rule px-8 py-28 max-lg:px-4 max-lg:py-20 lg:px-12">
+          <div className="mx-auto grid max-w-[82rem] gap-16 max-lg:gap-12 lg:grid-cols-[minmax(18rem,0.5fr)_minmax(0,1fr)] lg:items-center">
+            <div>
+              <p className="font-mono text-meta text-ink-faint">WORKFLOW EDITOR</p>
+              <h2 className="mt-5 max-w-[8em] text-title text-ink">在工作流画布中管理生产。</h2>
+              <p className="mt-6 max-w-[26em] text-lead text-ink-muted">
+                从角色母版到动作审核，每个生产节点都在同一张画布上留下来。
+              </p>
+            </div>
+            <figure>
+              <WorkflowEditorProductionVideo />
+              <figcaption className="mt-4 text-body text-ink-faint">
+                真实 WorkflowRun 的生产与审核过程。
+              </figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section className="border-b border-rule bg-paper px-8 py-24 max-lg:px-4 max-lg:py-16 lg:px-12">
+          <div className="mx-auto grid max-w-[82rem] gap-12 lg:grid-cols-[minmax(18rem,0.7fr)_minmax(0,1.3fr)] lg:items-center">
+            <div>
+              <h2 className="max-w-[10em] text-title text-ink">
+                二向、四向、八向，都能保持同一个角色。
+              </h2>
+              <p className="mt-6 max-w-[26em] text-lead text-ink-muted">
+                角色思想一键生成，多方向视图保持真正的完美像素化。
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-6" aria-label="角色方向视图示例">
+              {[
+                ['正面', characterViewFront],
+                ['背面', characterViewBack],
+                ['左侧', characterViewLeft],
+                ['右侧', characterViewRight],
+              ].map(([label, src]) => (
+                <figure key={label} className="relative aspect-square">
+                  <img
+                    src={src}
+                    alt={`角色方向视图：${label}`}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-full w-full object-contain [image-rendering:pixelated]"
+                  />
+                  <figcaption className="absolute right-3 bottom-3 font-mono text-meta text-ink-faint">
+                    {label}
+                  </figcaption>
+                </figure>
+              ))}
+              <figure
+                className="relative col-span-2 h-48 overflow-hidden"
+                aria-label="完美像素画局部细节"
+              >
+                <img
+                  src={characterViewFront}
+                  alt="角色头部与披风的像素颗粒细节"
+                  loading="lazy"
+                  decoding="async"
+                  className="absolute top-[-14rem] left-1/2 w-[52rem] max-w-none -translate-x-1/2 [image-rendering:pixelated]"
+                />
+                <figcaption className="absolute right-0 bottom-0 font-mono text-meta text-ink-faint">
+                  PIXEL DETAIL · 原始像素放大
+                </figcaption>
+              </figure>
+            </div>
           </div>
         </section>
 

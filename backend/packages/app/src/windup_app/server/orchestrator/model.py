@@ -28,6 +28,7 @@ class GenerationType(StrEnum):
     CHARACTER_DIRECTION_SET = "character_direction_set"  # 一次生成项目所需全部母版方向
     CHARACTER_FOUR_VIEW = "character_four_view"  # 四向立绘 sheet
     CHARACTER_EIGHT_VIEW = "character_eight_view"  # 八向立绘 sheet
+    CHARACTER_FIRST_FRAME = "character_first_frame"  # 四向 / 八向动作首帧
     CHARACTER_ACTION = "character_action"  # 角色动作帧序列
 
 
@@ -152,6 +153,31 @@ class CharacterViewSheetInput:
 
 
 @dataclass
+class CharacterFirstFrameInput:
+    """四向 / 八向动作首帧:以该朝向立绘为参考,锁住朝向后换成动作起手姿态。"""
+
+    character_id: int
+    reference_image_url: str
+    prompt: str
+    direction: ActionDirection
+    action_type: ActionType
+    negative_prompt: str = ""
+    width: int = 1024
+    height: int = 1024
+    num_images: int | None = None
+
+    def __post_init__(self) -> None:
+        self.reference_image_url = (self.reference_image_url or "").strip()
+        if not self.reference_image_url:
+            raise ValueError("动作首帧必须提供该朝向已确认的立绘")
+        self.prompt = (self.prompt or "").strip()
+        if not self.prompt:
+            raise ValueError("动作首帧必须提供动作描述")
+        if self.num_images is None:
+            self.num_images = 3
+
+
+@dataclass
 class CharacterActionInput:
     """角色动作生成入参。"""
 
@@ -186,6 +212,10 @@ class CharacterActionInput:
     # 传 URL 而不是让编排层自己去查:与 reference_image_urls 同一口径 —— 取数在上层
     # 做完,"这次选了哪条路线"在入参上就可见,不是埋在某个分支里的隐式判断。
     model_3d_url: str | None = None
+    # 这个造型已经烘好的动作片段(动作名 → 绑骨产物 URL)。由 web 层从 character_data
+    # 读出来写进入参 —— 与 model_3d_url 同一个模式:这次按什么资产渲的,在任务入参上
+    # 就是可见的,排查时不用猜当时 DB 是什么状态。
+    rigged_motions: dict[str, str] = field(default_factory=dict)
     # 角色体型。``None`` 原样往下传,由编排层兜成双足 —— 本层替调用方填默认值的话,
     # "没给"与"明确给了 biped"从这里起就分不开了。判据见 prompt.adapter 的体型门禁。
     stance: CharacterStance | None = None
@@ -213,6 +243,16 @@ class CharacterImageOutput:
     # 出图当场量的主体数(``ai_engine.slicing.quality.subject_blobs`` 的逐张读数)。与动作
     # 结果那份 ``quality`` 同键同语义:只落库、不参与前端回填,本层不据此判成败。
     # ``None`` = **没量过**,不是"量了没问题"。
+    quality: dict | None = None
+
+
+@dataclass
+class CharacterFirstFrameOutput:
+    """四向 / 八向动作首帧结果。前端按方向选一张写入首帧节点。"""
+
+    type: str = "character_first_frame"
+    image_urls: list[str] = field(default_factory=list)
+    direction: ActionDirection = ActionDirection.EAST
     quality: dict | None = None
 
 
@@ -346,6 +386,12 @@ class CharacterActionOutput:
     # 交付帧的落位几何(画布尺寸、主体锚点、脚线像素)。``None`` = 引擎没给,
     # 不是"用默认值" —— 消费方要能区分这两者,才不会把缺省当成实测。
     geometry: dict | None = None
+    # 出帧台读到的骨架事实与根骨位移轨(#774)。与 ``geometry`` 同一个理由:
+    # 只写进任务结果 JSON 而不进这个出参模型的话,**落库再读回就没了** ——
+    # 查询接口与断线重连拿到的已完成任务缺这两样,而实时事件那条路有,
+    # 两条路给出不同的结果。上面那条 geometry 的注释记的就是同一个坑。
+    rig_facts: dict | None = None
+    root_motion: list | None = None
 
 
 # -- 任务记录 ------------------------------------------------------------
@@ -363,6 +409,7 @@ class GenerationTask:
     input_payload: dict | None = None
     result: (
         CharacterImageOutput
+        | CharacterFirstFrameOutput
         | CharacterDirectionSetOutput
         | CharacterViewSheetOutput
         | CharacterActionOutput

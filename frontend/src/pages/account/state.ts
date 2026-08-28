@@ -62,40 +62,70 @@ export function profileReducer(state: ProfileState, action: ProfileAction): Prof
 }
 
 export type SecurityState = {
-  oldPassword: string
+  code: string
   newPassword: string
+  confirmPassword: string
+  isSendingCode: boolean
   isChanging: boolean
+  cooldownUntil: number | null
   error: string | null
+  success: string | null
 }
 
 export type SecurityAction =
-  | { type: 'oldPasswordChanged'; password: string }
+  | { type: 'codeChanged'; code: string }
   | { type: 'newPasswordChanged'; password: string }
+  | { type: 'confirmPasswordChanged'; password: string }
+  | { type: 'sendStarted' }
+  | { type: 'sendSucceeded'; cooldownUntil: number }
+  | { type: 'sendFailed'; error: string }
   | { type: 'validationFailed'; error: string }
   | { type: 'changeStarted' }
   | { type: 'changeFailed'; error: string }
   | { type: 'sectionChanged' }
 
 export const initialSecurityState: SecurityState = {
-  oldPassword: '',
+  code: '',
   newPassword: '',
+  confirmPassword: '',
+  isSendingCode: false,
   isChanging: false,
+  cooldownUntil: null,
   error: null,
+  success: null,
 }
 
 export function securityReducer(state: SecurityState, action: SecurityAction): SecurityState {
   switch (action.type) {
-    case 'oldPasswordChanged':
-      return { ...state, oldPassword: action.password }
+    case 'codeChanged':
+      return { ...state, code: action.code }
     case 'newPasswordChanged':
       return { ...state, newPassword: action.password }
+    case 'confirmPasswordChanged':
+      return { ...state, confirmPassword: action.password }
+    case 'sendStarted':
+      return { ...state, isSendingCode: true, error: null, success: null }
+    case 'sendSucceeded':
+      return {
+        ...state,
+        isSendingCode: false,
+        cooldownUntil: action.cooldownUntil,
+        error: null,
+        success: '验证码已发送，请在 5 分钟内使用。',
+      }
+    case 'sendFailed':
+      return { ...state, isSendingCode: false, error: action.error, success: null }
     case 'validationFailed':
-      return { ...state, error: action.error }
+      return { ...state, error: action.error, success: null }
     case 'changeStarted':
-      return { ...state, isChanging: true, error: null }
+      return { ...state, isChanging: true, error: null, success: null }
     case 'changeFailed':
       return { ...state, isChanging: false, error: action.error }
     case 'sectionChanged':
-      return { ...initialSecurityState, isChanging: state.isChanging }
+      return {
+        ...initialSecurityState,
+        isChanging: state.isChanging,
+        cooldownUntil: state.cooldownUntil,
+      }
   }
 }

@@ -181,6 +181,21 @@ def test_every_action_prompt_carries_the_framing_clause():
     assert not missing, f"这些提示词没带构图约束: {missing}"
 
 
+def test_every_action_prompt_locks_reference_fidelity_and_camera():
+    """预设与自定义动作要共用同一份 i2v 保真约束,否则不同动作会各自重画角色。"""
+    required = (
+        "exact face", "hairstyle", "clothing", "accessories", "color palette",
+        "linework", "local details", "locked camera", "character scale",
+        "canvas occupancy",
+    )
+    missing = {
+        name: [clause for clause in required if clause not in prompt.lower()]
+        for name, prompt in _all_prompts().items()
+        if any(clause not in prompt.lower() for clause in required)
+    }
+    assert not missing, f"这些提示词缺少保真约束: {missing}"
+
+
 def test_the_framing_clause_is_appended_by_code_not_copied_into_the_markdown():
     """抄进每份 md 会各自漂移;md 正文里出现它就说明有人开始抄了。"""
     from windup_ai_engine.prompt._md import load_doc

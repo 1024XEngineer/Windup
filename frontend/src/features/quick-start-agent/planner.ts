@@ -244,6 +244,7 @@ function fallbackPlannerResult(
 export function quickStartPlannerInstructions(
   clarificationUsed: boolean,
   artStyle?: string,
+  addActionContext?: { characterPrompt: string },
 ): string {
   const clarificationRule = clarificationUsed
     ? '本草稿已经问过一次必要澄清，不得因为轮数强制生成，也不得再问第二个澄清问题；信息不足时用 reply 说明可继续补充，存在硬冲突时用 blocked。'
@@ -251,9 +252,14 @@ export function quickStartPlannerInstructions(
   const artStyleContext = artStyle
     ? `用户当前选择的画风是「${artStyle}」。这是宿主已经确定的生成约束；拟写提示词时不得使用与它冲突的画风描述，也不要修改或重新选择画风。`
     : ''
+  const addActionRule = addActionContext
+    ? `当前任务只为已有角色新增动作。已有角色的固定约束是：「${addActionContext.characterPrompt}」。不得修改、补写或重新提案角色身份；proposal 的 optimizedPrompt 必须原样返回这份固定约束，只在 actionPrompt 中整理用户要求的新增动作。`
+    : ''
   return `你是 Windup Quick Start 的轻量 Planner。你只理解当前草稿、回复用户，并在合适时给出角色母版提示词提案；你不执行生成，也不参与生成后的流程。
 
 ${artStyleContext}
+
+${addActionRule}
 
 每轮必须调用一次 ${QUICK_START_DECISION_TOOL}，并只返回一个决策：
 - reply：闲聊、回顾历史、评价、比较方案、解释或继续讨论。reply 不消耗澄清额度。
@@ -261,7 +267,9 @@ ${artStyleContext}
 - blocked：存在安全问题、明显自相矛盾或超出单角色母版能力，说明需要修改的内容。
 - proposal：已有足够角色设定，或用户明确要求整理最终提示词、直接生成时，给出可选择采用的完整提案。proposal 只是提案，不代表用户授权生成。
 
-当前能力面向一个角色及其可选动作。optimizedPrompt 只描述稳定的单角色母版：完整身体、清楚轮廓，保留身份、外观、服装、气质和美术风格。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。动作明确匹配待机、行走、攻击或跳跃时，分别返回 actionType: "idle"、"walk"、"attack" 或 "jump"，让生成复用已有优化管线；匹配不到时省略 actionType。只要动作会让角色整体发生空间位移，额外返回 locomotion: true；原地动作省略 locomotion。两项判断互相独立。
+当前能力面向一个角色及其可选动作。optimizedPrompt 只描述一个角色实例的稳定身份、完整身体、清楚轮廓、外观、服装、气质和美术风格。方向数量由宿主的方向控件单独传递；不得加入多视图、转面表、精灵表或宫格构图。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。动作明确匹配待机、行走、攻击或跳跃时，分别返回 actionType: "idle"、"walk"、"attack" 或 "jump"，让生成复用已有优化管线；匹配不到时省略 actionType。只要动作会让角色整体发生空间位移，额外返回 locomotion: true；原地动作省略 locomotion。两项判断互相独立。
+
+一次只生成一个动作。当用户要求两个及以上彼此独立的动作，或用“先、然后、再、最后”等阶段词串联多个动作时，必须用 blocked 明确说明门禁已拦截，并请用户选择并只保留其中一个动作；不得整理成 proposal。
 
 用户消息可能附带一张参考图片。你必须直接查看图片并与文字作为同一条输入理解：图片不包含清晰的单个角色、角色主体无法辨认或明显不适合作为角色生成参考时，用 blocked 说明原因；信息不足但可以补充时用 clarification。图片有效时，提案描述要保留图中可见的角色身份与外观，但图片仍会由生成管线独立作为原始参考，不能声称仅凭文字已经替代原图。
 
@@ -321,6 +329,7 @@ export function createAiSdkQuickStartPlanner({
     messages,
     clarificationUsed,
     artStyle,
+    addActionContext,
     workflow,
     signal,
   }): Promise<PlannerResult> => {
@@ -331,7 +340,7 @@ export function createAiSdkQuickStartPlanner({
       : { [QUICK_START_DECISION_TOOL]: quickStartDecisionTool }
     const instructions = workflow
       ? quickStartWorkflowInstructions(workflow)
-      : quickStartPlannerInstructions(clarificationUsed, artStyle)
+      : quickStartPlannerInstructions(clarificationUsed, artStyle, addActionContext)
     const history = messages.slice(-MAX_PLANNER_HISTORY_MESSAGES)
     const result = await generateText({
       model,

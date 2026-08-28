@@ -4,13 +4,19 @@ from .actions import build_attack_prompt, build_idle_prompt
 from .custom import MAX_ACTION_CHARS, build_custom_prompt
 from .jump import JUMP_PHASES, build_jump_prompt
 from .presets import ACTION_PRESETS, ActionPreset
-from .view_sheet import VIEW_SHEET_PROMPT_VERSION, build_view_sheet_prompt
+from .rig_master import RIG_MASTER_PROMPT_VERSION, build_rig_master_prompt
+from .view_sheet import (
+    VIEW_SHEET_PROMPT_VERSION,
+    build_oriented_first_frame_prompt,
+    build_view_sheet_prompt,
+    view_for_perspective,
+)
 from .walk import build_walk_prompt
 
 # 改动本包任何一个 build_*_prompt 的输出(包括 prompts/*.md 模板)都必须连带把这个
 # 常量加一:落库的 GeneratedAction.prompt_version 就靠它,分不清新旧模板的产出，
 # 改完提示词也没法与改前的成色对比。
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 __all__ = [
     "build_walk_prompt",
@@ -24,5 +30,9 @@ __all__ = [
     "ActionPreset",
     "PROMPT_VERSION",
     "VIEW_SHEET_PROMPT_VERSION",
+    "build_oriented_first_frame_prompt",
+    "build_rig_master_prompt",
+    "RIG_MASTER_PROMPT_VERSION",
     "build_view_sheet_prompt",
+    "view_for_perspective",
 ]

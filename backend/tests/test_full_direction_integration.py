@@ -74,7 +74,6 @@ def _create_eight_way_project(auth_client) -> dict:
         "/projects",
         json={
             "project_name": "八向集成项目",
-            "character_perspective": 1,
             "directional_movement": 3,
             "sprite_width": 64,
             "sprite_height": 64,

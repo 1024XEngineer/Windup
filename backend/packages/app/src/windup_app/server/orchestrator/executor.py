@@ -30,7 +30,13 @@ from windup_common.directions import direction_prompt
 from windup_common.enums import ArtStyle
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 from windup_framework.gateway import bind_call_context, fresh_gateway_request
-from windup_framework.gateway.registry import ModelRegistry
+from windup_framework.gateway.context import current_call_context
+from windup_framework.gateway.registry import (
+    USER_GATED_MODELS,
+    preferred_model_for,
+    ModelRegistry,
+    is_allowed_for_user,
+)
 from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
 
@@ -46,6 +52,14 @@ from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.orchestrator.i2v_poll import ActionAwaitingVideo
 from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_media, is_own_media
 from windup_app.server.orchestrator.client_bake import ActionAwaitingClientBake
+from windup_app.server.mq import i2v_admit
+from windup_app.server.orchestrator.signals import ActionAwaitingAdmit, ActionRateLimited
+from windup_framework.gateway.errors import RateLimitBackoff, UpstreamExhaustedError
+from windup_app.server.orchestrator.render3d_assets import (
+    AUTORIG_CREDITS,
+    ACTION_MOTIONS,
+    BUILD_MOTION,
+)
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
@@ -92,17 +106,21 @@ def _close_failed(session: Session, task_id: int, error_message: str) -> None:
         return
     task_repo.fail_task(session, task_id, error_message=error_message)
     _settle_credit(session, task_id, success=False)
+    try:
+        i2v_admit.release(task_id)
+    except Exception:
+        logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
 
 
 # ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
-# character_perspective 游戏视角:1=横版(侧视) 2=俯视 3=2.5D → 生成朝向/视角
-_PERSPECTIVE_FACING: dict[int, str] = {1: "side", 2: "front", 3: "front"}
-_PERSPECTIVE_VIEW: dict[int, str] = {
+# directional_movement 是唯一方向规格(#664):
+# 1=单向 → 横版侧视 / 1 向; 2=四向 → 俯视 / 4 向; 3=八向 → 2.5D / 8 向
+_MOVEMENT_FACING: dict[int, str] = {1: "side", 2: "front", 3: "front"}
+_MOVEMENT_VIEW: dict[int, str] = {
     1: "side view, horizontal side-scroller",
     2: "top-down view",
     3: "2.5D three-quarter view",
 }
-# directional_movement 移动方向:1=单向 2=四向 3=八向 → 需生成的方向数
 _MOVEMENT_DIRECTIONS: dict[int, int] = {1: 1, 2: 4, 3: 8}
 
 
@@ -110,9 +128,9 @@ _MOVEMENT_DIRECTIONS: dict[int, int] = {1: 1, 2: 4, 3: 8}
 class ProjectConstraints:
     """从 Project 取的全局生成约束,统一约束角色图/动作生成。"""
 
-    facing: str = "side"  # character_perspective → 朝向(须与母版一致 #35)
+    facing: str = "side"  # directional_movement → 朝向(须与母版一致 #35)
     view: str = "side view, horizontal side-scroller"
-    perspective: int = 1  # 1横版 2俯视 3 2.5D
+    perspective: int = 1  # 由朝向派生:1横版 2俯视 3 2.5D
     directions: int = 1  # directional_movement → 方向数(1/4/8)
     sprite_w: int = 256  # 输出/切帧尺寸(关键)
     sprite_h: int = 256
@@ -145,15 +163,16 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
     if p is None:
         return ProjectConstraints()
     art_style = ArtStyle.from_stored(p.game_style)
+    movement = p.directional_movement
     return ProjectConstraints(
-        facing=_PERSPECTIVE_FACING.get(p.character_perspective, "side"),
-        view=_PERSPECTIVE_VIEW.get(p.character_perspective, _PERSPECTIVE_VIEW[1]),
-        perspective=p.character_perspective,
-        directions=_MOVEMENT_DIRECTIONS.get(p.directional_movement, 1),
+        facing=_MOVEMENT_FACING.get(movement, "side"),
+        view=_MOVEMENT_VIEW.get(movement, _MOVEMENT_VIEW[1]),
+        perspective=movement if movement in _MOVEMENT_FACING else 1,
+        directions=_MOVEMENT_DIRECTIONS.get(movement, 1),
         sprite_w=p.sprite_width,
         sprite_h=p.sprite_height,
         style=ArtStyle.phrase_from_stored(p.game_style),
-        stylize="pixel" if art_style.wants_pixelation else "none",
+        stylize="pixel" if art_style.wants_pixelation and p.auto_pixelate else "none",
         sprite_sample_url=p.sprite_sample_url or "",
     )
 
@@ -227,18 +246,50 @@ class _TaskProgress:
         )
 
 
-def _resolve_video_model(name: str | None) -> str | None:
+def _resolve_video_model(name: str | None, user_id: int | None = None) -> str | None:
     """校验并返回视频模型名;``None`` 表示用部署默认值。
 
-    只允许是 CHARACTER_ACTION 链上的一员,含义是「这次从它开始试」。
-    非法取值在入口炸,不等到付费调用才失败。
+    两类型号分开判:链上的型号对所有人开放;``USER_GATED_MODELS`` 里的按用户白名单授权,
+    它们**不在链上**(链是兜底路径,让按用户授权的型号当兜底等于对所有人开放)。
+
+    这里的判定与 API 入口那道是**故意重复**的:任务可能被重排、重投或从别处再次进入,
+    只在 HTTP 边界拦一次,绕过它的路径就直接花钱。
     """
     if name is None:
-        return None
+        # **没指定时,白名单用户默认拿最好的那个。**
+        # 白名单本来只是"允许选",而前端从不发 video_model —— 于是被授权的人在产品里
+        # 点生成,走的仍是部署默认型号,白名单形同虚设。这几个账号存在的意义就是做高质量
+        # 素材,让他们再去某个下拉框里挑一次是多余的一步,而漏挑一次就白跑一单。
+        # 只对白名单生效:其他人这里仍返回 None,照旧走部署默认,行为一个字不变。
+        return preferred_model_for(user_id)
+    if name in USER_GATED_MODELS:
+        if not is_allowed_for_user(name, user_id):
+            raise ValueError(f"视频模型 {name!r} 未对当前用户开放")
+        return name
     chain = ModelRegistry.from_settings().chain(Scene.CHARACTER_ACTION)
     if name not in chain:
         raise ValueError(f"视频模型 {name!r} 不在本期开放列表内。可选:" + "；".join(chain))
     return name
+
+
+def _rig_facts_of(raw: dict | None):
+    """浏览器交回的骨架事实 dict → ai_engine 的 ``RigFacts``。
+
+    在函数内 import:本模块被 web 层间接牵到,而分层门禁禁止入口层直连 ai_engine;
+    顶层 import 会把整条依赖链拉进来。
+    """
+    if not raw:
+        return None
+    from windup_ai_engine.ports import RigFacts
+
+    return RigFacts(
+        bones=int(raw.get("bones") or 0),
+        root_bone=raw.get("root_bone"),
+        bone_names=tuple(raw.get("bone_names") or ()),
+        skinned_meshes=int(raw.get("skinned_meshes") or 0),
+        vertices=int(raw.get("vertices") or 0),
+        available_clips=dict(raw.get("available_clips") or {}),
+    )
 
 
 def _judged_action(input: CharacterActionInput) -> str:
@@ -327,20 +378,21 @@ class ActionTaskExecutor:
                 if task is None:
                     raise RuntimeError(f"任务 {task_id} 不存在")
                 constraints = (self._fetch_constraints or _load_constraints)(s, project_id)
-                return constraints, task.project_id
+                return constraints, task.project_id, task.user_id
 
-            cons, task_project_id = generation_io.using_session(
+            cons, task_project_id, task_user_id = generation_io.using_session(
                 session, self._make_session, _mark_running
             )
             reset = bind_call_context(
                 task_id=str(task_id),
-                start_from_model=_resolve_video_model(input.video_model),
+                start_from_model=_resolve_video_model(input.video_model, task_user_id),
             )
             result = self._produce_action(
                 input,
                 cons,
                 task_id=task_id,
                 project_id=task_project_id,
+                user_id=task_user_id,
             )
 
             def _complete(s: Session) -> None:
@@ -348,6 +400,8 @@ class ActionTaskExecutor:
                 _settle_credit(s, task_id, success=True)
 
             generation_io.using_session(session, self._make_session, _complete)
+        except ActionAwaitingAdmit:
+            logger.info("动作任务 %s 等待 i2v 名额或冷却,已挂延迟队列", task_id)
         except ActionAwaitingVideo:
             logger.info("动作任务 %s 已提交 i2v,等待延迟轮询", task_id)
         except ActionAwaitingClientBake:
@@ -362,6 +416,25 @@ class ActionTaskExecutor:
                 task_repo.fail_task(s, task_id, error_message=error_message)
 
             generation_io.using_session(session, self._make_session, _reject)
+            try:
+                i2v_admit.release(task_id)
+            except Exception:
+                logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
+        except UpstreamExhaustedError as exc:
+            i2v_admit.release(task_id)
+            if not exc.is_free_retryable:
+                raise
+            # 限流被拒:上游没建单、没扣配额。把任务放回 PENDING 让消费层稍后重投,
+            # 不判失败也不结算积分 —— 结算了就等于这次尝试真的花掉了什么。
+            logger.warning("动作任务 %s 撞上游限流,放回队列稍后重试", task_id)
+            if session is not None:
+                session.rollback()
+
+            def _requeue(s: Session) -> None:
+                task_repo.update_status(s, task_id, TaskStatus.PENDING)
+
+            generation_io.using_session(session, self._make_session, _requeue)
+            raise ActionRateLimited(str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
             if session is not None:
@@ -385,6 +458,7 @@ class ActionTaskExecutor:
         *,
         task_id: int,
         project_id: int | None = None,
+        user_id: int | None = None,
     ) -> dict:
         """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
@@ -433,6 +507,11 @@ class ActionTaskExecutor:
                 "cyclic": cyclic,
                 "ground_contact": grounded,
             }
+        elif (input.custom_prompt or "").strip():
+            # 写死的那几个动作也带着用户写的那句细节:前端把一句自由文本拆成
+            # action_type(选管线)+ custom_prompt(说这次具体要什么)两半发过来,
+            # 只读前一半就是把用户的输入静默丢了(#838)。
+            extra = {"detail": input.custom_prompt}
         action = ActionSpec(
             action=engine_action,
             poses=[""] * input.num_frames,
@@ -457,6 +536,27 @@ class ActionTaskExecutor:
             #
             # 选哪个 kling 不在这里传:run_action_task 已经 bind_call_context(start_from_model)。
             model_url = (input.model_3d_url or "").strip()
+            # 一份绑骨产物只带**一个**动作片段(绑骨接口一次只吃一个 MotionType),
+            # 一份绑骨产物只带**一个**动作片段(绑骨接口一次只吃一个 MotionType)。
+            # 判据取自**这个造型实际烘了什么**,不取全局常量:读常量的话,常量一改,
+            # 已经建好的资产就开始声称自己会另一个动作,而渲出来的仍是旧那段。
+            #
+            # 没烘过的动作在这里当场拒,**不能派给出帧台** —— 手上那个片段照样能渲满
+            # 32 张帧,于是跳跃任务收到的是一段走路,而帧数、时长、朝向、成色全部自洽,
+            # 没有任何一道会红。也不回落 i2v(见上:两条路线画风/成本/多朝向都不同)。
+            baked = dict(input.rigged_motions or {})
+            if model_url and not baked:
+                baked = {BUILD_MOTION: model_url}      # 旧数据只有主产物
+            want_motion = ACTION_MOTIONS.get(input.action_type.value)
+            if model_url and (want_motion is None or want_motion not in baked):
+                raise ValueError(
+                    f"该造型的 3D 资产烘了 {sorted(baked) or '(无)'},出不了 "
+                    f"{input.action_type.value!r}。要走三渲二得为这个动作再绑一次骨"
+                    f"({AUTORIG_CREDITS} 积分);要现在就出,把这个动作交给 i2v。"
+                )
+            # 渲哪个动作就取哪一份产物 —— 取错等于拿走路片段冒充跳跃。
+            if model_url and want_motion in baked:
+                model_url = baked[want_motion]
             # 三渲二那支不取母版,而出口的判官闸口要拿它当参照 —— 不先置 None 的话那支会
             # 撞 UnboundLocalError,而它只在有 3D 资产的造型上触发。
             master: bytes | None = None
@@ -469,7 +569,7 @@ class ActionTaskExecutor:
                         f"3D 模型地址不在自家对象存储上:{model_url[:80]!r}"
                     )
                 plan = self._get_generator(
-                    _resolve_video_model(input.video_model), cons.directions
+                    _resolve_video_model(input.video_model, user_id), cons.directions
                 ).plan_rendered(action)
                 deadline = client_bake.open_job(
                     task_id,
@@ -501,12 +601,12 @@ class ActionTaskExecutor:
                     len(rigged),
                 )
                 generated = self._get_generator(
-                    _resolve_video_model(input.video_model), cons.directions
+                    _resolve_video_model(input.video_model, user_id), cons.directions
                 ).generate_rendered(card, action, rigged, progress, canvas=canvas)
             else:
                 master = (self._fetch_master or self._download_master)(input)
                 gen = self._get_generator(
-                    _resolve_video_model(input.video_model), cons.directions
+                    _resolve_video_model(input.video_model, user_id), cons.directions
                 )
                 # 注入的测试桩通常只有 generate()。生产装配且 VideoGateway 支持
                 # start_i2v 时,建单后把轮询丢进 ZSET,立刻让出 action worker。
@@ -514,7 +614,41 @@ class ActionTaskExecutor:
                 if hasattr(gen, "start_video") and (
                     can_defer() if callable(can_defer) else True
                 ):
-                    job = gen.start_video(card, action, master, progress, canvas=canvas)
+                    if not i2v_admit.try_acquire(task_id):
+                        i2v_admit.schedule_retry(task_id, i2v_admit.ADMIT_RETRY_S)
+                        raise ActionAwaitingAdmit
+                    if not i2v_admit.can_submit(task_id):
+                        wait = (
+                            i2v_admit.cooldown_remaining_s(task_id)
+                            or i2v_admit.ADMIT_RETRY_S
+                        )
+                        i2v_admit.schedule_retry(task_id, wait)
+                        raise ActionAwaitingAdmit
+                    skip, retry_n = i2v_admit.retry_state(task_id)
+                    ctx = current_call_context()
+                    unbind_retry = bind_call_context(
+                        request_id=ctx.request_id,
+                        task_id=ctx.task_id,
+                        user_id=ctx.user_id,
+                        start_from_model=ctx.start_from_model,
+                        i2v_route_skip=skip,
+                        i2v_retry_count=retry_n,
+                    )
+                    try:
+                        job = gen.start_video(
+                            card, action, master, progress, canvas=canvas
+                        )
+                    except RateLimitBackoff as exc:
+                        wait = i2v_admit.on_rate_limit(
+                            wait_s=exc.wait_s,
+                            fallback_key=exc.fallback_key,
+                            task_id=task_id,
+                        )
+                        i2v_admit.schedule_retry(task_id, wait)
+                        raise ActionAwaitingAdmit from exc
+                    finally:
+                        unbind_retry()
+                    i2v_admit.clear_cooling(task_id)
                     i2v_poll.schedule(task_id, job, poll_count=0)
                     raise ActionAwaitingVideo
                 generated = gen.generate(card, action, master, progress, canvas=canvas)
@@ -541,10 +675,10 @@ class ActionTaskExecutor:
                 if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     raise _PollSkip(f"任务 {task_id} 已终态")
                 constraints = (self._fetch_constraints or _load_constraints)(s, project_id)
-                return constraints, task.project_id
+                return constraints, task.project_id, task.user_id
 
             try:
-                cons, task_project_id = generation_io.using_session(
+                cons, task_project_id, task_user_id = generation_io.using_session(
                     session, self._make_session, _mark_running
                 )
             except _PollSkip:
@@ -552,10 +686,10 @@ class ActionTaskExecutor:
 
             reset = bind_call_context(
                 task_id=str(task_id),
-                start_from_model=_resolve_video_model(input.video_model),
+                start_from_model=_resolve_video_model(input.video_model, task_user_id),
             )
             gen = self._get_generator(
-                _resolve_video_model(input.video_model), cons.directions
+                _resolve_video_model(input.video_model, task_user_id), cons.directions
             )
             reset_call = fresh_gateway_request()
             try:
@@ -576,6 +710,10 @@ class ActionTaskExecutor:
             finally:
                 reset_call()
             i2v_poll.clear(task_id)
+            try:
+                i2v_admit.release(task_id)
+            except Exception:
+                logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
 
             def _complete(s: Session) -> None:
                 task_repo.update_result(s, task_id, _ACTION_RESULT, result)
@@ -590,6 +728,10 @@ class ActionTaskExecutor:
                 task_repo.fail_task(s, task_id, error_message=error_message)
 
             generation_io.using_session(session, self._make_session, _reject)
+            try:
+                i2v_admit.release(task_id)
+            except Exception:
+                logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
         except Exception as exc:  # noqa: BLE001
             logger.exception("动作任务 %s 轮询失败", task_id)
             if session is not None:
@@ -621,16 +763,19 @@ class ActionTaskExecutor:
         """
         reset = None
         try:
-            def _mark_running(s: Session) -> ProjectConstraints:
+            def _mark_running(s: Session):
                 task = task_repo.get_task(s, task_id)
                 if task is None:
                     raise RuntimeError(f"任务 {task_id} 不存在")
                 if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     raise _PollSkip(f"任务 {task_id} 已终态")
-                return (self._fetch_constraints or _load_constraints)(s, project_id)
+                # 一并带出 user_id:受限型号按用户授权,而 task 只在这个内层函数里可见。
+                return (self._fetch_constraints or _load_constraints)(s, project_id), task.user_id
 
             try:
-                cons = generation_io.using_session(session, self._make_session, _mark_running)
+                cons, task_user_id = generation_io.using_session(
+                    session, self._make_session, _mark_running
+                )
             except _PollSkip:
                 client_bake.clear(task_id)
                 return
@@ -659,13 +804,22 @@ class ActionTaskExecutor:
             frames = client_bake.collect_frames(task_id, spec.frames)
             reset = bind_call_context(
                 task_id=str(task_id),
-                start_from_model=_resolve_video_model(input.video_model),
+                start_from_model=_resolve_video_model(input.video_model, task_user_id),
             )
             card, action, canvas = self._action_spec(input, cons)
-            progress: ProgressPort = _LogProgress()
+            progress: ProgressPort = _TaskProgress(task_id=task_id, project_id=project_id)
             generated = self._get_generator(
-                _resolve_video_model(input.video_model), cons.directions
+                _resolve_video_model(input.video_model, task_user_id), cons.directions
             ).finish_rendered(frames, card, action, progress, canvas=canvas)
+            # 骨架事实与根骨位移轨由浏览器在交齐那一刻带回(#774)。服务端渲那条是
+            # strategy 在 derive 里留下的,这条 strategy 没渲过,只能从登记里取。
+            rig, root_motion = client_bake.load_derived(task_id)
+            if rig or root_motion:
+                generated = dataclasses.replace(
+                    generated,
+                    rig=_rig_facts_of(rig),
+                    root_motion=[(float(x), float(z)) for x, z in (root_motion or [])] or None,
+                )
             result = self._deliver_generated(generated, input, cons, None)
             client_bake.clear(task_id)
 
@@ -711,6 +865,9 @@ class ActionTaskExecutor:
         if engine_action is EngineActionType.CUSTOM:
             cyclic = False if input.loop is None else bool(input.loop)
             extra = {"custom_action": input.custom_prompt or "", "cyclic": cyclic}
+        elif (input.custom_prompt or "").strip():
+            # 同上(#838):这条路径也要把用户那句细节带下去,否则两处行为不一致。
+            extra = {"detail": input.custom_prompt}
         action = ActionSpec(
             action=engine_action,
             poses=[""] * input.num_frames,
@@ -764,6 +921,20 @@ class ActionTaskExecutor:
                 "anchor": {"x": g.anchor_x, "y": g.anchor_y},
                 "foot_y": g.foot_y,
             }
+        # 出帧台读到的骨架事实与根骨位移轨(#774)。三渲二独有,i2v 路线恒为 None。
+        # 此前这两样每渲一段都算一遍、算完即丢。骨架事实是**每造型一次性**的,
+        # 随第一个动作带上来即可;位移轨是每动作一份。
+        if generated.rig is not None:
+            result["rig_facts"] = {
+                "bones": generated.rig.bones,
+                "root_bone": generated.rig.root_bone,
+                "bone_names": list(generated.rig.bone_names),
+                "skinned_meshes": generated.rig.skinned_meshes,
+                "vertices": generated.rig.vertices,
+                "available_clips": dict(generated.rig.available_clips),
+            }
+        if generated.root_motion is not None:
+            result["root_motion"] = [list(pair) for pair in generated.root_motion]
         if decision is not None:
             result["judge"] = decision.as_payload()
             if decision.blocked:
@@ -816,13 +987,17 @@ class ActionTaskExecutor:
         from windup_common.models import GenRoute
         from windup_framework.gateway import build_image_gateway, build_video_gateway
         from windup_framework.gateway.image import _CIRCUIT
-        from windup_framework.providers import OnnxU2NetMatteProvider
+        from windup_framework.providers import get_matte_provider
+
+        from windup_app.server.media.first_frame import MediaFirstFrameUploader
 
         if self._matte is None:
-            self._matte = OnnxU2NetMatteProvider()
+            self._matte = get_matte_provider()
         if self._image is None:
             self._image = build_image_gateway(circuit=_CIRCUIT)
-        video = build_video_gateway(circuit=_CIRCUIT)
+        # uploader 在这里注入而不是让 provider 自己去拿:framework 不认识 app 的对象存储。
+        # 只有走 FAL 队列面的型号(veo)会用到它,kling 那条路一个字节都不会传上去。
+        video = build_video_gateway(circuit=_CIRCUIT, uploader=MediaFirstFrameUploader())
         # 装配表必须与 GenRoute 对齐。下面那条断言让漏装在装配时暴露,而不是等到某个
         # 动作第一次被请求时才炸——注入 generator 的测试走不到这条装配路径,漏了会测试
         # 全绿而真实调用全崩。
@@ -938,7 +1113,7 @@ class ImageTaskExecutor:
         self,
         *,
         image=None,  # None → 懒加载 ImageGateway
-        matte: MatteProvider | None = None,  # None → 懒加载 OnnxU2NetMatteProvider
+        matte: MatteProvider | None = None,  # None → 懒加载,按 WINDUP_MATTE_PROVIDER 选
         upload: Callable[[bytes], str] | None = None,  # None → 真实对象存储上传
         fetch_ref: Callable[[str], bytes]
         | None = None,  # None → 下载 reference_image_url
@@ -1149,9 +1324,9 @@ class ImageTaskExecutor:
             return self._matte
         with self._assembly_lock:
             if self._matte is None:
-                from windup_framework.providers import OnnxU2NetMatteProvider
+                from windup_framework.providers import get_matte_provider
 
-                self._matte = OnnxU2NetMatteProvider()
+                self._matte = get_matte_provider()
             return self._matte
 
     def _download(self, url: str) -> bytes:
@@ -1387,3 +1562,6 @@ def bind_matte(matte: MatteProvider) -> None:
     from windup_app.server.orchestrator.view_sheet_executor import view_sheet_executor
 
     view_sheet_executor._matte = matte
+    from windup_app.server.orchestrator.first_frame_executor import first_frame_executor
+
+    first_frame_executor._matte = matte

@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from windup_app.server.mq import i2v_admit
 from windup_app.server.mq.catalog import (
     EMAIL_HANDLER_RETRIES,
     MSG_TYPE_CHARACTER_ACTION,
@@ -16,10 +17,12 @@ from windup_app.server.mq.catalog import (
     MSG_TYPE_VERIFICATION_CODE,
 )
 from windup_app.server.orchestrator import billing, task_repo
+from windup_app.server.orchestrator.signals import ActionRateLimited
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterDirectionSetInput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     CharacterViewSheetInput,
     GenerationType,
@@ -37,6 +40,14 @@ logger = logging.getLogger("windup.worker.handlers")
 
 class HandlerDeferred(Exception):
     """任务仍在执行中，消息应留 PEL 稍后重试，不可 ACK。"""
+
+
+def _release_i2v_claim(task_id: int) -> None:
+    """终态/失踪/无冻结时清掉无 TTL 的在途名额，避免永久占坑。"""
+    try:
+        i2v_admit.release(task_id)
+    except Exception:
+        logger.exception("释放 i2v 在途名额失败 | task_id=%s", task_id)
 
 
 def handle_verification_code(payload: dict[str, Any]) -> None:
@@ -144,6 +155,23 @@ def _view_sheet_input(payload: dict) -> CharacterViewSheetInput:
     )
 
 
+def _first_frame_input(payload: dict) -> CharacterFirstFrameInput:
+    raw_num_images = payload.get("num_images")
+    raw_type = payload.get("action_type")
+    action_type = raw_type if isinstance(raw_type, ActionType) else ActionType(raw_type)
+    return CharacterFirstFrameInput(
+        character_id=int(payload["character_id"]),
+        reference_image_url=str(payload.get("reference_image_url") or ""),
+        prompt=payload.get("prompt") or "",
+        negative_prompt=payload.get("negative_prompt") or "",
+        width=int(payload.get("width") or 1024),
+        height=int(payload.get("height") or 1024),
+        num_images=int(raw_num_images) if raw_num_images is not None else None,
+        direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
+        action_type=action_type,
+    )
+
+
 def handle_generation(
     payload: dict[str, Any],
     *,
@@ -151,6 +179,7 @@ def handle_generation(
     run_action_task: Callable[..., Any],
     run_direction_set_task: Callable[..., Any] | None = None,
     run_view_sheet_task: Callable[..., Any] | None = None,
+    run_first_frame_task: Callable[..., Any] | None = None,
 ) -> None:
     task_id = int(payload["task_id"])
     task_type = str(payload.get("task_type") or "")
@@ -160,16 +189,22 @@ def handle_generation(
         task = task_repo.get_task(session, task_id)
         if task is None:
             logger.warning("生成任务不存在 | task_id=%d", task_id)
+            _release_i2v_claim(task_id)
             return
         if task.is_terminal:
             logger.info("任务已终态，跳过执行 | task_id=%d status=%s", task_id, task.status)
+            _release_i2v_claim(task_id)
             return
-        if task.status is TaskStatus.RUNNING:
+        resume_admit = bool(payload.get("resume_i2v_admit"))
+        if task.status is TaskStatus.RUNNING and not (
+            resume_admit and task_type == GenerationType.CHARACTER_ACTION.value
+        ):
             logger.info("任务 RUNNING 中，延后重试 | task_id=%d", task_id)
             raise HandlerDeferred(f"task {task_id} still running")
         billing_attempt = billing.attempt_for_task(task.task_type, task.input_payload)
         if not billing.has_open_freeze(session, task_id, billing_attempt):
             logger.warning("任务无开放冻结，跳过 | task_id=%d", task_id)
+            _release_i2v_claim(task_id)
             return
 
         input_payload = task.input_payload or {}
@@ -195,8 +230,19 @@ def handle_generation(
             GenerationType(task_type),
             project_id,
         )
+    elif task_type == GenerationType.CHARACTER_FIRST_FRAME.value:
+        if run_first_frame_task is None:
+            raise RuntimeError("未注入 run_first_frame_task")
+        run_first_frame_task(task_id, _first_frame_input(input_payload), project_id)
     elif task_type == GenerationType.CHARACTER_ACTION.value:
-        run_action_task(task_id, _action_input(input_payload), project_id)
+        try:
+            run_action_task(task_id, _action_input(input_payload), project_id)
+        except ActionRateLimited as exc:
+            # 上游限流,而这次一分钱没花:让消息留在 PEL 稍后重认领,而不是判任务失败。
+            # 翻成 HandlerDeferred 是因为重投的预算与节奏由消费层统一管
+            # (MAX_CONSUME_ATTEMPTS × PEL_CLAIM_INTERVAL_SECONDS),在这里自己 sleep
+            # 会把 action worker 占住,而限流期间恰恰是它最该去干别的活的时候。
+            raise HandlerDeferred(f"task {task_id} rate limited upstream") from exc
     else:
         raise ValueError(f"未知生成任务类型: {task_type}")
 
@@ -213,12 +259,15 @@ def handle_action_poll(
         task = task_repo.get_task(session, task_id)
         if task is None:
             logger.warning("轮询任务不存在 | task_id=%d", task_id)
+            _release_i2v_claim(task_id)
             return
         if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             logger.info("轮询任务已终态，跳过 | task_id=%d status=%s", task_id, task.status)
+            _release_i2v_claim(task_id)
             return
         if not billing.has_open_freeze(session, task_id):
             logger.warning("轮询任务无开放冻结，跳过 | task_id=%d", task_id)
+            _release_i2v_claim(task_id)
             return
         input_payload = task.input_payload or {}
         project_id = task.project_id
@@ -270,6 +319,7 @@ def dispatch_handler(
     resume_action_client_bake: Callable[..., Any] | None = None,
     run_direction_set_task: Callable[..., Any] | None = None,
     run_view_sheet_task: Callable[..., Any] | None = None,
+    run_first_frame_task: Callable[..., Any] | None = None,
 ) -> None:
     handler = HANDLERS.get(msg_type)
     if handler is None:
@@ -282,6 +332,7 @@ def dispatch_handler(
         resume_action_client_bake=resume_action_client_bake,
         run_direction_set_task=run_direction_set_task,
         run_view_sheet_task=run_view_sheet_task,
+        run_first_frame_task=run_first_frame_task,
     )
 
 
@@ -296,6 +347,7 @@ def _dispatch_generation(
     run_action_task: Callable[..., Any],
     run_direction_set_task: Callable[..., Any] | None = None,
     run_view_sheet_task: Callable[..., Any] | None = None,
+    run_first_frame_task: Callable[..., Any] | None = None,
     **_deps: Any,
 ) -> None:
     handle_generation(
@@ -304,6 +356,7 @@ def _dispatch_generation(
         run_action_task=run_action_task,
         run_direction_set_task=run_direction_set_task,
         run_view_sheet_task=run_view_sheet_task,
+        run_first_frame_task=run_first_frame_task,
     )
 
 

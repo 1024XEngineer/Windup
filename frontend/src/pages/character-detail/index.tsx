@@ -6,6 +6,7 @@ import {
   ACTION_DIRECTIONS,
   characterTemplateImages,
   characterApis,
+  getDirectionGridLayout,
   getDirectionProfile,
   getOutfitPlayback,
   resolveActionDirection,
@@ -218,7 +219,10 @@ export function CharacterDetailPage() {
         </div>
       ) : (
         <>
-          <CharacterTemplateDirections character={character} />
+          <CharacterTemplateDirections
+            character={character}
+            movement={project.directionalMovement}
+          />
           {pixelPerfectOpen ? (
             <PixelPerfectWorkbench id="pixel-perfect-workbench" actions={selectedOutfit.actions} />
           ) : null}
@@ -266,40 +270,73 @@ function CharacterExport({
       idleLabel="导出资产包"
       icon={<DownloadSimple size={15} weight="bold" />}
       pill
+      enableCocosExport
       className={ASSET_ACTION_SECONDARY}
     />
   )
 }
 
-function CharacterTemplateDirections({ character }: { character: Character }) {
+function CharacterTemplateDirections({
+  character,
+  movement,
+}: {
+  character: Character
+  movement: Project['directionalMovement']
+}) {
   const name = characterName(character)
   const directionalTemplates = resolvedCharacterTemplates(character.templates)
   if (directionalTemplates.length === 0) return null
+  const layout = movement === 'single' ? null : getDirectionGridLayout(movement)
+  const templatesByDirection = new Map(
+    directionalTemplates.map((template) => [template.direction, template]),
+  )
+  const cells = layout?.cells ?? directionalTemplates.map((template) => template.direction)
+  const columnClass =
+    layout?.columns === 3
+      ? 'grid-cols-3'
+      : layout?.columns === 2
+        ? 'grid-cols-2'
+        : 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-8'
   return (
-    <section
-      aria-label="角色母版方向"
-      className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8"
-    >
-      {directionalTemplates.map((template, index) => (
-        <figure
-          key={template.direction}
-          className="overflow-hidden rounded-xl border border-app-line bg-app-surface-raised"
-        >
-          <div className="aspect-square bg-app-surface-muted p-2">
-            <img
-              src={template.imageUrl}
-              alt={`${name}${DIRECTION_LABELS[template.direction]}方向母版`}
-              loading={index === 0 ? 'eager' : 'lazy'}
-              decoding="async"
-              fetchPriority={index === 0 ? 'high' : 'auto'}
-              className={`h-full w-full object-contain [image-rendering:pixelated] ${template.mirrorX ? '-scale-x-100' : ''}`}
-            />
-          </div>
-          <figcaption className="border-t border-app-line px-2 py-1.5 text-center text-[0.68rem] font-semibold text-app-muted">
-            {DIRECTION_LABELS[template.direction]}
-          </figcaption>
-        </figure>
-      ))}
+    <section aria-label="角色母版方向" className={`mt-4 grid ${columnClass} gap-2`}>
+      {cells.map((direction, index) => {
+        if (!direction) {
+          return <div key={`empty-${index}`} aria-label="八向宫格中心留空" />
+        }
+        const template = templatesByDirection.get(direction)
+        if (!template) {
+          return (
+            <div
+              key={direction}
+              role="status"
+              aria-label={`${DIRECTION_LABELS[direction]}方向角色母版缺失`}
+              className="grid aspect-square place-items-center rounded-xl border border-dashed border-app-line bg-app-surface-muted text-xs text-app-muted"
+            >
+              {DIRECTION_LABELS[direction]}方向缺失
+            </div>
+          )
+        }
+        return (
+          <figure
+            key={template.direction}
+            className="overflow-hidden rounded-xl border border-app-line bg-app-surface-raised"
+          >
+            <div className="aspect-square bg-app-surface-muted p-2">
+              <img
+                src={template.imageUrl}
+                alt={`${name}${DIRECTION_LABELS[template.direction]}方向母版`}
+                loading={index === 0 ? 'eager' : 'lazy'}
+                decoding="async"
+                fetchPriority={index === 0 ? 'high' : 'auto'}
+                className={`h-full w-full object-contain [image-rendering:pixelated] ${template.mirrorX ? '-scale-x-100' : ''}`}
+              />
+            </div>
+            <figcaption className="border-t border-app-line px-2 py-1.5 text-center text-[0.68rem] font-semibold text-app-muted">
+              {DIRECTION_LABELS[template.direction]}
+            </figcaption>
+          </figure>
+        )
+      })}
     </section>
   )
 }

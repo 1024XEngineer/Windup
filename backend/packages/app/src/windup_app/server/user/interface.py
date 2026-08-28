@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session
 
 from windup_app.server.user.model import (
     ChangePasswordInput,
+    EmailChangePasswordInput,
     LoginByCodeInput,
     LoginByPasswordInput,
     LoginResult,
     RegisterInput,
+    SetPasswordInput,
     UserView,
 )
 
@@ -68,11 +70,11 @@ class UserService(ABC):
     # -- 会话管理 ---------------------------------------------------------
 
     @abstractmethod
-    def validate_access_token(self, token: str) -> UserView | None:
+    def validate_access_token(self, session: Session, token: str) -> UserView | None:
         """校验 access_token 并返回用户，过期 / 无效返回 ``None``。"""
 
     @abstractmethod
-    def refresh_tokens(self, refresh_token: str) -> LoginResult:
+    def refresh_tokens(self, session: Session, refresh_token: str) -> LoginResult:
         """刷新 token，返回新的 access+refresh。
 
         :raises windup_common.exceptions.BizException: refresh token 无效 / 已撤销。
@@ -88,6 +90,21 @@ class UserService(ABC):
 
         :raises windup_common.exceptions.BizException: 旧密码错误。
         """
+
+    @abstractmethod
+    def set_password(
+        self, session: Session, user_id: int, input: SetPasswordInput
+    ) -> None:
+        """设置初始密码（仅未设密码用户）。
+
+        :raises windup_common.exceptions.BizException: 密码已设置。
+        """
+
+    @abstractmethod
+    def change_password_by_email(
+        self, session: Session, user_id: int, input: EmailChangePasswordInput
+    ) -> None:
+        """通过当前登录账号的邮箱验证码修改密码。"""
 
     # -- 查询 ------------------------------------------------------------
 

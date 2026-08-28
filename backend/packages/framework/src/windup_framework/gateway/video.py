@@ -7,11 +7,13 @@ from datetime import datetime, timezone
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings as default_settings
+from windup_framework.gateway.errors import RateLimitBackoff, UpstreamExhaustedError
+from windup_framework.gateway.registry import USER_GATED_MODELS as _GATED_VIDEO_MODELS
 from windup_framework.gateway.billing import billing_flags, upstream_reached_label
 from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.image import _CIRCUIT
-from windup_framework.gateway.policy import decide
+from windup_framework.gateway.policy import decide, rate_limit_wait_s
 from windup_framework.gateway.registry import ModelRegistry, RegistryError
 from windup_framework.gateway.routes import (
     GatewayRoute,
@@ -30,9 +32,6 @@ from windup_framework.gateway.trace import (
     hash_image_input,
 )
 from windup_framework.gateway.types import AdapterResult, NextStep, Scene
-
-_DEFAULT_RETRY_AFTER_S = 2.0
-_SLEEP_CAP_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -73,8 +72,14 @@ class VideoGateway:
             return result
         raise RuntimeError("video gateway start_i2v 未返回 job")
 
-    def poll_i2v(self, job_id: str, *, route_id: str | None = None) -> AdapterResult:
-        """单次探活。进行中 ``ok=False`` 且 ``error_type is None``;完成则带 mp4。"""
+    def poll_i2v(
+        self, job_id: str, *, route_id: str | None = None, model: str | None = None
+    ) -> AdapterResult:
+        """单次探活。进行中 ``ok=False`` 且 ``error_type is None``;完成则带 mp4。
+
+        ``model`` 与 ``route_id`` 一样是**建单时那一跳的身份**,必须由调用方随 job 存下来
+        再带回来:单据地址是按协议面拼的,面认错就查不到这张单,而单已经建了、钱已经花了。
+        """
         adapter = self._adapter
         if route_id:
             for route in self._routes:
@@ -86,12 +91,12 @@ class VideoGateway:
                 if mapped is not None:
                     adapter = mapped
         if hasattr(adapter, "inspect_job"):
-            snap = adapter.inspect_job(job_id)
+            snap = adapter.inspect_job(job_id, model=model)
             if snap.ok and snap.job_status == "completed" and snap.edge_fingerprint:
                 if hasattr(adapter, "download_completed"):
                     return adapter.download_completed(job_id, snap.edge_fingerprint)
             return snap
-        return adapter.follow_job(job_id)
+        return adapter.follow_job(job_id, model=model)
 
     def i2v(
         self,
@@ -108,6 +113,9 @@ class VideoGateway:
         input_hash = hash_image_input(prompt, [first_frame])
         last_http_status: int | None = None
         last_error: ModelErrorType | None = None
+        # 这次请求有没有在任何一跳上绑过单。``bound_job_id`` 是循环内的局部量,fail() 看不到,
+        # 而"绑过单"正是"可能已计费"的判据 —— 判错的方向是拿钱重投,所以宁可多记不可漏记。
+        ever_bound_job = False
         fallback_used = False
         fallback_reason: str | None = None
         route_reason_override: str | None = None
@@ -116,8 +124,20 @@ class VideoGateway:
         budget = AttemptBudget()
 
         chain = list(self._registry.chain(Scene.CHARACTER_ACTION))
-        if ctx.start_from_model and ctx.start_from_model in chain:
-            start_i = chain.index(ctx.start_from_model)
+        # 受限型号被 ``_admitted()`` 从链上滤掉了(链是兜底路径,让按用户授权的型号当兜底
+        # 等于对所有人开放),所以它不可能出现在 ``chain`` 里。但调用方能拿到它,只说明
+        # **这一次请求已经过了授权闸**(HTTP 入口与编排层各判了一次)—— 把它排到队首,
+        # 后面仍按原链兜底。
+        #
+        # 不这么做的话:``start_from_model`` 因为不在链里被忽略,``models`` 回落成整条链,
+        # 于是授权用户照旧走部署默认 —— 授权、白名单、默认升舱三层全部形同虚设,而任务
+        # 照常成功、产物照常交付,没有任何一处显示"你要的那个型号没被用上"。
+        wanted = ctx.start_from_model
+        if wanted and wanted in _GATED_VIDEO_MODELS:
+            models = [wanted, *chain]
+            start_i = 0
+        elif wanted and wanted in chain:
+            start_i = chain.index(wanted)
             models = chain[start_i:]
         else:
             start_i = 0
@@ -128,9 +148,11 @@ class VideoGateway:
 
         def fail(http_status: int | None) -> None:
             err = last_error.value if last_error is not None else None
-            raise RuntimeError(
+            raise UpstreamExhaustedError(
                 f"video gateway failed request_id={request_id} "
-                f"http_status={http_status} error_type={err}"
+                f"http_status={http_status} error_type={err}",
+                error_type=last_error,
+                maybe_billed=ever_bound_job,
             )
 
         if self._circuit.is_open("aggregator"):
@@ -159,6 +181,10 @@ class VideoGateway:
             fail(None)
 
         for route_index, route in enumerate(routes):
+            if route_index < ctx.i2v_route_skip:
+                fallback_used = True
+                route_reason_override = "key_rate_limit"
+                continue
             if self._circuit.is_open("base_url:" + route.base_url_id):
                 if route_index + 1 < len(routes):
                     fallback_used = True
@@ -216,7 +242,7 @@ class VideoGateway:
                 else:
                     route_reason = "fallback_after_upstream_fail"
 
-                retry_count = 0
+                retry_count = ctx.i2v_retry_count
                 resend_spent = 0
                 bound_job_id: str | None = None
                 while True:
@@ -231,8 +257,9 @@ class VideoGateway:
                         submit_ms = int((time.monotonic() - submit_t0) * 1000)
                         if result.ok and result.job_id:
                             bound_job_id = result.job_id
+                            ever_bound_job = True
                             if follow:
-                                result = adapter.follow_job(bound_job_id)
+                                result = adapter.follow_job(bound_job_id, model=model)
                         elif result.ok:
                             result = replace(
                                 result,
@@ -241,7 +268,7 @@ class VideoGateway:
                                 body=b"",
                             )
                     elif follow:
-                        result = adapter.follow_job(bound_job_id)
+                        result = adapter.follow_job(bound_job_id, model=model)
                     else:
                         result = AdapterResult(
                             ok=True, job_id=bound_job_id, maybe_billed=True
@@ -275,6 +302,7 @@ class VideoGateway:
                             attempt_latency_ms=attempt_latency_ms,
                             resend_spent=resend_spent,
                             seconds=seconds,
+                            prompt=prompt,
                             outcome="failed",
                             error_type=error_type,
                             submit_ms=submit_ms,
@@ -302,6 +330,7 @@ class VideoGateway:
                             attempt_latency_ms=attempt_latency_ms,
                             resend_spent=resend_spent,
                             seconds=seconds,
+                            prompt=prompt,
                             outcome="fallback_success" if fallback_used else "success",
                             submit_ms=submit_ms,
                             policy_next_step="success",
@@ -368,6 +397,7 @@ class VideoGateway:
                         attempt_latency_ms=attempt_latency_ms,
                         resend_spent=resend_spent,
                         seconds=seconds,
+                            prompt=prompt,
                         outcome="failed",
                         circuit_scope=circuit_scope,
                         error_type=error_type,
@@ -388,20 +418,48 @@ class VideoGateway:
                     if step is NextStep.FALLBACK_KEY:
                         if bound_job_id is not None:
                             fail(last_http_status)
+                        if not follow and error_type is ModelErrorType.RATE_LIMIT:
+                            raise RateLimitBackoff(
+                                wait_s=rate_limit_wait_s(
+                                    retry_count=retry_count,
+                                    retry_after_s=result.retry_after_s,
+                                ),
+                                fallback_key=has_next_route,
+                            )
                         if has_next_route:
+                            nxt = routes[route_index + 1]
+                            time.sleep(
+                                rate_limit_wait_s(
+                                    retry_count=retry_count,
+                                    retry_after_s=result.retry_after_s,
+                                )
+                            )
                             fallback_used = True
-                            route_reason_override = "key_rate_limit"
+                            if nxt.base_url_id != route.base_url_id:
+                                self._circuit.open("base_url:" + route.base_url_id)
+                                route_reason_override = "base_url_unreached"
+                            else:
+                                route_reason_override = "key_rate_limit"
                             switch_to_next_route = True
                             break
+                        self._circuit.open("aggregator")
                         fail(last_http_status)
                     if step is NextStep.RETRY_SAME:
                         if error_type is ModelErrorType.RATE_LIMIT:
-                            wait = (
-                                result.retry_after_s
-                                if result.retry_after_s is not None
-                                else _DEFAULT_RETRY_AFTER_S
+                            if not follow:
+                                raise RateLimitBackoff(
+                                    wait_s=rate_limit_wait_s(
+                                        retry_count=retry_count,
+                                        retry_after_s=result.retry_after_s,
+                                    ),
+                                    fallback_key=False,
+                                )
+                            time.sleep(
+                                rate_limit_wait_s(
+                                    retry_count=retry_count,
+                                    retry_after_s=result.retry_after_s,
+                                )
                             )
-                            time.sleep(min(wait, _SLEEP_CAP_S))
                         retry_count += 1
                         if error_type is ModelErrorType.UNREACHED:
                             resend_spent = 1
@@ -454,6 +512,7 @@ class VideoGateway:
         attempt_latency_ms: int,
         resend_spent: int,
         seconds: int,
+        prompt: str,
         outcome: str,
         circuit_scope: str | None = None,
         error_type: ModelErrorType | None = None,
@@ -520,6 +579,7 @@ class VideoGateway:
                         error_type, http_status=result.http_status, ok=result.ok
                     ),
                     model_index=model_index,
+                    prompt=prompt,
                 ),
             )
         )
@@ -539,7 +599,10 @@ class VideoGateway:
         emit(trace)
 
 
-def build_video_gateway(config=None, *, adapter=None, circuit=None) -> VideoGateway:
+def build_video_gateway(
+    config=None, *, adapter=None, circuit=None, uploader=None
+) -> VideoGateway:
+    """``uploader`` 只有走 FAL 队列面的型号(veo)才用得上,故可选;缺它时 veo 在建单前被拒。"""
     cfg: AIProviderSettings = config or default_settings
     route_adapters = None
     if adapter is None:
@@ -547,7 +610,9 @@ def build_video_gateway(config=None, *, adapter=None, circuit=None) -> VideoGate
 
         routes = routes_from_settings(cfg, route_group=Scene.CHARACTER_ACTION.value)
         route_adapters = {
-            route.route_id: SufyVideoProvider(config=config_for_route(cfg, route))
+            route.route_id: SufyVideoProvider(
+                config=config_for_route(cfg, route), uploader=uploader
+            )
             for route in routes
         }
         adapter = route_adapters[routes[0].route_id]

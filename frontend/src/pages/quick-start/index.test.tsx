@@ -14,7 +14,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { QuickStartCandidate, QuickStartEntryService, QuickStartSession } from './service'
 import {
+  CHARACTER_STATUS,
   WorkflowRunConflictError,
+  type CharacterViewSheetCandidate,
+  type Character,
+  type CharacterApis,
+  type CharacterSummaryApis,
   type Project,
   type ProjectApis,
   type WorkflowRun,
@@ -358,6 +363,38 @@ function eastCandidates(...imageUrls: string[]): readonly QuickStartCandidate[] 
   return imageUrls.map((imageUrl, index) => ({ direction: 'east', index, imageUrl }))
 }
 
+function viewSheetCandidate(movement: 'four-way' | 'eight-way'): CharacterViewSheetCandidate {
+  const sourceDirections =
+    movement === 'four-way'
+      ? (['south', 'east', 'north'] as const)
+      : (['south', 'east', 'north', 'north_east', 'south_east'] as const)
+  const mirrors =
+    movement === 'four-way'
+      ? ([['west', 'east']] as const)
+      : ([
+          ['west', 'east'],
+          ['north_west', 'north_east'],
+          ['south_west', 'south_east'],
+        ] as const)
+  return {
+    sheetUrl: `${movement}-sheet.png`,
+    cells: [
+      ...sourceDirections.map((direction) => ({
+        direction,
+        imageUrl: `${direction}.png`,
+        sourceDirection: null,
+        mirrorX: false,
+      })),
+      ...mirrors.map(([direction, sourceDirection]) => ({
+        direction,
+        imageUrl: `${direction}.png`,
+        sourceDirection,
+        mirrorX: true,
+      })),
+    ],
+  }
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -390,6 +427,26 @@ function agentFor(
   }
 }
 
+function addActionAgentFor(): CreateQuickStartAgentOptions {
+  return agentFor({
+    planner: vi.fn(async ({ messages, addActionContext }) => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: addActionContext?.characterPrompt ?? '',
+            actionPrompt: messages.at(-1)?.content ?? '',
+            optimizationSummary: '我会保留现有角色，只新增这条动作。',
+          },
+        },
+      ],
+    })),
+  })
+}
+
 const existingProject: Project = {
   id: '42',
   workflowId: null,
@@ -410,18 +467,116 @@ function projectReader(project: Project = existingProject): Pick<ProjectApis, 'l
   }
 }
 
+const existingCharacter: Character = {
+  id: '7',
+  projectId: existingProject.id,
+  workflowRunId: '77',
+  name: '星光法师',
+  description: '银发、蓝色斗篷的像素法师',
+  referenceImageUrl: 'https://cdn.windup.test/star-mage.png',
+  templates: [
+    {
+      direction: 'east',
+      sourceDirection: null,
+      mirrorX: false,
+      imageUrl: 'https://cdn.windup.test/star-mage.png',
+    },
+  ],
+  dataVersion: 1,
+  status: CHARACTER_STATUS.PUBLISHED,
+  outfits: [
+    {
+      id: 'outfit-default',
+      characterId: '7',
+      name: '默认造型',
+      description: null,
+      previewUrl: 'https://cdn.windup.test/star-mage.png',
+      model3dUrl: null,
+      actions: [
+        {
+          id: 'idle',
+          outfitId: 'outfit-default',
+          name: '待机',
+          type: 'idle',
+          loop: true,
+          fps: 12,
+          frameCount: 1,
+          frames: [],
+        },
+        {
+          id: 'walk',
+          outfitId: 'outfit-default',
+          name: '行走',
+          type: 'walk',
+          loop: true,
+          fps: 12,
+          frameCount: 1,
+          frames: [],
+        },
+        {
+          id: 'wave',
+          outfitId: 'outfit-default',
+          name: '挥手',
+          type: 'custom',
+          loop: false,
+          fps: 12,
+          frameCount: 1,
+          frames: [],
+        },
+      ],
+    },
+  ],
+}
+
+function characterReader(
+  character: Character = existingCharacter,
+): Pick<CharacterApis & CharacterSummaryApis, 'get' | 'listSummariesByProject'> {
+  return {
+    get: vi.fn(async () => character),
+    listSummariesByProject: vi.fn(async () => ({
+      items: [
+        {
+          id: character.id,
+          projectId: character.projectId,
+          name: character.name,
+          status: character.status,
+          previewUrl: character.outfits[0]?.previewUrl ?? null,
+          outfitName: character.outfits[0]?.name ?? null,
+          outfitCount: character.outfits.length,
+          actionCount: character.outfits.reduce(
+            (total, outfit) => total + outfit.actions.length,
+            0,
+          ),
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 8,
+    })),
+  }
+}
+
 function renderAt(
   path: string,
   service: QuickStartEntryService,
   agent: CreateQuickStartAgentOptions = agentFor(),
   projects: Pick<ProjectApis, 'list' | 'get'> = projectReader(),
+  characters: Pick<
+    CharacterApis & CharacterSummaryApis,
+    'get' | 'listSummariesByProject'
+  > = characterReader(),
 ) {
   function PlaytestLocation() {
     const location = useLocation()
     return <h1>{`${location.pathname}${location.search}`}</h1>
   }
+  function LocationProbe() {
+    const location = useLocation()
+    return <output data-testid="location-probe">{`${location.pathname}${location.search}`}</output>
+  }
   return render(
     <MemoryRouter initialEntries={[path]}>
+      <LocationProbe />
       <Routes>
         <Route
           path="/quick-start"
@@ -431,6 +586,7 @@ function renderAt(
               activeRunUserId="7"
               agent={agent}
               projectApis={projects}
+              characterApis={characters}
             />
           }
         />
@@ -442,6 +598,7 @@ function renderAt(
               activeRunUserId="7"
               agent={agent}
               projectApis={projects}
+              characterApis={characters}
             />
           }
         />
@@ -572,6 +729,39 @@ function renderStateFixture(
 }
 
 describe('QuickStartPage', () => {
+  it('从左侧历史栏回到所选 run 的原 Quick Start 会话', async () => {
+    const run = workflow(setupAndTemplate(), 'run-current')
+    const service = serviceFor(run, {
+      listHistory: vi.fn(async () => [
+        { runId: 'run-old', title: '森林里的蓝发弓箭手' },
+        { runId: 'run-current', title: '像素骑士' },
+      ]),
+    })
+    window.localStorage.setItem(
+      'windup.quick-start.agent-chat.v2:run:7:run-old',
+      JSON.stringify({
+        turns: [
+          { role: 'user', content: '保留蓝色斗篷' },
+          { role: 'assistant', content: '上次保留的对话', kind: 'reply' },
+        ],
+      }),
+    )
+
+    renderAt('/quick-start/run-current', service)
+
+    const history = await screen.findByRole('navigation', { name: '创作历史' })
+    expect(
+      within(history).getByRole('link', { name: '像素骑士' }).getAttribute('aria-current'),
+    ).toBe('page')
+    fireEvent.click(within(history).getByRole('link', { name: '森林里的蓝发弓箭手' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location-probe').textContent).toBe('/quick-start/run-old'),
+    )
+    expect(await screen.findByText('上次保留的对话')).toBeTruthy()
+    expect(service.open).toHaveBeenLastCalledWith('run-old')
+  })
+
   it('keeps the main export capability available in the conversation UI', async () => {
     const run = workflow(setupAndTemplate({ selectedImageUrl: '/master.png' }))
     const model: ExportPackageModel = {
@@ -974,14 +1164,15 @@ describe('QuickStartPage', () => {
     const projects = projectReader()
     renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration }, projects)
 
-    await waitFor(() => expect(projects.list).toHaveBeenCalledWith({ page: 1, pageSize: 3 }))
+    await waitFor(() => expect(projects.list).toHaveBeenCalledWith({ page: 1, pageSize: 100 }))
 
     const project = screen.getByRole('button', { name: '选择项目，当前自动创建' })
     fireEvent.click(project)
     expect(screen.getByRole('menuitem', { name: '新建项目' }).getAttribute('href')).toBe(
       '/projects/new?entry=quick-start',
     )
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: '星海计划' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: '在此项目中新建角色' }))
 
     expect(screen.getByRole('button', { name: '选择项目，当前星海计划' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '生成方向，当前四向' })).toBeTruthy()
@@ -1000,9 +1191,137 @@ describe('QuickStartPage', () => {
         actionType: 'walk',
         directionalMovement: 'four-way',
         gameStyle: 'pixel',
+        autoPixelate: true,
         automaticDelivery: true,
         projectId: '42',
       }),
+    )
+  })
+
+  it('drills from a project into new-character and existing-character choices', async () => {
+    const characters = characterReader()
+    renderAt('/quick-start', serviceFor(null), agentFor(), projectReader(), characters)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+
+    expect(await screen.findByRole('menu', { name: '选择星海计划中的角色' })).toBeTruthy()
+    expect(screen.getByRole('menuitemradio', { name: '在此项目中新建角色' })).toBeTruthy()
+    expect(screen.getByText('或为已有角色新增动作')).toBeTruthy()
+    const characterItem = screen.getByRole('menuitem', {
+      name: '为星光法师新增动作，已有 3 个动作',
+    })
+    expect(characterItem).toBeTruthy()
+    expect(characterItem.querySelector('img')).toBeNull()
+    expect(characters.listSummariesByProject).toHaveBeenCalledWith('42', {
+      page: 1,
+      pageSize: 100,
+      status: CHARACTER_STATUS.PUBLISHED,
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '返回项目列表' }))
+    expect(screen.getByRole('menu', { name: '选择项目' })).toBeTruthy()
+  })
+
+  it('loads every project page and filters the visible project list', async () => {
+    const secondProject: Project = {
+      ...existingProject,
+      id: '43',
+      name: '测试项目',
+    }
+    const projects = projectReader()
+    projects.list = vi.fn(async ({ page = 1 }) =>
+      page === 1
+        ? {
+            items: Array.from({ length: 100 }, (_, index) => ({
+              ...existingProject,
+              id: String(index + 1),
+              name: index === 0 ? existingProject.name : `项目 ${index + 1}`,
+            })),
+            total: 101,
+            page: 1,
+            pageSize: 100,
+          }
+        : { items: [secondProject], total: 101, page: 2, pageSize: 100 },
+    )
+    renderAt('/quick-start', serviceFor(null), agentFor(), projects)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+
+    expect(await screen.findByRole('menuitem', { name: '测试项目' })).toBeTruthy()
+    expect(projects.list).toHaveBeenNthCalledWith(2, { page: 2, pageSize: 100 })
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索项目' }), {
+      target: { value: '测试' },
+    })
+
+    expect(screen.getByRole('menuitem', { name: '测试项目' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: '星海计划' })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: '新建项目' })).toBeTruthy()
+  })
+
+  it('loads every character page into the scrollable character list', async () => {
+    const characters = characterReader()
+    characters.listSummariesByProject = vi.fn(async (_projectId, { page = 1 }) => ({
+      items:
+        page === 1
+          ? Array.from({ length: 100 }, (_, index) => ({
+              id: String(index + 1),
+              projectId: '42',
+              name: index === 0 ? '星光法师' : `角色 ${index + 1}`,
+              status: CHARACTER_STATUS.PUBLISHED,
+              previewUrl: null,
+              outfitName: '默认造型',
+              outfitCount: 1,
+              actionCount: 3,
+              updatedAt: '2026-08-26T00:00:00Z',
+            }))
+          : [
+              {
+                id: '101',
+                projectId: '42',
+                name: '森林邮差',
+                status: CHARACTER_STATUS.PUBLISHED,
+                previewUrl: null,
+                outfitName: '默认造型',
+                outfitCount: 1,
+                actionCount: 3,
+                updatedAt: '2026-08-26T00:00:00Z',
+              },
+            ],
+      total: 101,
+      page,
+      pageSize: 100,
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor(), projectReader(), characters)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+
+    expect(
+      await screen.findByRole('menuitem', { name: '为森林邮差新增动作，已有 3 个动作' }),
+    ).toBeTruthy()
+    expect(characters.listSummariesByProject).toHaveBeenNthCalledWith(2, '42', {
+      page: 2,
+      pageSize: 100,
+      status: CHARACTER_STATUS.PUBLISHED,
+    })
+    expect(screen.queryByText(/仅显示前/)).toBeNull()
+  })
+
+  it('opens the existing character workflow when choosing it for a new action', async () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: '为星光法师新增动作，已有 3 个动作' }),
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location-probe').textContent).toBe(
+        '/quick-start/77?intent=add-action&outfitId=outfit-default',
+      ),
     )
   })
 
@@ -1349,6 +1668,23 @@ describe('QuickStartPage', () => {
     expect(JSON.parse(window.sessionStorage.getItem(key) ?? '{}')).toMatchObject({
       gameStyle: 'pixel',
       directionalMovement: 'eight-way',
+    })
+  })
+
+  it('lets a pixel-style draft turn off automatic perfect pixelation', () => {
+    renderAt('/quick-start', serviceFor(null), agentFor())
+
+    fireEvent.click(screen.getByRole('button', { name: '选择画风，当前不指定' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '像素' }))
+    const toggle = screen.getByRole('button', { name: '自动完美像素化：已开启' })
+    fireEvent.click(toggle)
+
+    expect(screen.getByRole('button', { name: '自动完美像素化：已关闭' })).toBeTruthy()
+    const draftId = window.history.state?.windupQuickStartAgentDraftId
+    const key = `windup.quick-start.agent-chat.v2:draft:7:${draftId}`
+    expect(JSON.parse(window.sessionStorage.getItem(key) ?? '{}')).toMatchObject({
+      gameStyle: 'pixel',
+      autoPixelate: false,
     })
   })
 
@@ -2182,52 +2518,37 @@ describe('QuickStartPage', () => {
     expect(screen.queryByLabelText('西方向为空')).toBeNull()
   })
 
-  it('母版确认后把四向首帧放入中心留空的九宫格且不再逐方向选择', async () => {
+  it('母版确认后把四向首帧放入四宫格且不再逐方向选择', async () => {
     const run = workflow(
       setupAndTemplate({
-        selectedImageUrl: 'east.png',
-        selectedImages: { east: 'east.png' },
+        selectedImageUrl: 'south.png',
+        selectedImages: { south: 'south.png' },
         status: 'active',
         phase: 'selecting',
         generations: [
-          { taskId: 'template-east', role: 'character_template' },
-          { taskId: 'template-west', role: 'character_template', direction: 'west' },
-          { taskId: 'template-north', role: 'character_template', direction: 'north' },
           { taskId: 'template-south', role: 'character_template', direction: 'south' },
+          { taskId: 'view-sheet', role: 'character_four_view' },
         ],
       }),
     )
     renderAt(
       '/quick-start/run-1',
       serviceFor(run, {
-        getTemplateCandidates: vi.fn(
-          async () =>
-            [
-              { direction: 'east', index: 0, imageUrl: 'east.png' },
-              { direction: 'west', index: 0, imageUrl: 'west.png' },
-              { direction: 'north', index: 0, imageUrl: 'north.png' },
-              { direction: 'south', index: 0, imageUrl: 'south.png' },
-            ] satisfies readonly QuickStartCandidate[],
-        ),
+        getDirectionalMovement: vi.fn(() => 'four-way' as const),
+        getTemplateViewSheetCandidates: vi.fn(async () => [viewSheetCandidate('four-way')]),
       }),
     )
 
-    const directionSet = await screen.findByRole('group', { name: '四向首帧集合' })
-    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-grid')
-    expect(directionSet.className).toContain('grid-cols-3')
-    expect(directionSet.children).toHaveLength(9)
-    expect(screen.getByLabelText('中心留空')).toBeTruthy()
-    expect(screen.getByLabelText('西北方向为空')).toBeTruthy()
-    expect(screen.getByLabelText('东北方向为空')).toBeTruthy()
-    expect(screen.getByLabelText('西南方向为空')).toBeTruthy()
-    expect(screen.getByLabelText('东南方向为空')).toBeTruthy()
-    await waitFor(() => expect(directionSet.querySelectorAll('img')).toHaveLength(4))
-    expect(screen.getByRole('img', { name: '东方向首帧' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '西方向首帧' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '北方向首帧' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '南方向首帧' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /选择.*角色方案/u })).toBeNull()
+    const directionSet = await screen.findByRole('button', { name: '选择角色方案方向候选 1' })
+    expect(within(directionSet).getAllByRole('img')).toHaveLength(4)
+    expect(within(directionSet).getByRole('img', { name: '东方向角色方案' })).toBeTruthy()
+    expect(within(directionSet).getByRole('img', { name: '西方向角色方案' })).toBeTruthy()
+    expect(within(directionSet).getByRole('img', { name: '北方向角色方案' })).toBeTruthy()
+    expect(within(directionSet).getByRole('img', { name: '南方向角色方案' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /选择(?:东|西|北|南)方向角色方案/u })).toBeNull()
     const generateAction = screen.getByRole('button', { name: '生成动作' })
+    expect(generateAction.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(directionSet)
     expect(generateAction.hasAttribute('disabled')).toBe(true)
     fireEvent.change(screen.getByRole('textbox', { name: '继续描述你的想法' }), {
       target: { value: '挥手' },
@@ -2487,34 +2808,101 @@ describe('QuickStartPage', () => {
     ] as const
     const selectingRun = workflow(
       setupAndTemplate({
-        selectedImageUrl: 'east.png',
-        selectedImages: { east: 'east.png' },
-        generations: directions.map(([direction]) => ({
-          taskId: `template-${direction}`,
-          role: 'character_template' as const,
-          ...(direction === 'east' ? {} : { direction }),
-        })),
+        selectedImageUrl: 'south.png',
+        selectedImages: { south: 'south.png' },
+        generations: [
+          { taskId: 'template-south', role: 'character_template', direction: 'south' },
+          { taskId: 'view-sheet', role: 'character_eight_view' },
+        ],
       }),
     )
     const service = serviceFor(selectingRun, {
-      getTemplateCandidates: vi.fn(async () =>
-        directions.map(([direction]) => ({
-          direction,
-          index: 0,
-          imageUrl: `${direction}.png`,
-        })),
-      ),
+      getDirectionalMovement: vi.fn(() => 'eight-way' as const),
+      getTemplateViewSheetCandidates: vi.fn(async () => [viewSheetCandidate('eight-way')]),
     })
     renderAt('/quick-start/run-1', service)
 
+    const directionSet = await screen.findByRole('button', { name: '选择角色方案方向候选 1' })
     for (const [, label] of directions) {
-      expect(await screen.findByRole('img', { name: `${label}方向首帧` })).toBeTruthy()
+      expect(within(directionSet).getByRole('img', { name: `${label}方向角色方案` })).toBeTruthy()
     }
-    const directionSet = screen.getByRole('group', { name: '八向首帧集合' })
-    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-grid')
-    expect(directionSet.className).toContain('grid-cols-3')
-    expect(directionSet.children).toHaveLength(9)
-    expect(screen.getByLabelText('中心留空')).toBeTruthy()
+    expect(within(directionSet).getAllByRole('img')).toHaveLength(8)
+  })
+
+  it('角色方向集合确认完成后仍显示四张独立图片', async () => {
+    const run = workflow(
+      setupAndTemplate({
+        selectedImageUrl: 'south.png',
+        selectedImages: {
+          east: 'east.png',
+          west: 'west.png',
+          north: 'north.png',
+          south: 'south.png',
+        },
+        status: 'passed',
+        phase: 'completed',
+        generations: [
+          { taskId: 'template-east', role: 'character_template', direction: 'east' },
+          { taskId: 'template-west', role: 'character_template', direction: 'west' },
+          { taskId: 'template-north', role: 'character_template', direction: 'north' },
+          { taskId: 'template-south', role: 'character_template', direction: 'south' },
+        ],
+      }),
+    )
+
+    renderAt(
+      '/quick-start/run-1',
+      serviceFor(run, { getDirectionalMovement: vi.fn(() => 'four-way' as const) }),
+    )
+
+    const grid = await screen.findByRole('group', { name: '四向首帧集合' })
+    expect(within(grid).getAllByRole('img')).toHaveLength(4)
+    expect(grid.className).toContain('grid-cols-2')
+    expect(within(grid).queryByLabelText('中心留空')).toBeNull()
+  })
+
+  it('动作首帧确认完成后仍显示八张独立图片和空中心', async () => {
+    const directions = [
+      'east',
+      'west',
+      'north',
+      'south',
+      'north_east',
+      'north_west',
+      'south_east',
+      'south_west',
+    ] as const
+    const base = actionWorkflow()
+    const run = {
+      ...base,
+      nodes: base.nodes.map((node) =>
+        node.type === 'action-first-frame'
+          ? {
+              ...node,
+              selectedFirstFrameUrl: 'first-east.png',
+              selectedFirstFrameUrls: Object.fromEntries(
+                directions.map((direction) => [direction, `first-${direction}.png`]),
+              ),
+              generations: directions.map((direction) => ({
+                taskId: `first-${direction}`,
+                role: 'first_frame' as const,
+                direction,
+              })),
+            }
+          : node,
+      ),
+    } satisfies WorkflowRun
+
+    renderAt(
+      '/quick-start/run-1',
+      serviceFor(run),
+      agentFor(),
+      projectReader({ ...existingProject, directionalMovement: 'eight-way' }),
+    )
+
+    const grid = await screen.findByRole('group', { name: '八向首帧集合' })
+    expect(within(grid).getAllByRole('img')).toHaveLength(8)
+    expect(within(grid).getByLabelText('中心留空')).toBeTruthy()
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {
@@ -2828,10 +3216,30 @@ describe('QuickStartPage', () => {
     expect(composer?.querySelector('[data-layout="quick-start-attachment-row"]')).toBeNull()
   })
 
-  it('adds an action from the existing Quick Start run instead of creating another run', async () => {
+  it('confirms an Agent proposal before appending an action to the existing Run', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const service = serviceFor(run)
-    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: '像素骑士',
+            actionPrompt: '向前翻滚一圈',
+            locomotion: true,
+            optimizationSummary: '我会保留现有骑士，只新增向前翻滚的位移动作。',
+          },
+        },
+      ],
+    }))
+    renderAt(
+      '/quick-start/run-1?intent=add-action&outfitId=outfit-1',
+      service,
+      agentFor({ planner }),
+    )
 
     const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
     const submit = screen.getByRole('button', { name: '发送' })
@@ -2839,11 +3247,67 @@ describe('QuickStartPage', () => {
     expect(service.addAction).not.toHaveBeenCalled()
     expect((submit as HTMLButtonElement).disabled).toBe(true)
 
-    fireEvent.change(input, { target: { value: '挥手' } })
+    fireEvent.change(input, { target: { value: '让他向前翻滚一圈' } })
     await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(submit)
 
-    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手'))
+    expect(await screen.findByText('动作：向前翻滚一圈')).toBeTruthy()
+    expect(screen.getAllByText('让他向前翻滚一圈')).toHaveLength(1)
+    expect(service.addAction).not.toHaveBeenCalled()
+    expect(planner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        addActionContext: { characterPrompt: '像素骑士' },
+      }),
+    )
+    await waitFor(() => {
+      const sidecar = window.localStorage.getItem('windup.quick-start.agent-chat.v2:run:7:run-1')
+      expect(sidecar).toContain('"scope":"add-action"')
+      expect(sidecar).toContain('让他向前翻滚一圈')
+    })
+    expect(JSON.stringify(service.getWorkflow())).not.toContain('让他向前翻滚一圈')
+
+    fireEvent.click(screen.getByRole('button', { name: '确认并生成' }))
+
+    await waitFor(() =>
+      expect(service.addAction).toHaveBeenCalledWith('outfit-1', '向前翻滚一圈', {
+        locomotion: true,
+      }),
+    )
+    await waitFor(() => expect((input as HTMLTextAreaElement).disabled).toBe(false))
+    expect(service.start).not.toHaveBeenCalled()
+  })
+
+  it('keeps add-action clarification in Agent conversation without touching the Run', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run)
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'clarification',
+            message: '这个翻滚需要向前位移，还是原地完成？',
+          },
+        },
+      ],
+    }))
+    renderAt(
+      '/quick-start/run-1?intent=add-action&outfitId=outfit-1',
+      service,
+      agentFor({ planner }),
+    )
+
+    fireEvent.change(await screen.findByRole('textbox', { name: '继续描述你的想法' }), {
+      target: { value: '让他翻滚' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('这个翻滚需要向前位移，还是原地完成？')).toBeTruthy()
+    expect(service.addAction).not.toHaveBeenCalled()
+    expect(service.start).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '确认并生成' })).toBeNull()
   })
 
   it('adds an action when an older action branch failed', async () => {
@@ -2859,7 +3323,7 @@ describe('QuickStartPage', () => {
       ...current.nodes.slice(2),
     ])
     const service = serviceFor(run)
-    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service, addActionAgentFor())
 
     const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
     fireEvent.change(input, { target: { value: '跳跃' } })
@@ -2867,7 +3331,8 @@ describe('QuickStartPage', () => {
     const submit = screen.getByRole('button', { name: '发送' })
     await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(submit)
-    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '跳跃'))
+    fireEvent.click(await screen.findByRole('button', { name: '确认并生成' }))
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '跳跃', {}))
   })
 
   it('reports add-action failures inside the existing Quick Start run', async () => {
@@ -2875,14 +3340,42 @@ describe('QuickStartPage', () => {
     const service = serviceFor(run, {
       addAction: vi.fn(async () => Promise.reject(new Error('动作生成暂时不可用'))),
     })
-    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service, addActionAgentFor())
 
     fireEvent.change(await screen.findByRole('textbox', { name: '继续描述你的想法' }), {
       target: { value: '挥手' },
     })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认并生成' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
+  })
+
+  it('keeps an add-action error visible when run restoration finishes late', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const resumed = deferred<WorkflowRun>()
+    const service = serviceFor(run, {
+      resume: vi.fn(() => resumed.promise),
+      addAction: vi.fn(async () => Promise.reject(new Error('动作生成暂时不可用'))),
+    })
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service, addActionAgentFor())
+
+    const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    await waitFor(() =>
+      expect(service.resume).toHaveBeenCalledWith({ automaticActionAdvance: false }),
+    )
+    fireEvent.change(input, { target: { value: '挥手' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认并生成' }))
+
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手', {}))
+    expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
+
+    await act(async () => {
+      resumed.resolve(run)
+      await resumed.promise
+    })
+    expect(screen.getByRole('alert').textContent).toContain('动作生成暂时不可用')
   })
 
   it('recovers missing runs and returns to the creation entry', async () => {
@@ -3327,8 +3820,6 @@ describe('QuickStartPage', () => {
           [
             { direction: 'east', index: 0, imageUrl: 'east-1.png' },
             { direction: 'east', index: 1, imageUrl: 'east-2.png' },
-            { direction: 'west', index: 0, imageUrl: 'west-1.png' },
-            { direction: 'west', index: 1, imageUrl: 'west-2.png' },
             { direction: 'north', index: 0, imageUrl: 'north-1.png' },
             { direction: 'north', index: 1, imageUrl: 'north-2.png' },
             { direction: 'south', index: 0, imageUrl: 'south-1.png' },
@@ -3339,14 +3830,15 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start/run-1', service)
 
     expect(screen.queryByRole('button', { name: '选择东方向动作首帧 1' })).toBeNull()
-    expect((await screen.findAllByLabelText('西北方向为空')).length).toBeGreaterThan(0)
-    fireEvent.click(await screen.findByRole('button', { name: '选择动作首帧方向候选 1' }))
+    const sheet = await screen.findByRole('button', { name: '选择动作首帧方向候选 1' })
+    expect(within(sheet).getAllByRole('img')).toHaveLength(4)
+    expect(within(sheet).queryByLabelText('西北方向为空')).toBeNull()
+    fireEvent.click(sheet)
     fireEvent.click(screen.getByRole('button', { name: '确认候选帧，生成完整动作' }))
 
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
-        west: 'west-1.png',
         north: 'north-1.png',
         south: 'south-1.png',
       }),
@@ -3360,13 +3852,10 @@ describe('QuickStartPage', () => {
         async () =>
           [
             { direction: 'east', index: 0, imageUrl: 'east-1.png' },
-            { direction: 'west', index: 0, imageUrl: 'west-1.png' },
             { direction: 'north', index: 0, imageUrl: 'north-1.png' },
             { direction: 'south', index: 0, imageUrl: 'south-1.png' },
             { direction: 'north_east', index: 0, imageUrl: 'north-east-1.png' },
-            { direction: 'north_west', index: 0, imageUrl: 'north-west-1.png' },
             { direction: 'south_east', index: 0, imageUrl: 'south-east-1.png' },
-            { direction: 'south_west', index: 0, imageUrl: 'south-west-1.png' },
           ] satisfies readonly QuickStartCandidate[],
       ),
     })
@@ -3381,13 +3870,10 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
-        west: 'west-1.png',
         north: 'north-1.png',
         south: 'south-1.png',
         north_east: 'north-east-1.png',
-        north_west: 'north-west-1.png',
         south_east: 'south-east-1.png',
-        south_west: 'south-west-1.png',
       }),
     )
   })
@@ -3403,6 +3889,12 @@ describe('QuickStartPage', () => {
     for (const [run, label] of states) {
       const view = renderAt('/quick-start/run-1', serviceFor(run))
       expect(await screen.findByLabelText(new RegExp(label, 'u'))).toBeTruthy()
+      if (label === '动作首帧生成失败') {
+        expect(screen.getByLabelText(/动作首帧生成失败 首帧服务失败/u)).toBeTruthy()
+      }
+      if (label === '动作生成失败') {
+        expect(screen.getByLabelText(/动作生成失败 动作服务失败/u)).toBeTruthy()
+      }
       view.unmount()
     }
   })

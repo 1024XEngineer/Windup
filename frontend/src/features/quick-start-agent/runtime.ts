@@ -48,6 +48,7 @@ export interface PlannerInput {
   clarificationUsed: boolean
   /** 用户在宿主中选择的画风；Planner 只把它当作拟写提示词时的既定约束。 */
   artStyle?: string
+  addActionContext?: { characterPrompt: string }
   workflow?: WorkflowAgentContext
   signal?: AbortSignal
 }
@@ -91,6 +92,7 @@ export interface QuickStartAgentTurnOptions {
 export interface ConfirmProposalOptions {
   /** 画风原样透传给宿主；取值范围由宿主定义，本模块不认识业务对象。 */
   gameStyle?: string
+  autoPixelate?: boolean
   /** 宿主选择的已有项目；缺省时继续自动创建项目。 */
   projectId?: string
   /** 用户选择确认后由 Controller 自动交付，不再暴露中间候选选择。 */
@@ -117,6 +119,7 @@ export type StartCharacterGenerationAction = (input: {
   locomotion?: true
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
+  autoPixelate?: boolean
   projectId?: string
   automaticDelivery?: boolean
   suggestPixelPerfect?: boolean
@@ -127,6 +130,8 @@ export interface CreateQuickStartAgentOptions {
   planner: QuickStartPlanner
   startCharacterGeneration: StartCharacterGenerationAction
   artStyle?: string
+  /** 已有角色新增动作时的只读角色约束；只交给 Planner，不写入 WorkflowRun。 */
+  addActionContext?: { characterPrompt: string }
   initialMessages?: readonly PlannerMessage[]
   initialClarificationUsed?: boolean
   initialProposal?: CharacterGenerationProposal | null
@@ -319,6 +324,7 @@ export function createQuickStartAgent({
   planner,
   startCharacterGeneration,
   artStyle,
+  addActionContext,
   initialMessages = [],
   initialClarificationUsed = false,
   initialProposal = null,
@@ -364,7 +370,13 @@ export function createQuickStartAgent({
       // runtime 也必须保留同一历史，避免刷新前后得到不同上下文。
       messages = nextMessages
       const decision = validatePlannerTerminal(
-        await planner({ messages: nextMessages, clarificationUsed, artStyle, signal }),
+        await planner({
+          messages: nextMessages,
+          clarificationUsed,
+          artStyle,
+          addActionContext,
+          signal,
+        }),
       )
       if (signal?.aborted) {
         revoked = true
@@ -399,7 +411,7 @@ export function createQuickStartAgent({
     proposalId: string,
     prompt: string,
     directionalMovement: QuickStartDirectionalMovement = 'single',
-    { gameStyle, projectId, automaticDelivery }: ConfirmProposalOptions = {},
+    { gameStyle, autoPixelate, projectId, automaticDelivery }: ConfirmProposalOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -423,6 +435,7 @@ export function createQuickStartAgent({
         ...(proposal.locomotion ? { locomotion: proposal.locomotion } : {}),
         directionalMovement,
         gameStyle,
+        ...(autoPixelate === undefined ? {} : { autoPixelate }),
         projectId,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),
         ...(proposal.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),

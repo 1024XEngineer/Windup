@@ -13,10 +13,14 @@ from sqlalchemy.orm import sessionmaker
 
 from conftest import seed_credit_account
 from windup_app.server.mq.catalog import (
+    GENERATION_ACTION_STREAM,
+    GENERATION_IMAGE_STREAM,
     MSG_TYPE_CHARACTER_ACTION,
     MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
     MSG_TYPE_VERIFICATION_CODE,
+    POOL_POLL,
+    POOL_SHARED,
 )
 from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.orchestrator.model import (
@@ -31,6 +35,7 @@ from windup_app.worker.consumer import ConsumerConfig, StreamConsumer, start_rel
 from windup_app.worker.handlers import (
     HandlerDeferred,
     dispatch_handler,
+    handle_action_poll,
     handle_generation,
     handle_verification_code,
 )
@@ -156,6 +161,45 @@ def test_handle_generation_dispatches_image_task(db_session, engine, monkeypatch
     run_image.assert_called_once()
     assert run_image.call_args.args[0] == task.id
     assert run_image.call_args.args[1].direction is ActionDirection.NORTH
+
+
+def test_handle_generation_dispatches_first_frame_task(db_session, engine, monkeypatch):
+    from windup_app.server.orchestrator.model import CharacterFirstFrameInput
+
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_first_frame(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterFirstFrameInput(
+            character_id=7,
+            reference_image_url="https://cdn.example.com/east.png",
+            prompt="walk first frame",
+            width=64,
+            height=64,
+            direction=ActionDirection.EAST,
+            action_type=ActionType.WALK,
+        ),
+    )
+    db_session.commit()
+
+    run_first_frame = MagicMock()
+    handle_generation(
+        {"task_id": task.id, "task_type": GenerationType.CHARACTER_FIRST_FRAME.value},
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        run_first_frame_task=run_first_frame,
+    )
+    run_first_frame.assert_called_once()
+    assert run_first_frame.call_args.args[0] == task.id
+    rebuilt = run_first_frame.call_args.args[1]
+    assert rebuilt.direction is ActionDirection.EAST
+    assert rebuilt.reference_image_url == "https://cdn.example.com/east.png"
+    assert rebuilt.action_type is ActionType.WALK
 
 
 def test_dispatch_handler_unknown_type_raises():
@@ -428,6 +472,165 @@ def test_handle_generation_dispatches_action_task(db_session, engine, monkeypatc
     assert run_action.call_args.args[1].stance is CharacterStance.QUADRUPED
 
 
+def test_handle_generation_resumes_running_action_for_i2v_admit(
+    db_session, engine, monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_action(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterActionInput(
+            character_id=1,
+            action_type=ActionType.WALK,
+            num_frames=4,
+        ),
+    )
+    task_repo.update_status(db_session, task.id, TaskStatus.RUNNING)
+    db_session.commit()
+
+    run_action = MagicMock()
+    handle_generation(
+        {
+            "task_id": task.id,
+            "task_type": GenerationType.CHARACTER_ACTION.value,
+            "resume_i2v_admit": True,
+        },
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    run_action.assert_called_once()
+
+
+def test_handle_generation_releases_i2v_claim_when_action_terminal(
+    db_session, engine, monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_action(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterActionInput(
+            character_id=1,
+            action_type=ActionType.WALK,
+            num_frames=4,
+        ),
+    )
+    task_repo.update_status(db_session, task.id, TaskStatus.COMPLETED)
+    db_session.commit()
+
+    released: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    run_action = MagicMock()
+    handle_generation(
+        {
+            "task_id": task.id,
+            "task_type": GenerationType.CHARACTER_ACTION.value,
+            "resume_i2v_admit": True,
+        },
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    assert released == [task.id]
+    run_action.assert_not_called()
+
+
+def test_handle_generation_releases_i2v_claim_when_action_has_no_freeze(
+    db_session, engine, monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    task = task_repo.create_task(
+        db_session,
+        user_id=1,
+        project_id=1,
+        task_type=GenerationType.CHARACTER_ACTION,
+        input_payload={"character_id": 1, "action_type": ActionType.WALK.value},
+    )
+    db_session.commit()
+
+    released: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    run_action = MagicMock()
+    handle_generation(
+        {
+            "task_id": task.id,
+            "task_type": GenerationType.CHARACTER_ACTION.value,
+            "resume_i2v_admit": True,
+        },
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    assert released == [task.id]
+    run_action.assert_not_called()
+
+
+def test_handle_generation_releases_i2v_claim_when_task_missing(engine, monkeypatch):
+    _patch_worker_session_local(monkeypatch, engine)
+    released: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    run_action = MagicMock()
+    handle_generation(
+        {
+            "task_id": 9999,
+            "task_type": GenerationType.CHARACTER_ACTION.value,
+            "resume_i2v_admit": True,
+        },
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    assert released == [9999]
+    run_action.assert_not_called()
+
+
+def test_handle_action_poll_releases_i2v_claim_when_terminal(
+    db_session, engine, monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_action(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterActionInput(
+            character_id=1,
+            action_type=ActionType.WALK,
+            num_frames=4,
+        ),
+    )
+    task_repo.update_status(db_session, task.id, TaskStatus.FAILED)
+    db_session.commit()
+
+    released: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    resume_poll = MagicMock()
+    handle_action_poll({"task_id": task.id}, resume_action_poll=resume_poll)
+    assert released == [task.id]
+    resume_poll.assert_not_called()
+
+
 def test_handle_generation_unknown_type_raises(db_session, engine, monkeypatch):
     _patch_worker_session_local(monkeypatch, engine)
     seed_credit_account(db_session, 1)
@@ -541,6 +744,7 @@ def test_consumer_claim_idle_submits_messages(engine, monkeypatch):
 
     def fake_claim(*_args, **_kwargs):
         claim_calls["count"] += 1
+        assert _kwargs.get("count") == 1
         if claim_calls["count"] == 1:
             return ([("2-0", {"data": "{}"})], "2-0")
         return ([], "2-0")
@@ -606,6 +810,163 @@ def test_consumer_loop_reads_and_processes_one_message(
     stop.set()
     consumer.shutdown()
     thread.join(timeout=3)
+
+
+def test_consumer_skips_xreadgroup_when_image_slots_full(engine, monkeypatch):
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", "1")
+    _patch_worker_session_local(monkeypatch, engine)
+
+    stop = threading.Event()
+    redis_mock = MagicMock()
+    monkeypatch.setattr("windup_app.worker.consumer.get_redis", lambda: redis_mock)
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.mq_client.ensure_consumer_group",
+        lambda *_a: None,
+    )
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.mq_client.claim_idle_messages",
+        lambda *_a, **_k: ([], "0-0"),
+    )
+    xread_calls: list[int] = []
+
+    def fake_xreadgroup(*_args, **_kwargs):
+        xread_calls.append(1)
+        stop.wait(timeout=0.2)
+        return []
+
+    monkeypatch.setattr("windup_app.worker.consumer.mq_client.xreadgroup", fake_xreadgroup)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_process(_self, _stream_id, _fields):
+        started.set()
+        release.wait(timeout=5)
+
+    monkeypatch.setattr(StreamConsumer, "_process_message", fake_process)
+
+    consumer = StreamConsumer(
+        ConsumerConfig(stream=GENERATION_IMAGE_STREAM, group="generation-image", concurrency=1),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=stop,
+    )
+    try:
+        consumer._submit_message(
+            "i-0",
+            {
+                "data": json.dumps(
+                    {
+                        "v": 1,
+                        "id": str(uuid.uuid4()),
+                        "type": MSG_TYPE_CHARACTER_IMAGE,
+                        "payload": {"task_id": 1, "task_type": "character_image"},
+                    }
+                )
+            },
+        )
+        assert started.wait(timeout=5)
+        assert consumer._has_free_slot() is False
+        thread = consumer.start()
+        assert stop.wait(timeout=0.3) is False
+        assert xread_calls == []
+        release.set()
+        stop.set()
+        thread.join(timeout=3)
+    finally:
+        release.set()
+        stop.set()
+        consumer.shutdown()
+
+
+def test_consumer_does_not_queue_action_beyond_shared_pool(engine, monkeypatch):
+    """动作共享池满时，多领到的 action 不得进执行器队列；poll 槽空着也不能拿去堆 action。"""
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_ACTION_CONCURRENCY", "1")
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_POLL_CONCURRENCY", "2")
+    _patch_worker_session_local(monkeypatch, engine)
+
+    stop = threading.Event()
+    redis_mock = MagicMock()
+    monkeypatch.setattr("windup_app.worker.consumer.get_redis", lambda: redis_mock)
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.mq_client.ensure_consumer_group",
+        lambda *_a: None,
+    )
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.mq_client.claim_idle_messages",
+        lambda *_a, **_k: ([], "0-0"),
+    )
+
+    first_started = threading.Event()
+    first_release = threading.Event()
+    second_started = threading.Event()
+
+    def fake_process(_self, stream_id, _fields):
+        if stream_id == "a-0":
+            first_started.set()
+            first_release.wait(timeout=5)
+            return
+        second_started.set()
+        stop.set()
+
+    monkeypatch.setattr(StreamConsumer, "_process_message", fake_process)
+
+    extra = {
+        "data": json.dumps(
+            {
+                "v": 1,
+                "id": str(uuid.uuid4()),
+                "type": MSG_TYPE_CHARACTER_ACTION,
+                "payload": {"task_id": 2, "task_type": "character_action"},
+            }
+        )
+    }
+
+    def fake_xreadgroup(*_args, **_kwargs):
+        if stop.is_set() or second_started.is_set():
+            return []
+        return [(GENERATION_ACTION_STREAM, [("a-1", extra)])]
+
+    monkeypatch.setattr("windup_app.worker.consumer.mq_client.xreadgroup", fake_xreadgroup)
+
+    consumer = StreamConsumer(
+        ConsumerConfig(
+            stream=GENERATION_ACTION_STREAM,
+            group="generation-action",
+            concurrency=1,
+        ),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=stop,
+    )
+    try:
+        consumer._submit_message(
+            "a-0",
+            {
+                "data": json.dumps(
+                    {
+                        "v": 1,
+                        "id": str(uuid.uuid4()),
+                        "type": MSG_TYPE_CHARACTER_ACTION,
+                        "payload": {"task_id": 1, "task_type": "character_action"},
+                    }
+                )
+            },
+        )
+        assert first_started.wait(timeout=5)
+        assert consumer._pool_has_slot(POOL_SHARED) is False
+        assert consumer._pool_has_slot(POOL_POLL) is True
+        assert consumer._has_free_slot() is True
+        thread = consumer.start()
+        assert second_started.wait(timeout=0.4) is False
+        first_release.set()
+        assert second_started.wait(timeout=5)
+        stop.set()
+        thread.join(timeout=3)
+    finally:
+        first_release.set()
+        stop.set()
+        consumer.shutdown()
 
 
 def test_start_relay_loop_invokes_relay(monkeypatch):
@@ -1130,6 +1491,24 @@ def test_image_input_keeps_explicit_zero_num_images():
     assert rebuilt.num_images == 0
 
 
+def test_first_frame_input_restores_heading_template():
+    from windup_app.worker.handlers import _first_frame_input
+
+    rebuilt = _first_frame_input(
+        {
+            "character_id": 7,
+            "prompt": "walk first frame",
+            "reference_image_url": "https://cdn.example.com/east.png",
+            "direction": "east",
+            "action_type": "walk",
+        }
+    )
+
+    assert rebuilt.direction is ActionDirection.EAST
+    assert rebuilt.action_type is ActionType.WALK
+    assert rebuilt.reference_image_url == "https://cdn.example.com/east.png"
+
+
 def test_warmup_injects_one_matte_into_both_executors(monkeypatch):
     """预热实例必须交给动作/出图执行器,不能 warmup 完丢掉再各 new 一套。"""
     from windup_app.bootstrap import worker as w
@@ -1142,9 +1521,12 @@ def test_warmup_injects_one_matte_into_both_executors(monkeypatch):
             self.warmed = True
 
     fake = _Fake()
-    monkeypatch.setattr(
-        "windup_framework.providers.OnnxU2NetMatteProvider", lambda *a, **k: fake
-    )
+    # 桩在**工厂**上,并清掉单例 —— 生产已改走 get_matte_provider(),它内部调工厂。
+    # 桩 get_matte_provider 本身会把"单例真的只建一份"这层一起绕过去,那正是要守的东西。
+    from windup_framework.providers import matte_factory as _mf
+
+    monkeypatch.setattr(_mf, "make_matte_provider", lambda *a, **k: fake)
+    _mf.reset_matte_provider()
     prev_a, prev_i = ex.executor._matte, ex.image_executor._matte
     try:
         w._warmup_local_inference()
@@ -1154,6 +1536,7 @@ def test_warmup_injects_one_matte_into_both_executors(monkeypatch):
     finally:
         ex.executor._matte = prev_a
         ex.image_executor._matte = prev_i
+        _mf.reset_matte_provider()      # 单例是进程级的,不清会污染同进程后面的用例
 
 
 def test_consumer_trims_heap_after_image_not_email(engine, worker_session, monkeypatch):

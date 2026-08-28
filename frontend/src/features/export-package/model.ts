@@ -34,6 +34,8 @@ export interface ExportPlaytest {
 
 export interface ExportSequence {
   direction: string
+  sourceDirection?: string | null
+  mirrorX?: boolean
   /** 后端声明的完整帧数；不能用 frames.length 代替，否则无法发现缺帧。 */
   expectedFrameCount: number
   loop: boolean

@@ -19,6 +19,7 @@ const renderToolbar: NonNullable<PlaytestPageProps['renderToolbar']> = ({
     return (
       <ExportButton
         model={model}
+        enableCocosExport
         className="border-[#294433] bg-[#294433] text-white hover:bg-[#203828]"
       />
     )

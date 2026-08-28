@@ -7,11 +7,11 @@
  * **判定不跟着搬。** 帧数对账、空帧自检、脚线对齐、成色闸仍在服务端做 —— 这里做的
  * 自检只是"早点炸",不是替服务端把关。客户端自报的数只是它的说法。
  */
-import { BakeStage, StageError } from './stage'
+import { BakeStage, StageError, resolveClip } from './stage'
 
 import type { BakeJob, Render3DApis } from '@/entities/render3d'
 
-export { BakeStage, StageError, MATERIALS, isStageMaterial } from './stage'
+export { BakeStage, StageError, MATERIALS, isStageMaterial, resolveClip } from './stage'
 export type { StageMaterial, StageRigInfo } from './stage'
 
 export interface BakeProgress {
@@ -60,17 +60,14 @@ export async function runClientBake(options: RunClientBakeOptions): Promise<void
     if (!Object.keys(clips).length) {
       throw new StageError('模型里没有任何动画片段 —— 绑骨时没带 MotionType?')
     }
-    if (!(job.clip in clips)) {
-      throw new StageError(
-        `模型里没有片段 ${JSON.stringify(job.clip)};有的是 ${JSON.stringify(Object.keys(clips))}`,
-      )
-    }
+    // 片段名由绑骨接口按任务哈希起,对不上产品动作名是常态,见 resolveClip。
+    const clip = resolveClip(job.clip, Object.keys(clips))
     stage.setCamYaw(job.cameraYaw)
 
     const sampleTimes: number[] = []
     for (let i = 0; i < job.frames; i++) {
       throwIfAborted()
-      sampleTimes.push(stage.setup(job.clip, i, job.frames))
+      sampleTimes.push(stage.setup(clip, i, job.frames))
       const coverage = stage.coverage()
       if (coverage < job.minCoverage) {
         // 角色出画或片段选错都会安静地产出全透明帧,而外面照样以为成功了。
@@ -82,7 +79,22 @@ export async function runClientBake(options: RunClientBakeOptions): Promise<void
       onProgress?.({ done: i + 1, total: job.frames })
     }
     throwIfAborted()
-    await apis.completeBake(job.taskId, { clip: job.clip, sampleTimes })
+    // 骨架事实与根骨位移轨随交齐一起回传（#774）。服务端渲那条会把它们带上来，
+    // 这条此前算完即随页面销毁 —— 两条路必须交回同样的东西。
+    const rig = stage.rigInfo()
+    await apis.completeBake(job.taskId, {
+      clip: job.clip,
+      sampleTimes,
+      rig: {
+        bones: rig.bones,
+        rootBone: rig.rootBone,
+        boneNames: rig.boneNames,
+        skinnedMeshes: rig.skinned,
+        vertices: rig.verts,
+        availableClips: clips,
+      },
+      rootMotion: stage.rootMotionOf(job.clip),
+    })
   } catch (error) {
     if (error instanceof BakeAborted) throw error
     await apis

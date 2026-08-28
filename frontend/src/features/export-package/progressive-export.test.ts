@@ -261,8 +261,8 @@ describe('createProgressiveExportModel', () => {
     ])
   })
 
-  it('四向已发布动作导出四组真实序列和各自图片', () => {
-    const directions = ['east', 'west', 'north', 'south'] as const
+  it('四向已发布动作导出全部 PlayTest 逻辑方向', () => {
+    const sourceDirections = ['east', 'north', 'south'] as const
     const directionalCharacter: Character = {
       ...character,
       dataVersion: 2,
@@ -279,13 +279,22 @@ describe('createProgressiveExportModel', () => {
               fps: 10,
               frameCount: 1,
               frames: [{ index: 0, imageUrl: '/east.png', durationMs: 100 }],
-              sequences: directions.map((direction) => ({
-                direction,
-                sourceDirection: null,
-                mirrorX: false,
-                frameCount: 1,
-                frames: [{ index: 0, imageUrl: `/${direction}.png`, durationMs: 100 }],
-              })),
+              sequences: [
+                ...sourceDirections.map((direction) => ({
+                  direction,
+                  sourceDirection: null,
+                  mirrorX: false,
+                  frameCount: 1,
+                  frames: [{ index: 0, imageUrl: `/${direction}.png`, durationMs: 100 }],
+                })),
+                {
+                  direction: 'west',
+                  sourceDirection: 'east',
+                  mirrorX: true,
+                  frameCount: 1,
+                  frames: [],
+                },
+              ],
             },
           ],
         },
@@ -298,13 +307,25 @@ describe('createProgressiveExportModel', () => {
       outfitId: 'outfit-1',
     })
 
-    expect(model.actions[0]?.sequences.map((sequence) => sequence.direction)).toEqual(directions)
-    expect(model.actions[0]?.sequences.map((sequence) => sequence.frames[0]?.imageUrl)).toEqual(
-      directions.map((direction) => `/${direction}.png`),
-    )
+    expect(model.actions[0]?.sequences.map((sequence) => sequence.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
+    expect(model.actions[0]?.sequences.map((sequence) => sequence.frames[0]?.imageUrl)).toEqual([
+      '/east.png',
+      '/east.png',
+      '/north.png',
+      '/south.png',
+    ])
+    expect(model.actions[0]?.sequences[1]).toMatchObject({
+      sourceDirection: 'east',
+      mirrorX: true,
+    })
   })
 
-  it('历史四向动作没有方向序列时仍按旧版默认序列导出', () => {
+  it('历史四向动作没有方向序列时仍与 PlayTest 导出 east/west', () => {
     const legacyCharacter: Character = {
       ...character,
       outfits: [
@@ -332,15 +353,14 @@ describe('createProgressiveExportModel', () => {
       outfitId: 'outfit-1',
     })
 
-    expect(model.actions[0]?.sequences).toEqual([
-      expect.objectContaining({
-        direction: 'default',
-        frames: [{ index: 0, imageUrl: '/idle.png', durationMs: 100 }],
-      }),
+    expect(model.actions[0]?.sequences.map((sequence) => sequence.direction)).toEqual([
+      'east',
+      'west',
     ])
+    expect(model.actions[0]?.sequences[1]).toMatchObject({ sourceDirection: 'east', mirrorX: true })
   })
 
-  it('四向已发布动作缺少真实方向时拒绝导出', () => {
+  it('四向已发布动作缺少真实源方向时拒绝导出', () => {
     const directionalCharacter: Character = {
       ...character,
       dataVersion: 2,
@@ -378,7 +398,7 @@ describe('createProgressiveExportModel', () => {
         character: directionalCharacter,
         outfitId: 'outfit-1',
       }),
-    ).toThrow('待机缺少west方向真实序列')
+    ).toThrow('待机缺少north方向真实序列')
   })
 
   it('完整动画 Generation 完成后、发布到 Character 前即可导出动作资产', () => {
@@ -575,5 +595,35 @@ describe('createProgressiveExportModel', () => {
       'walk-first',
       'published-walk',
     ])
+  })
+
+  it('uses the selected pixel-perfect frame URL in the export model', () => {
+    const versioned = structuredClone(character)
+    versioned.outfits[0]!.actions = [
+      {
+        id: 'walk',
+        outfitId: 'outfit-1',
+        name: '行走',
+        type: 'walk',
+        loop: true,
+        fps: 10,
+        frameCount: 1,
+        preferredVersion: 'pixel-perfect',
+        frames: [
+          {
+            index: 0,
+            imageUrl: '/original.png',
+            pixelPerfectImageUrl: '/pixel.png',
+            durationMs: 100,
+          },
+        ],
+      },
+    ]
+    const model = createProgressiveExportModel({
+      project,
+      character: versioned,
+      outfitId: 'outfit-1',
+    })
+    expect(model.actions[0]?.sequences[0]?.frames[0]?.imageUrl).toBe('/pixel.png')
   })
 })

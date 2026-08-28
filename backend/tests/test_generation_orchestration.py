@@ -413,12 +413,12 @@ class _SpyGenerator:
         )
 
 
-def test_project_perspective_constrains_facing(session_factory):
-    # perspective=2 → front(见 executor._PERSPECTIVE_TO_FACING)
+def test_project_movement_constrains_facing(session_factory):
+    # directional_movement=2 四向 → 俯视 front(见 executor._MOVEMENT_FACING)
     with session_factory() as s:
         proj = Project(
-            user_id=1, project_name="p", character_perspective=2,
-            directional_movement=1, sprite_width=64, sprite_height=64,
+            user_id=1, project_name="p",
+            directional_movement=2, sprite_width=64, sprite_height=64,
         )
         s.add(proj)
         s.commit()
@@ -441,7 +441,23 @@ def test_project_perspective_constrains_facing(session_factory):
 
     executor.run_action_task(task_id, action_input, project_id)  # 带项目约束
 
-    assert spy.seen_facing == "front", "项目 perspective 应约束生成朝向"
+    assert spy.seen_facing == "front", "项目朝向规格应约束生成朝向"
+
+
+def test_unidirectional_project_keeps_side_facing(session_factory):
+    with session_factory() as s:
+        proj = Project(
+            user_id=1, project_name="side",
+            directional_movement=1, sprite_width=64, sprite_height=64,
+        )
+        s.add(proj)
+        s.commit()
+        from windup_app.server.orchestrator.executor import _load_constraints
+
+        cons = _load_constraints(s, proj.id)
+    assert cons.facing == "side"
+    assert cons.perspective == 1
+    assert cons.directions == 1
 
 
 def test_custom_action_reuses_oneshot_route_and_preserves_prompt(session_factory):
@@ -537,6 +553,62 @@ def test_action_task_prompt_rejected_leaves_no_result(session_factory):
     assert payload["error_message"]
 
 
+def test_action_task_prompt_rejected_releases_i2v_claim(session_factory, monkeypatch):
+    """占坑后被措辞门禁拒绝，必须把名额还回去，否则 failed 任务永久堵闸。"""
+    from windup_ai_engine.ports import PromptRejectCode, PromptRejected
+
+    released: list[int] = []
+
+    class _RejectGen:
+        def start_video(self, *args, **kwargs):
+            raise PromptRejected(PromptRejectCode.NEGATION, "描述里不要写否定词")
+
+        def generate(self, *args, **kwargs):
+            raise AssertionError("有 start_video 时不该走阻塞 generate")
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.try_acquire",
+        lambda _task_id: True,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.can_submit",
+        lambda _task_id: True,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.retry_state",
+        lambda _task_id: (0, 0),
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_RejectGen(),
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1,
+        action_type=ActionType.CUSTOM,
+        custom_prompt="不要扬尘",
+        num_frames=4,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+
+    executor.run_action_task(task_id, action_input)
+
+    assert released == [task_id]
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.FAILED
+    assert done.error_message and "动作描述没通过检查" in done.error_message
+
+
 def test_fail_task_clears_stale_result(session_factory):
     from windup_app.server.orchestrator import task_repo
 
@@ -577,7 +649,7 @@ def _run_with_project(session_factory, spy, sprite=(64, 64)):
     """建一个指定 sprite 尺寸的项目,跑一次动作任务,返回 (task_id, project_id)。"""
     with session_factory() as s:
         proj = Project(
-            user_id=1, project_name="p", character_perspective=1,
+            user_id=1, project_name="p",
             directional_movement=1, sprite_width=sprite[0], sprite_height=sprite[1],
         )
         s.add(proj)
@@ -646,6 +718,22 @@ def test_action_task_parks_i2v_and_stays_running(session_factory, monkeypatch):
         "windup_app.server.orchestrator.i2v_poll.schedule",
         lambda task_id, job, **kw: parked.append({"task_id": task_id, "job": job, **kw}),
     )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.try_acquire",
+        lambda _task_id: True,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.can_submit",
+        lambda _task_id: True,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.clear_cooling",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.retry_state",
+        lambda _task_id: (0, 0),
+    )
     service = AiGenerationService()
     executor = ActionTaskExecutor(
         generator=_AsyncGen(),
@@ -671,7 +759,7 @@ def test_resume_action_poll_finishes_when_video_ready(session_factory, monkeypat
     png = _tiny_png()
 
     class _AsyncGen:
-        def poll_video(self, job_id, route_id=None):
+        def poll_video(self, job_id, route_id=None, model=None):
             assert job_id == "job-ready"
             return b"mp4"
 
@@ -737,7 +825,7 @@ def test_resume_action_poll_does_not_fetch_master_while_pending(
     parked: list[int] = []
 
     class _AsyncGen:
-        def poll_video(self, job_id, route_id=None):
+        def poll_video(self, job_id, route_id=None, model=None):
             return None
 
         def finish_video(self, *args, **kwargs):
@@ -797,7 +885,7 @@ def test_resume_action_poll_completes_after_credit_already_released(
     png = _tiny_png()
 
     class _AsyncGen:
-        def poll_video(self, job_id, route_id=None):
+        def poll_video(self, job_id, route_id=None, model=None):
             return b"mp4"
 
         def finish_video(self, video, *args, **kwargs):
@@ -860,7 +948,7 @@ def test_resume_action_poll_completes_after_credit_already_released(
 
 def test_resume_action_poll_timeout_without_video_fails(session_factory, monkeypatch):
     class _AsyncGen:
-        def poll_video(self, job_id, route_id=None):
+        def poll_video(self, job_id, route_id=None, model=None):
             return None
 
         def finish_video(self, *args, **kwargs):
@@ -967,7 +1055,7 @@ def _delivered_colors(game_style: str | None, session_factory, monkeypatch) -> i
     )
     with session_factory() as s:
         project = Project(
-            user_id=1, project_name=f"画风-{game_style}", character_perspective=1,
+            user_id=1, project_name=f"画风-{game_style}",
             directional_movement=1, sprite_width=64, sprite_height=64,
             game_style=game_style,
         )

@@ -14,7 +14,8 @@
 塞进 ``content`` 数组 —— 与视频的提交-轮询-下载三段式完全不同的调用形状。
 
 **网关上还有另一套 FAL 队列面**(veo / seedance / vidu 只在那一面),协议实现在
-:mod:`.protocol.fal_queue`;本 provider 尚未接它。
+:mod:`.protocol.fal_queue`;本 provider 经 ``_protocol_for`` 按型号的 family 分派到它,
+目前只接了 veo3.1(默认关,见 ``AI_VIDEO_ALLOW_VEO``)。
 
 型号与 key / base_url 均由 ``AIProviderSettings`` 注入,provider 内不读 env;哪个模型吃
 什么请求字段属该模型的 API 事实,写在代码里而不是配置里(填错只会在生成阶段才 failed,
@@ -41,10 +42,11 @@ from windup_framework.gateway.classify import (
 )
 from windup_framework.gateway.types import AdapterResult
 
-from .interfaces import ImageProvider, VideoProvider
+from .interfaces import FirstFrameUploader, ImageProvider, VideoProvider
 from .protocol import HttpCall, VideoRequest
+from .protocol.fal_queue import VeoQueueVideoProtocol, fal_video_protocol
 from .protocol.image_faces import FalQueueImageFace, OpenAIImagesFace
-from .protocol.openai_video import OpenAIVideoProtocol
+from .protocol.openai_video import OpenAIVideoProtocol, fit_first_frame
 
 logger = logging.getLogger("windup.providers.sufy")
 
@@ -85,6 +87,7 @@ class SufyVideoProvider(VideoProvider):
         poll_interval: float = 60.0,
         max_min: int = 30,
         first_poll_after: float = 5.0,
+        uploader: FirstFrameUploader | None = None,
     ) -> None:
         # 轮询间隔必须 > 0:0 的语义不成立 —— 那是忙等,会把网关打满。
         # 测试要跑快就把 time.sleep 打桩掉,别把间隔设成 0。
@@ -98,11 +101,44 @@ class SufyVideoProvider(VideoProvider):
         self._poll = poll_interval
         self._max_min = max_min
         self._first_poll_after = min(first_poll_after, poll_interval)
+        # 可选而不是必填:链上绝大多数型号(kling 系)不需要它,把它设成必填会让
+        # "只跑 kling 的部署" 也必须配好对象存储凭证才建得起 provider。
+        # 缺它时 veo 在**建单之前**就被拒(见 _first_frame_url),不会先花钱再发现。
+        self._uploader = uploader
 
-    @property
-    def _protocol(self) -> OpenAIVideoProtocol:
-        # 每次现取:key 由 config 注入,provider 建好之后 config 仍可能被换。
+    def _protocol_for(self, model: str | None):
+        """按登记的 family 取协议面 —— 对照出图侧的 ``SufyImageProvider._face``。
+
+        分派点必须吃 model 而不是放构造函数里:网关每一跳都可能换型号,一个 provider
+        实例要能同时伺候 kling 与 veo;构造时定死的话,跨面兜底那一跳会用错形状发出去。
+
+        ``model`` 为空时退回 OpenAI 面 —— 那是历史调用点(``poll_i2v`` 没带型号)的形状,
+        而 veo 的单据在那条面上取不到,所以建单时一定要把型号传下来。
+        """
+        from windup_framework.gateway.registry import FAMILIES
+        from windup_framework.gateway.types import Family
+
+        if FAMILIES.get(model or "") is Family.VIDEO_FAL_QUEUE:
+            # 每次现取:key 由 config 注入,provider 建好之后 config 仍可能被换。
+            # 按型号分派而不是一律给 veo 的面:同在 FAL 队列面上,veo 有四个必填项与
+            # "首帧必须公网 URL"的硬约束,kling 一个都不适用。
+            return fal_video_protocol(
+                model or "", self._cfg.api_key, base_url=self._cfg.normalized_base_url
+            )
         return OpenAIVideoProtocol(self._cfg.api_key)
+
+    def _first_frame_url(self, first_frame: bytes, size: str) -> str:
+        """首帧 bytes → 公网 URL。传的是 ``fit_first_frame`` 的产物,不是原始母版。
+
+        必须同一份:补边/缩放决定了成片画幅,而 ``aspect_ratio`` 又是按这个 ``size``
+        推的;传原图会让"我们声明的画幅"和"上游实际看到的图"对不上。
+        """
+        if self._uploader is None:
+            raise RuntimeError(
+                "veo 首帧只吃公网 URL,但本 provider 没有注入 uploader;"
+                "组装层要传 FirstFrameUploader 进来"
+            )
+        return self._uploader.upload(fit_first_frame(first_frame, size), "image/jpeg")
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
@@ -120,16 +156,33 @@ class SufyVideoProvider(VideoProvider):
         model: str,
     ) -> AdapterResult:
         """一次 POST 建单。成功: ok=True, job_id, body=b"", maybe_billed=True。"""
-        call = self._protocol.build_submit(
-            VideoRequest(
-                model=model,
-                prompt=prompt,
-                seconds=seconds,
-                size=size,
-                mode=self._mode,
-                first_frame=first_frame,
-            )
+        protocol = self._protocol_for(model)
+        req = VideoRequest(
+            model=model,
+            prompt=prompt,
+            seconds=seconds,
+            size=size,
+            mode=self._mode,
+            first_frame=first_frame,
         )
+        if isinstance(protocol, VeoQueueVideoProtocol):
+            # 只有这一面需要先上传、且有一组建单前的硬断言,所以 try 只包住它 ——
+            # 包住 kling 那条会顺手改掉一条跑在线上的路径的失败语义,而那不是本次要动的东西。
+            # 失败一律记 maybe_billed=False:这一步还没碰上游,和"发出去了但不知道结果"
+            # 是两回事,混起来会让账面凭空多出没发生的花费,也会让本可以直接重试的失败
+            # 被当成可能已计费而不敢重发。
+            try:
+                req = replace(req, first_frame_url=self._first_frame_url(first_frame, size))
+                call = protocol.build_submit(req)
+            except (ValueError, RuntimeError) as exc:
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.UNREACHED,
+                    maybe_billed=False,
+                    edge_fingerprint=f"建单前被拒: {exc}",
+                )
+        else:
+            call = protocol.build_submit(req)
         with self._client() as client:
             try:
                 resp = client.request(
@@ -137,34 +190,48 @@ class SufyVideoProvider(VideoProvider):
                 )
             except httpx.TransportError as exc:
                 return _transport_result(exc)
-        return self._protocol.parse_submit(resp)
+        return protocol.parse_submit(resp)
 
-    def inspect_job(self, job_id: str) -> AdapterResult:
+    def inspect_job(self, job_id: str, model: str | None = None) -> AdapterResult:
         """单次 GET 任务状态,不 sleep、不下载。
 
         completed: ``ok=True``,视频 URL 放 ``edge_fingerprint``(Gateway poll 靠这个
         去 ``download_completed``)。进行中: ``ok=False``,``error_type is None``。
-        """
-        with self._client() as client:
-            resp = _poll_get(client, self._protocol.build_poll(job_id))
-        parsed = self._protocol.parse_poll(resp, job_id)
-        if parsed.error_type is not None:
-            return parsed
-        if parsed.ok:
-            url = parsed.result_url
-            if not url:
-                return AdapterResult(
-                    ok=False,
-                    error_type=ModelErrorType.INVALID_RESPONSE,
-                    job_id=job_id,
-                    maybe_billed=True,
-                    job_status="completed",
-                    edge_fingerprint="completed 但没有视频 URL",
-                )
-            return replace(parsed, edge_fingerprint=url)
-        return parsed
 
-    def follow_job(self, job_id: str) -> AdapterResult:
+        ``model`` 决定用哪个协议面。不传时退回 OpenAI 面 —— 这是 kling 系的老形状,
+        veo 的单据在那条路径上是 404,所以异步轮询那条链必须把型号一路带下来。
+        """
+        protocol = self._protocol_for(model)
+        with self._client() as client:
+            resp = _poll_get(client, protocol.build_poll(job_id))
+            parsed = protocol.parse_poll(resp, job_id)
+            if parsed.error_type is not None or not parsed.ok:
+                return parsed
+            # FAL 队列面的成败不在轮询这一步显形:成功与失败的任务 ``/status`` 都是
+            # 200 + COMPLETED,只有取结果那一步才分得开。OpenAI 面的 build_fetch 恒为
+            # None,于是这一段对 kling 是空操作。
+            fetch = protocol.build_fetch(job_id)
+            if fetch is not None:
+                parsed = protocol.parse_fetch(_poll_get(client, fetch), job_id)
+                if parsed.error_type is not None or not parsed.ok:
+                    return parsed
+        url = parsed.result_url
+        if not url:
+            return AdapterResult(
+                ok=False,
+                error_type=ModelErrorType.INVALID_RESPONSE,
+                job_id=job_id,
+                maybe_billed=True,
+                job_status="completed",
+                edge_fingerprint="completed 但没有视频 URL",
+            )
+        # 状态值统一成小写 ``completed``:两个面的字面量不同(FAL 是 ``COMPLETED``),
+        # 而 follow_job 与 VideoGateway.poll_i2v 都按这个字符串判成片就绪 ——
+        # 不归一化的话 veo 会一直被当成"还在跑",直到轮询预算耗光才报超时,
+        # 而视频其实早就生成好、钱也早就花了。
+        return replace(parsed, edge_fingerprint=url, job_status="completed")
+
+    def follow_job(self, job_id: str, model: str | None = None) -> AdapterResult:
         """轮询已建单据 + 下载。poll GET 522/525 该次再试 1 次,不新开单。"""
         poll_t0 = time.monotonic()
         poll_count = 0
@@ -195,7 +262,7 @@ class SufyVideoProvider(VideoProvider):
                 break
             time.sleep(wait)
             wait = min(wait * 2, self._poll)
-            snap = self.inspect_job(job_id)
+            snap = self.inspect_job(job_id, model)
             poll_count += 1
             last_status = snap.job_status
             if snap.ok and snap.job_status == "completed":
@@ -253,7 +320,7 @@ class SufyVideoProvider(VideoProvider):
                 f"i2v 建单失败(HTTP {submitted.http_status} {submitted.error_type}): "
                 f"{submitted.edge_fingerprint}"
             )
-        followed = self.follow_job(submitted.job_id)
+        followed = self.follow_job(submitted.job_id, self._model)
         if followed.ok:
             return followed.body
         if followed.error_type is ModelErrorType.TIMEOUT:
@@ -384,18 +451,24 @@ def _download(client: httpx.Client, url: str, tries: int = 3) -> bytes:
 #     其余各家的档位枚举各不相同。
 
 
-# ── FAL 队列面（veo / seedance / vidu）已移除 ────────────────────────────────
+# ── FAL 队列面:veo3.1 已接回,seedance / vidu 仍未接 ─────────────────────────
 #
-# 曾有一整套 FalQueueVideoProvider + FirstFrameUploader + 端点映射表（412 行、28 条
-# 测试）。删掉的理由与 GenRoute 只列有实现的路线是同一条：**它从未被真实调用过**
-# —— app / ai_engine 里零引用，产品链路走不到，而"代码在仓里"会让人以为该能力已具备。
+# 这段原本记的是"整套 FalQueueVideoProvider 已删除,理由是它从未被真实调用过"。
+# veo3.1 现已接进 CHARACTER_ACTION 链(藏在 AI_VIDEO_ALLOW_VEO 后面,默认关),
+# 那条理由对它不再成立;seedance / vidu 仍然零引用,对它们仍然成立 —— 谁要接谁
+# 连同一次真实调用一起加回,别只把代码放进仓里。
 #
-# 真要接 veo / seedance 时连同一次真实调用一起加回。届时的两个已知事实（实测挣得，
-# 别再摸索一遍）：
-#   1. FAL 面只吃**公网 URL**，不吃 base64；塞 base64 会 status=queued 之后在生成阶段
-#      才 failed，费用可能已经产生。
-#   2. 鉴权头是 `Authorization: Key <k>`，不是 `Bearer`；路径与 /v1 平级，不是它的子路径。
-# 归档实测记录见项目参考资料（图生视频 API 实测文档）。
+# 两条实测事实(挣来的,别再摸索一遍):
+#   1. 鉴权头是 `Authorization: Key <k>`,不是 `Bearer`;路径与 /v1 平级,不是子路径。
+#   2. 首帧形态:本文件里有**两条互相矛盾**的实测记录,接的时候按"只吃公网 URL"实现。
+#      - 上面那段(2026-08-25,#569)说字段值可以是 base64 dataURI,并给了 veo3.1 喂
+#        纯中灰图、产物首帧同为纯中灰的证据;
+#      - 这段(2026-08-11 起)说 FAL 面只吃公网 URL,塞 base64 会 status=queued 之后
+#        在生成阶段才 failed,而费用可能已经产生。
+#      没有复测就不裁决,而两条路的代价不对称:URL 在两种说法下都成立,base64 只在
+#      其中一种下成立,且它错的那一面要收钱。所以 veo 走 URL,并在建单前就拒掉
+#      非 http(s) 的首帧(见 VeoQueueVideoProtocol)。真要省掉这次上传,得先拿一次
+#      带账单的复测来推翻其中一条,再回来改这段注释。
 
 
 DEFAULT_IMAGE_MODEL = "gpt-image-2"

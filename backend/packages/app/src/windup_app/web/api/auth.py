@@ -14,13 +14,15 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.user.model import (
+    EmailChangePasswordInput,
     RegisterInput,
     ResetPasswordInput,
+    SetPasswordInput,
     UpdateNicknameInput,
     User,
     UserView,
 )
-from windup_app.server.user.service import service
+from windup_app.server.user.service import _has_password, service
 
 logger = logging.getLogger("windup.auth.api")
 
@@ -85,6 +87,12 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class SetPasswordRequest(BaseModel):
+    """设置初始密码请求。"""
+
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class UpdateNicknameRequest(BaseModel):
     """修改昵称请求。"""
 
@@ -98,6 +106,15 @@ class ResetPasswordRequest(BaseModel):
     code: str = Field(
         min_length=6, max_length=6, description="reset_password 用途的验证码"
     )
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class EmailChangePasswordRequest(BaseModel):
+    """当前登录账号的邮箱验证码改密请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(pattern=r"^\d{6}$")
     new_password: str = Field(min_length=8, max_length=128)
 
 
@@ -124,6 +141,33 @@ class UserOut(BaseModel):
     nickname: str | None = None
     email_verified_at: str | None = None
     status: int = 0
+    has_password: bool = False
+
+
+def _user_out_from_orm(user: User) -> UserOut:
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        nickname=user.nickname,
+        email_verified_at=user.email_verified_at.isoformat()
+        if user.email_verified_at
+        else None,
+        status=user.status,
+        has_password=_has_password(user.password_hash),
+    )
+
+
+def _user_out_from_view(user: UserView) -> UserOut:
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        nickname=user.nickname,
+        email_verified_at=user.email_verified_at.isoformat()
+        if user.email_verified_at
+        else None,
+        status=int(user.status),
+        has_password=user.has_password,
+    )
 
 
 # -- 路由 ----------------------------------------------------------------
@@ -196,9 +240,9 @@ def login_by_code(body: LoginByCodeRequest, session: Session = Depends(get_sessi
 
 
 @router.post("/refresh", response_model=Response[TokenResponse])
-def refresh(body: RefreshRequest):
+def refresh(body: RefreshRequest, session: Session = Depends(get_session)):
     """刷新 token。"""
-    result = service.refresh_tokens(body.refresh_token)
+    result = service.refresh_tokens(session, body.refresh_token)
     return Response.success(
         TokenResponse(
             access_token=result.access_token,
@@ -225,17 +269,7 @@ def get_me(request: Request, session: Session = Depends(get_session)):
         from windup_common.exceptions import BizException
 
         raise BizException("用户不存在", code=BizCode.NOT_FOUND)
-    return Response.success(
-        UserOut(
-            id=user.id,
-            email=user.email,
-            nickname=user.nickname,
-            email_verified_at=user.email_verified_at.isoformat()
-            if user.email_verified_at
-            else None,
-            status=user.status,
-        )
-    )
+    return Response.success(_user_out_from_orm(user))
 
 
 @router.post("/change-password", response_model=Response[None])
@@ -254,6 +288,47 @@ def change_password(
             (),
             {"old_password": body.old_password, "new_password": body.new_password},
         )(),
+    )
+    return Response.success(None, message="密码修改成功")
+
+
+@router.post("/set-password", response_model=Response[None])
+def set_password(
+    body: SetPasswordRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """设置初始密码（仅未设密码用户）。"""
+    current_user = request.state.current_user
+    service.set_password(
+        session,
+        current_user.id,
+        SetPasswordInput(new_password=body.new_password),
+    )
+    return Response.success(None, message="密码设置成功")
+
+
+@router.post("/change-password/send-code", response_model=Response[None])
+def send_password_change_code(request: Request):
+    """向当前登录账号的邮箱发送改密验证码。"""
+    service.send_verification_code(
+        request.state.current_user.email,
+        "change_password",
+    )
+    return Response.success(None, message="验证码已发送")
+
+
+@router.post("/change-password/confirm", response_model=Response[None])
+def change_password_by_email(
+    body: EmailChangePasswordRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """核验当前登录账号的邮箱验证码并修改密码。"""
+    service.change_password_by_email(
+        session,
+        request.state.current_user.id,
+        EmailChangePasswordInput(code=body.code, new_password=body.new_password),
     )
     return Response.success(None, message="密码修改成功")
 
@@ -281,15 +356,4 @@ def update_nickname(
     user_view = service.update_nickname(
         session, current_user.id, UpdateNicknameInput(nickname=body.nickname)
     )
-    return Response.success(
-        UserOut(
-            id=user_view.id,
-            email=user_view.email,
-            nickname=user_view.nickname,
-            email_verified_at=user_view.email_verified_at.isoformat()
-            if user_view.email_verified_at
-            else None,
-            status=user_view.status,
-        ),
-        message="昵称修改成功",
-    )
+    return Response.success(_user_out_from_view(user_view), message="昵称修改成功")

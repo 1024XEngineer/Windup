@@ -8,6 +8,7 @@
 POST /generation/image                     提交角色图片生成任务
 POST /generation/four-view                 提交四向立绘 sheet
 POST /generation/eight-view                提交八向立绘 sheet
+POST /generation/first-frame               提交锁定朝向的动作首帧
 POST /generation/action                    提交角色动作生成任务
 GET  /generation/tasks/{task_id}           查询任务状态
 GET  /generation/tasks/{task_id}/stream    SSE 订阅任务进度
@@ -44,14 +45,15 @@ from windup_framework.mq.publisher import MqPublisher
 from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.mq.catalog import (
-    GENERATION_STREAM,
     msg_type_for_generation,
+    stream_for_msg_type,
 )
 from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterDirectionSetInput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     CharacterViewSheetInput,
     GenerationTask,
@@ -331,6 +333,34 @@ class CharacterViewSheetGenerateRequest(BaseModel):
     num_images: int = Field(default=1, ge=1, le=4)
 
 
+class CharacterFirstFrameGenerateRequest(BaseModel):
+    """四向 / 八向动作首帧:以该朝向立绘为参考,锁住朝向后出动作起手姿态。"""
+
+    model_config = ConfigDict(extra="forbid")
+    project_id: int = Field(gt=0)
+    character_id: int = Field(gt=0)
+    reference_image_url: str
+    prompt: str
+    negative_prompt: str = ""
+    width: int = Field(default=1024, ge=64, le=2048)
+    height: int = Field(default=1024, ge=64, le=2048)
+    num_images: int = Field(default=3, ge=1, le=4)
+    direction: ActionDirection
+    action_type: ActionType
+
+    @model_validator(mode="after")
+    def require_prompt_and_heading_template(self):
+        prompt = (self.prompt or "").strip()
+        if not prompt:
+            raise ValueError("动作首帧必须提供动作描述")
+        self.prompt = prompt
+        url = (self.reference_image_url or "").strip()
+        if not url:
+            raise ValueError("动作首帧必须提供该朝向已确认的立绘")
+        self.reference_image_url = url
+        return self
+
+
 class CharacterActionGenerateRequest(BaseModel):
     """提交角色动作生成任务。"""
 
@@ -411,9 +441,11 @@ class GenerationTaskOut(BaseModel):
     input_payload: dict | None = None
     result: dict | None = None
     error_message: str | None = None
+    # pending:比本任务更早、别人未结束的条数;自己的单 / running / 终态为 0。
+    queue_ahead: int = 0
 
 
-def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
+def _task_to_out(session: Session, task: GenerationTask) -> GenerationTaskOut:
     """领域 dataclass → 响应模型。"""
     result_dict = None
     if task.result is not None:
@@ -426,12 +458,25 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
         input_payload=task.input_payload,
         result=result_dict,
         error_message=task.error_message,
+        queue_ahead=task_repo.queue_ahead_for(session, task),
     )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 端点
 # ══════════════════════════════════════════════════════════════════════════════
+
+
+def _require_video_model_allowed(model: str | None, user_id: int) -> None:
+    """受限视频型号只对逐个列出的用户开放。
+
+    在 HTTP 边界就拒:任务还没建、积分还没冻,拒起来干净。编排层另有同一道判定,
+    那不是冗余 —— 任务可能被重排或重投,只在这里拦一次,绕过它的路径就直接花钱。
+    """
+    from windup_framework.gateway.registry import USER_GATED_MODELS, is_allowed_for_user
+
+    if model in USER_GATED_MODELS and not is_allowed_for_user(model, user_id):
+        raise BizException(f"视频模型 {model} 未对当前账号开放", code=403)
 
 
 def _get_project_or_raise(
@@ -483,6 +528,93 @@ def _outfit_model_3d_url(character: Character, outfit_id: str | None) -> str | N
     return (outfit.model_3d_url or "").strip() or None
 
 
+#: 一个 3D 资产下最多能有几个动作。
+#:
+#: 这条是**产品限额**不是技术限制:三渲二的动作由浏览器出帧,对我们几乎零成本,
+#: 限的是本期试用范围。作用域取"每个 3D 资产"而不是"每个用户":动作是从模型生成
+#: 出来的,换个模型就是另一批动作;按用户总数算的话,建了第二个模型却分不到名额。
+#: 要改成按用户总数,把 ``_owned_3d_action_count`` 的统计范围换掉即可。
+MAX_ACTIONS_PER_3D_ASSET = 3
+
+
+def _require_3d_action_quota(
+    character: Character, outfit_id: str | None, user_id: int | None = None,
+) -> None:
+    """三渲二动作的条数上限。**只管三渲二** —— i2v 那条路线不受此限。
+
+    在 HTTP 边界就拒:任务还没建、积分还没冻,拒起来干净;而超限这件事与用户输入无关,
+    让它走到执行阶段才失败的话,用户看到的是通用的"生成失败",不知道是撞了限额。
+
+    ``user_id`` 在白名单里就免限(组内做素材)。``None`` 时照常限 —— 拿不到用户身份
+    时的默认方向是**受限**,不是放行。
+    """
+    from windup_app.web.api.render3d import is_unlimited_3d
+
+    if user_id is not None and is_unlimited_3d(user_id):
+        return
+    if not outfit_id:
+        return
+    try:
+        data = CharacterData.model_validate(character.character_data or {})
+    except ValidationError:
+        # 与 ``_outfit_model_3d_url`` 同一个取舍:结构脏了不该让生成起不来。
+        # 这里放行的后果只是少拦一次,而拦错的后果是用户被卡住且看不出原因。
+        return
+    outfit = next((o for o in data.outfits if o.id == outfit_id), None)
+    if outfit is None or not (outfit.model_3d_url or "").strip():
+        return                      # 没有 3D 资产 = 走 i2v,不归本闸管
+    if len(outfit.actions) >= MAX_ACTIONS_PER_3D_ASSET:
+        raise BizException(
+            f"这个 3D 角色已经有 {len(outfit.actions)} 个动作了,"
+            f"本期每个 3D 角色最多 {MAX_ACTIONS_PER_3D_ASSET} 个。"
+            "删掉一个再来,或改走视频路线。",
+            code=BizCode.BAD_REQUEST,
+        )
+def _outfit_rigged_motions(character: Character, outfit_id: str | None) -> dict[str, str]:
+    """这个造型**实际烘好了**哪些动作片段。判据取自落点,不取全局常量。
+
+    取自落点的理由与 ``Render3DAssetState`` 那条一样:状态由落点推出来,不单独存一份。
+    读常量的话,常量一改,**已经建好的**资产就开始声称自己会另一个动作,而渲出来的仍是
+    旧那段 —— 帧数、时长、成色全部正常的静默错。
+    """
+    if not outfit_id:
+        return {}
+    try:
+        data = CharacterData.model_validate(character.character_data or {})
+    except ValidationError:
+        return {}
+    outfit = next((o for o in data.outfits if o.id == outfit_id), None)
+    if outfit is None:
+        return {}
+    # 只把落点原样读出来。**存量兼容(只有 model_3d_url 没有这张表)由编排层兜** ——
+    # 那边已经有同一条 `if model_url and not baked: baked = {BUILD_MOTION: model_url}`,
+    # 在这里再兜一次既是第二真相源,又会让 web 层经 render3d_assets 连到 ai_engine,
+    # 破坏「入口层不经 ai_engine 直连」那条 import 契约(CI 逮到,本地漏跑了 lint-imports)。
+    return dict(outfit.rigged_motions or {})
+
+def _character_stance(character: Character) -> CharacterStance | None:
+    """角色存的体型;没存过就给 None(让下游用它自己的默认值)。
+
+    返回 None 而不是直接给 BIPED:默认值只该由 ``CharacterCard.stance`` 定义一次。
+    在这里再兜一个,就是第二真相源 —— 两处默认值一定会各自漂。
+
+    ``character_data`` 是裸 dict(存量 96 个角色都没有这个键),按契约解析会因为别的
+    字段不合规而整条炸掉,而这里只要一个字段。取不到就当没存过。
+    """
+    data = character.character_data
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("stance")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return CharacterStance(raw)
+    except ValueError:
+        # 存了个不认识的值 —— 当没存过,别让一个脏字段挡住整条生成。
+        logger.warning("角色 %s 的 stance=%r 不是合法取值,按未设置处理", character.id, raw)
+        return None
+
+
 def _require_master(model_3d_url: str | None, reference_image_urls: list[str]) -> None:
     """动作生成拿不到母版就当场拒收,不收下一个注定在执行阶段失败的任务。"""
     # 判据照抄执行器的取母版逻辑(``ActionTaskExecutor._produce_action``):有 3D 资产走
@@ -528,7 +660,7 @@ def _publish_generation_after_commit(
     msg_type = msg_type_for_generation(task_type)
     message_id = publisher.enqueue(
         session,
-        stream=GENERATION_STREAM,
+        stream=stream_for_msg_type(msg_type),
         msg_type=msg_type,
         payload={"task_id": task_id, "task_type": task_type},
         dedupe_key=dedupe_key or f"generation:{task_id}",
@@ -570,7 +702,7 @@ def submit_image_generation(
         task_id=task.id,
         task_type=task.task_type.value,
     )
-    return Response.success(_task_to_out(task), message="任务已提交")
+    return Response.success(_task_to_out(session, task), message="任务已提交")
 
 
 @router.post("/image-set", response_model=Response[GenerationTaskOut])
@@ -615,7 +747,7 @@ def submit_direction_set_generation(
             task_id=task.id,
             task_type=task.task_type.value,
         )
-    return Response.success(_task_to_out(task), message="方向集任务已提交")
+    return Response.success(_task_to_out(session, task), message="方向集任务已提交")
 
 
 def _submit_view_sheet(
@@ -657,7 +789,7 @@ def _submit_view_sheet(
         task_id=task.id,
         task_type=task.task_type.value,
     )
-    return Response.success(_task_to_out(task), message="任务已提交")
+    return Response.success(_task_to_out(session, task), message="任务已提交")
 
 
 @router.post("/four-view", response_model=Response[GenerationTaskOut])
@@ -694,6 +826,49 @@ def submit_eight_view_generation(
     )
 
 
+@router.post("/first-frame", response_model=Response[GenerationTaskOut])
+def submit_first_frame_generation(
+    body: CharacterFirstFrameGenerateRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[GenerationTaskOut]:
+    """提交锁定朝向的动作首帧:以该朝向立绘为参考,锁住朝向后换成动作起手姿态。"""
+    user_id = request.state.current_user.id
+    project = _get_project_or_raise(session, body.project_id, user_id)
+    if project.directional_movement not in (2, 3):
+        raise BizException(
+            "锁定朝向的动作首帧只用于四向或八向项目",
+            code=BizCode.BAD_REQUEST,
+        )
+    _validate_project_size(project, body.width, body.height)
+    _validate_project_direction(project, body.direction)
+    _get_character_or_raise(session, body.character_id, body.project_id)
+    input_data = CharacterFirstFrameInput(
+        character_id=body.character_id,
+        reference_image_url=body.reference_image_url,
+        prompt=body.prompt,
+        negative_prompt=body.negative_prompt,
+        width=body.width,
+        height=body.height,
+        num_images=body.num_images,
+        direction=body.direction,
+        action_type=body.action_type,
+    )
+    task = generation_service.generate_character_first_frame(
+        session,
+        user_id=user_id,
+        project_id=body.project_id,
+        input=input_data,
+    )
+    _publish_generation_after_commit(
+        session,
+        request.app.state.mq_publisher,
+        task_id=task.id,
+        task_type=task.task_type.value,
+    )
+    return Response.success(_task_to_out(session, task), message="任务已提交")
+
+
 @router.post("/action", response_model=Response[GenerationTaskOut])
 def submit_action_generation(
     body: CharacterActionGenerateRequest,
@@ -702,10 +877,12 @@ def submit_action_generation(
 ) -> Response[GenerationTaskOut]:
     """提交角色动作生成任务:建 PENDING 记录立即返回,实际生成后台跑。"""
     user_id = request.state.current_user.id
+    _require_video_model_allowed(body.video_model, user_id)
     project = _get_project_or_raise(session, body.project_id, user_id)
     _validate_project_direction(project, body.direction)
     character = _get_character_or_raise(session, body.character_id, body.project_id)
     model_3d_url = _outfit_model_3d_url(character, body.outfit_id)
+    _require_3d_action_quota(character, body.outfit_id, user_id)
     _require_master(model_3d_url, body.reference_image_urls)
     input_data = CharacterActionInput(
         character_id=body.character_id,
@@ -722,7 +899,14 @@ def submit_action_generation(
         # 路线选择在这里定死并写进入参,而不是留给编排层现查:这样"这次走的哪条路线"
         # 在任务入参上就是可见的,排查时不用去猜当时 DB 是什么状态。
         model_3d_url=model_3d_url,
-        stance=body.stance,
+        rigged_motions=_outfit_rigged_motions(character, body.outfit_id),
+        # 请求没显式给就取角色上存的那个。与 model_3d_url 同一个模式:web 层读
+        # character_data、写进入参,这样"这次按什么体型算的"在任务入参上就是可见的,
+        # 排查时不用去猜当时 DB 是什么状态。
+        #
+        # 请求优先于角色:前者是这次生成的显式意图(脚本 / 调试会用),而角色上那个是
+        # 常态。反过来的话,角色一旦存错就没有任何办法单次绕过。
+        stance=body.stance if body.stance is not None else _character_stance(character),
     )
     task = generation_service.generate_character_action(
         session,
@@ -736,7 +920,7 @@ def submit_action_generation(
         task_id=task.id,
         task_type=task.task_type.value,
     )
-    return Response.success(_task_to_out(task), message="任务已提交")
+    return Response.success(_task_to_out(session, task), message="任务已提交")
 
 
 @router.get("/tasks/{task_id}", response_model=Response[GenerationTaskOut])
@@ -754,7 +938,7 @@ def get_task(
         # 归属两道,与 stream_task 同口径:只查项目不够,任意已认证用户拿自己的
         # project_id 配上别人的 task_id 就能读到别人的产物 URL。
         raise BizException("任务不存在", code=BizCode.NOT_FOUND)
-    return Response.success(_task_to_out(task))
+    return Response.success(_task_to_out(session, task))
 
 
 @router.post(
@@ -787,7 +971,7 @@ def retry_failed_directions(
             f"{billing.attempt_for_task(restarted.task_type, restarted.input_payload)}"
         ),
     )
-    return Response.success(_task_to_out(restarted), message="失败方向已重新提交")
+    return Response.success(_task_to_out(session, restarted), message="失败方向已重新提交")
 
 
 @router.get("/tasks/{task_id}/stream")

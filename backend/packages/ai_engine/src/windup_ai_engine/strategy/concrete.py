@@ -12,6 +12,8 @@ matte 抠图 → 像素化。返回对齐前的 RGBA PNG 帧（对齐 / 打包�
 
 from __future__ import annotations
 
+import contextvars
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -31,7 +33,13 @@ from windup_framework.providers import ImageProvider, MatteProvider, VideoProvid
 from windup_ai_engine._imgio import from_png as _img
 from windup_ai_engine._imgio import to_png as _png
 from windup_ai_engine.master_prep import prepare_master
-from windup_ai_engine.ports import ProgressPort, PromptAdapterPort, PromptRejected, RenderPlan
+from windup_ai_engine.ports import (
+    ProgressPort,
+    PromptAdapterPort,
+    PromptRejected,
+    RenderPlan,
+    RigFacts,
+)
 from windup_ai_engine.postprocess import master_pixel_spec, pixelate_frames
 from windup_ai_engine.slicing import (
     extract_frames_at,
@@ -85,11 +93,12 @@ class VideoFrameStrategy(DerivationStrategy):
         # attack 同样进不了那张表:它还要按运动拓扑选提示词分支。archetype 缺省时不在这里
         # 兜一个默认值 —— 缺省只由 build_attack_prompt 定义一次,写两处会各自漂移。
         if action.action is ActionType.ATTACK:
+            detail = self._detail_clause(action, stance)
             if action.archetype is None:
-                body = build_attack_prompt(facing=action.facing)
+                body = build_attack_prompt(facing=action.facing, detail=detail)
             else:
                 body = build_attack_prompt(
-                    facing=action.facing, archetype=action.archetype
+                    facing=action.facing, archetype=action.archetype, detail=detail
                 )
             return with_direction_lock(body, action.direction)
         builders = {
@@ -97,7 +106,47 @@ class VideoFrameStrategy(DerivationStrategy):
             ActionType.IDLE: build_idle_prompt,
         }
         build = builders.get(action.action, build_walk_prompt)
-        return with_direction_lock(build(facing=action.facing), action.direction)
+        body = build(
+            facing=action.facing, detail=self._detail_clause(action, stance)
+        )
+        return with_direction_lock(body, action.direction)
+
+    def _detail_clause(self, action: ActionSpec, stance: CharacterStance) -> str:
+        """用户写的那句动作细节,过一遍适配器后交给模板。
+
+        前端把用户的一句自由文本拆成两半发过来:``action_type`` 选哪条已调好的管线
+        (走路要腿交替、跳跃要腾空 —— 这些运动拓扑是模板挣来的,也正是分类到这个类型
+        的理由),``custom_prompt`` 说这次具体要什么。本层原先只读前一半,后一半连派生
+        入口都没进,而任务照常成功、照常扣费、帧数时长成色全对(生产 124/124 条非 custom
+        任务全中,见 #838)。
+
+        叠加而不是二选一:替换模板会丢掉运动拓扑,丢掉它就等于把这次生成降级成 custom;
+        丢掉细节则是本 issue 要修的那个静默丢弃。
+
+        Raises:
+            PromptRejected: 这段描述送进模型必然出坏产物(如给无肢角色写"手臂")
+                → server 映射 4xx 让用户改。下一步就是付费调用,不能带着它往下走。
+        """
+        clause = (action.detail or "").strip()
+        if not clause:
+            return ""
+        try:
+            adapted = self._adapter.adapt(
+                clause,
+                kind="i2v",
+                facing=action.facing,
+                stance=stance,
+                on_template=True,
+            )
+        except PromptRejected:
+            # 与下面那条分得很清:这不是组件不可用,是这段描述本身跑不出可用产物。
+            # 顺序也是约束:它是 ValueError 的子类,放到宽兜底后面就永远轮不上。
+            raise
+        except Exception:
+            # 适配器坏掉只该丢掉那层改写,不该把用户这句话一起丢掉 ——
+            # 丢掉就退化回本 issue 要修的那个静默丢弃。
+            return clause
+        return adapted.text
 
     def _custom_prompt(self, action: ActionSpec, stance: CharacterStance) -> str:
         """用户那句话先过适配器,再按声明的循环性收尾。
@@ -157,12 +206,17 @@ class VideoFrameStrategy(DerivationStrategy):
             raise TypeError("当前 VideoProvider 不支持 start_i2v")
         return start(framed, self._build_prompt(action, card.stance), seconds=5)
 
-    def poll_job(self, job_id: str, *, route_id: str | None = None) -> bytes | None:
-        """探一次。``None`` = 仍在跑;bytes = 成片;失败抛错。"""
+    def poll_job(
+        self, job_id: str, *, route_id: str | None = None, model: str | None = None
+    ) -> bytes | None:
+        """探一次。``None`` = 仍在跑;bytes = 成片;失败抛错。
+
+        ``model`` 要一路带到 provider:单据地址按协议面拼,面认错就查不到已经建好的单。
+        """
         poll = getattr(self._video, "poll_i2v", None)
         if poll is None:
             raise TypeError("当前 VideoProvider 不支持 poll_i2v")
-        snap = poll(job_id, route_id=route_id)
+        snap = poll(job_id, route_id=route_id, model=model)
         if snap.ok and snap.body:
             return snap.body
         if getattr(snap, "error_type", None) is None:
@@ -296,12 +350,64 @@ class PerFrameStrategy(DerivationStrategy):
 
 
 # Facing → 出帧台的朝向名。键名与前端导出模型的 ExportAction.sequences[].direction
+
+
+#: 这一次出帧算出来的骨架事实与位移轨。
+#:
+#: **不能挂在 strategy 实例上。** ``ActionTaskExecutor`` 是进程级单例,缓存的
+#: generator / strategy 被所有任务线程共用,而 action 并发默认 8 —— A 的 ``derive``
+#: 写完、A 的 ``_finish`` 读之前,B 的 ``derive`` 会把它覆盖,于是 A 的帧带着 B 的骨架
+#: 事实和 B 的位移轨(位移轨是每动作一份的)落库。帧、时长、成色全对,零报错。
+#:
+#: 用 ContextVar 而不是改 ``derive`` 的返回类型:那个形状是服务端渲与浏览器渲两个入口
+#: 共用的,为这一条改它会牵动两边。ContextVar 天然按线程/任务隔离,读写点都在同一次调用里。
+_DERIVED: contextvars.ContextVar[tuple[object, object] | None] = contextvars.ContextVar(
+    "windup_render3d_derived", default=None
+)
+
+
+def take_derived() -> tuple[object, object]:
+    """取走本次调用算出的 (rig, root_motion) 并清空。**取完即清**,免得下一次没算出来时读到上一次的。"""
+    got = _DERIVED.get()
+    _DERIVED.set(None)
+    return got if got is not None else (None, None)
 # 同域,不需要转换层。
 #
 # **值是真渲一遍量出来的,不能按方位名推。** 直觉上 "south = 朝观者",实际 n(yaw=90°)
 # 才是正面(奶白胸腹与口鼻可见,浅色像素占比 21.0%),s 是背面(8.5%)。两者主体像素数
 # 几乎相同,靠轮廓分不出正反,而单元测试也逮不到 —— 朝向错了但帧数、时长、成色全部正常。
 # 改这张表之前先渲一遍再量。
+def _root_motion_of(sheet, clip: str) -> list[tuple[float, float]] | None:
+    """从出帧台的 ``root_motion`` 里取本片段那一条。
+
+    出帧台按片段名归档(一个模型自带多个预设动作),这里只要当前渲的那一段。
+    形状是 ``{"unit":..., "times":[...], "disp":[[dx,dz],...], "total_span":...}``,
+    只取 ``disp`` —— 时长由 ``frame_durations`` 另算,``unit`` 是常量写在字段注释里。
+    """
+    # **不要再按片段名取一层。** 出帧台确实按片段名归档,但 ``bake_driver.mjs`` 交回
+    # ``meta`` 时已经拆过了(``root_motion: rootMotion[clip] ?? null``),
+    # ``sprite.py`` 原样透传 —— 所以到这里 ``sheet.root_motion`` 就是那一段本身。
+    # 再 ``.get(clip)`` 一次恒得 None,而服务端渲那条 100% 走这里:任务照常 COMPLETED、
+    # 帧数时长成色全对,只是位移轨永远是空的。
+    entry = sheet.root_motion if isinstance(sheet.root_motion, dict) else None
+    if not entry:
+        return None
+    disp = entry.get("disp")
+    if not isinstance(disp, list):
+        return None
+    out: list[tuple[float, float]] = []
+    for pair in disp:
+        # 逐条校验**两个**分量再解包。原来写成 ``for x, z in disp if isinstance(x, ...)``:
+        # 解包发生在守卫之前,长度不是 2 的条目照样 ValueError;而 z 是脏值时 float(z)
+        # 直接抛,穿出 derive 把任务打成失败。守卫命中时也不能丢掉这一条 —— 丢一条就让
+        # 位移轨比帧数短,索引静默错位。脏数据一律整条作废,不留半截。
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+                or not all(isinstance(v, (int, float)) for v in pair)):
+            return None
+        out.append((float(pair[0]), float(pair[1])))
+    return out
+
+
 def _coverage(png: bytes) -> float:
     """一帧的非透明像素占比。**与出帧台 ``__coverage`` 同一口径**:先缩到 128 宽再数
     ``alpha > 8`` —— 两边算法不同的话,客户端自检过了服务端再判一次会无故打回。
@@ -363,6 +469,7 @@ class RenderFrameStrategy(DerivationStrategy):
         self._material = material
         self._size = size or RENDER_SIZE
         self._min_coverage = min_coverage
+        # 最近一次出帧读到的骨架事实与位移轨,由 _finish 取走(见 derive)。
 
     def derive(
         self,
@@ -422,6 +529,18 @@ class RenderFrameStrategy(DerivationStrategy):
         # 而 ``want`` 恒非 None → ``direction`` 恒传入 → 出帧台恒把方向表裁成单条,
         # 那条分支在生产里无条件不成立。留着会让人以为多朝向已经算好了只是没带出来。
         progress.step("derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧")
+
+        # 出帧台读到的骨架事实与根骨位移轨此前算完即丢(#774)。放进 ContextVar 由
+        # CharacterGenerator._finish 取走 —— 见 ``_DERIVED`` 上方:挂实例字段会在并发下串味。
+        rig_facts = RigFacts(
+            bones=sheet.rig.bones,
+            root_bone=sheet.rig.root_bone,
+            bone_names=tuple(getattr(sheet.rig, "bone_names", ()) or ()),
+            skinned_meshes=sheet.rig.skinned_meshes,
+            vertices=sheet.rig.vertices,
+            available_clips=dict(sheet.available_clips or {}),
+        )
+        _DERIVED.set((rig_facts, _root_motion_of(sheet, plan.clip)))
 
         return self._stylize(frames, action, progress)
 

@@ -55,6 +55,17 @@ class WorkflowRunService(ABC):
         """分页查询项目下的执行记录，返回 (当前页数据, 总数)。"""
 
     @abstractmethod
+    def list_user_runs(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[WorkflowRun], int]:
+        """分页查询用户跨项目的执行记录，返回 (当前页数据, 总数)。"""
+
+    @abstractmethod
     def update_run(
         self,
         session: Session,

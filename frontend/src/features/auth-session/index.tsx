@@ -37,7 +37,14 @@ export interface AuthSessionValue {
   loginByCode(input: Parameters<UserApis['loginByCode']>[0]): Promise<AuthTokens>
   refreshCurrentUser(): Promise<User>
   updateNickname(nickname: string): Promise<User>
+  setPassword(
+    input: Parameters<UserApis['setPassword']>[0],
+    options?: { keepSession?: boolean },
+  ): Promise<void>
   changePassword(input: Parameters<UserApis['changePassword']>[0]): Promise<void>
+  resetPassword(input: Parameters<UserApis['resetPassword']>[0]): Promise<void>
+  sendPasswordChangeCode(): Promise<void>
+  changePasswordWithCode(input: Parameters<UserApis['changePasswordWithCode']>[0]): Promise<void>
   logout(): Promise<void>
 }
 
@@ -350,9 +357,28 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
     },
     [apis, commitCurrentUser],
   )
+  const setPassword = useCallback(
+    async (input: Parameters<UserApis['setPassword']>[0], options?: { keepSession?: boolean }) => {
+      await apis.setPassword(input)
+      if (!options?.keepSession) clearSession('password-changed')
+    },
+    [apis, clearSession],
+  )
   const changePassword = useCallback(
     async (input: Parameters<UserApis['changePassword']>[0]) => {
       await apis.changePassword(input)
+      clearSession('password-changed')
+    },
+    [apis, clearSession],
+  )
+  const resetPassword = useCallback(
+    (input: Parameters<UserApis['resetPassword']>[0]) => apis.resetPassword(input),
+    [apis],
+  )
+  const sendPasswordChangeCode = useCallback(() => apis.sendPasswordChangeCode(), [apis])
+  const changePasswordWithCode = useCallback(
+    async (input: Parameters<UserApis['changePasswordWithCode']>[0]) => {
+      await apis.changePasswordWithCode(input)
       clearSession('password-changed')
     },
     [apis, clearSession],
@@ -372,17 +398,25 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
       loginByCode,
       refreshCurrentUser,
       updateNickname,
+      setPassword,
       changePassword,
+      resetPassword,
+      sendPasswordChangeCode,
+      changePasswordWithCode,
       logout,
     }),
     [
-      changePassword,
       login,
       loginByCode,
       logout,
       refreshCurrentUser,
       register,
+      changePassword,
+      resetPassword,
+      changePasswordWithCode,
+      sendPasswordChangeCode,
       sendCode,
+      setPassword,
       state,
       updateNickname,
     ],

@@ -5,6 +5,7 @@ export type {
   CreateWorkflowControllerOptions,
   GenerateActionOptions,
   GenerateCharacterTemplateOptions,
+  GenerateCharacterViewSheetOptions,
   PrepareQuickStartProject,
   PrepareQuickStartProjectOptions,
   StartCharacterGenerationInput,

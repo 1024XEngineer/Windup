@@ -271,7 +271,6 @@ def test_delete_character_cleans_card_thumbnails(mock_media_service, monkeypatch
         "/projects",
         json={
             "project_name": "缩略图清理",
-            "character_perspective": 1,
             "directional_movement": 1,
             "sprite_width": 64,
             "sprite_height": 64,

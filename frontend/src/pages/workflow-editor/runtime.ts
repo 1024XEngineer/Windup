@@ -1,6 +1,7 @@
 import type {
   ActionPreset,
   Character,
+  CharacterViewSheetCandidate,
   CharacterApis,
   ActionDirection,
   GenerationApis,
@@ -23,6 +24,7 @@ import {
   projectApis,
   render3DApis,
   workflowRunApis,
+  characterTemplatesFromViewSheetCells,
 } from '@/entities'
 import { createCharacterAssetPublisher } from '@/features/export'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
@@ -38,6 +40,10 @@ export interface WorkflowEditorSession {
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
     direction?: ActionDirection,
+  ): Promise<Character>
+  confirmCharacterViewSheet?(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    candidate: CharacterViewSheetCandidate,
   ): Promise<Character>
   /** 上传角色生成约束图；页面不接触 multipart 协议或用途枚举。 */
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
@@ -152,6 +158,7 @@ export async function createRealWorkflowEditorSession(
   const confirmCharacterTemplate = createCharacterTemplateConfirmer({
     controller,
     characterApis: dependencies.characterApis,
+    referenceDirection: project.directionalMovement === 'single' ? 'east' : 'south',
     getCurrentCharacter: () => currentCharacter,
     setCurrentCharacter: (character) => {
       currentCharacter = character
@@ -169,6 +176,44 @@ export async function createRealWorkflowEditorSession(
       return dependencies.mediaApis.upload(file, 'reference-image', signal)
     },
     confirmCharacterTemplate,
+    async confirmCharacterViewSheet(nodeId, candidate) {
+      if (!currentCharacter) throw new Error('当前 WorkflowRun 尚未关联 Character')
+      const south = candidate.cells.find((cell) => cell.direction === 'south')
+      if (!south || south.imageUrl !== currentCharacter.referenceImageUrl) {
+        throw new Error('方向 sheet 的南向格与已确认母版不一致')
+      }
+      const original = structuredClone(currentCharacter)
+      const updated = await dependencies.characterApis.update({
+        ...currentCharacter,
+        templates: characterTemplatesFromViewSheetCells(candidate.cells),
+      })
+      try {
+        await controller.confirmCharacterViewSheet(nodeId, candidate.cells)
+        currentCharacter = updated
+        return updated
+      } catch (cause) {
+        const shouldRollback = await shouldRollbackWorkflowChange((latest) => {
+          const template = latest.nodes.find((node) => node.id === nodeId)
+          return template?.type === 'character-template' && template.status === 'passed'
+        })
+        if (shouldRollback) {
+          try {
+            currentCharacter = await dependencies.characterApis.update({
+              ...original,
+              dataVersion: updated.dataVersion,
+            })
+          } catch (rollbackCause) {
+            currentCharacter = updated
+            reportAsyncError(
+              rollbackCause instanceof Error
+                ? rollbackCause
+                : new Error('方向 sheet 确认冲突后恢复角色资产失败'),
+            )
+          }
+        }
+        throw cause
+      }
+    },
     async publishReviewedAction(reviewNodeId) {
       if (!currentCharacter) throw new Error('当前 WorkflowRun 尚未关联 Character')
       const currentWorkflow = controller.getWorkflow()

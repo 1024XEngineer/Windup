@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from windup_framework.db import Base, engine
+from windup_framework.db import Base, SessionLocal, engine
 from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDetail  # noqa: F401
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
@@ -24,10 +24,17 @@ from windup_app.server.character.service import service as character_service
 from windup_app.server.project.model import Project  # noqa: F401
 from windup_app.server.project.service import service as project_service
 from windup_app.server.quota import model as quota_model  # noqa: F401
+from windup_app.server.sensitive_word.model import SensitiveWord  # noqa: F401
+from windup_app.server.sensitive_word.seed import seed_sensitive_words
+from windup_app.server.sensitive_word.service import (
+    SensitiveWordReloadSubscriber,
+    service as sensitive_word_service,
+)
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
 from windup_app.server.action_preset import ACTION_PRESETS
 from windup_app.web.api.action_preset import router as action_preset_router
+from windup_app.web.api.admin_quota import router as admin_quota_router
 from windup_app.web.api.agent import router as agent_router
 from windup_framework.mq.model import MqMessage  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
@@ -98,23 +105,34 @@ def print_banner() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """应用启动时建表，关闭时停止 SSE Subscriber。"""
+    """应用启动时建表和词库，关闭时停止 Redis subscribers。"""
     Base.metadata.create_all(engine)
+    session = SessionLocal()
+    try:
+        seeded = seed_sensitive_words(session)
+        session.commit()
+        sensitive_word_service.reload(session, prefer_cache=not seeded)
+    finally:
+        session.close()
     print_banner()
     from windup_app.web.api.generation import event_bus
 
-    subscriber = RedisTaskEventSubscriber(
+    sse_subscriber = RedisTaskEventSubscriber(
         lambda project_id, task_id, event, data: event_bus.publish(
             project_id, task_id, event, data,
         ),
     )
-    subscriber.start()
-    app.state.sse_subscriber = subscriber
+    sensitive_word_subscriber = SensitiveWordReloadSubscriber(sensitive_word_service)
+    sse_subscriber.start()
+    sensitive_word_subscriber.start()
+    app.state.sse_subscriber = sse_subscriber
+    app.state.sensitive_word_subscriber = sensitive_word_subscriber
     relay_pending_messages()
     try:
         yield
     finally:
-        subscriber.stop()
+        sensitive_word_subscriber.stop()
+        sse_subscriber.stop()
 
 
 def create_app() -> FastAPI:
@@ -158,6 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(media_router)
     app.include_router(generation_router)
     app.include_router(quota_router)
+    app.include_router(admin_quota_router)
     app.include_router(render3d_router)
     app.include_router(agent_router)
     app.include_router(action_preset_router)

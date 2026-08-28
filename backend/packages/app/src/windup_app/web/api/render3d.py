@@ -13,6 +13,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -21,6 +22,8 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
+from windup_app.server.project.model import Project
+from windup_common.models import CharacterStance
 from windup_app.server.orchestrator import client_bake, task_repo
 from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.character.service import service as character_service
@@ -29,6 +32,23 @@ from windup_app.web.api.character import get_character_with_auth
 logger = logging.getLogger("windup.render3d.api")
 
 router = APIRouter(prefix="/render3d", tags=["render3d"])
+
+
+class BuildAssetRequest(BaseModel):
+    """建 3D 资产的入参。
+
+    ``stance`` 必填、无默认:自动绑骨只支持双足,而四足/无肢从模型几何判不出来
+    (实测归档模型的包围盒比例完全重叠)。给默认值等于把「没声明」当成「双足」放行。
+    """
+
+    stance: CharacterStance
+    # 多视图重建的附加参考图:视角名 → 自家对象存储 URL。正面走造型母版,不在这里传。
+    # 视角名的合法取值由编排层校验(web 层不 import render3d 常量,那会经它连到
+    # ai_engine,破坏「入口层不经 ai_engine 直连」那条 import 契约)。
+    #
+    # 硬前提:各视图必须是**同一个角色、同一姿势、同一尺度**。侧/背视要以正面母版
+    # 做参考图 i2i 出来,各自文生等于送了三个人进去。传多少个视角计费都是统一 +10。
+    extra_view_urls: dict[str, str] | None = None
 
 
 class MasterPrecheckRequest(BaseModel):
@@ -53,6 +73,57 @@ def _precheck(request: Request):
     if precheck is None:
         raise BizException("母版预检服务未装配", code=BizCode.INTERNAL_ERROR)
     return precheck
+
+
+#: 每个用户最多同时持有的 3D 资产数。
+#:
+#: 这条是**产品限额**不是技术限制:一个 3D 资产 = 图生 3D 20 积分 + 绑骨 10 积分,
+#: 且后续动作全部复用它,所以它是这条路线上唯一的重成本点。
+MAX_ASSETS_PER_USER = 2
+
+
+def _unlimited_3d_user_ids() -> frozenset[int]:
+    """不受 3D 额度限制的用户(组内做素材)。配置里写坏的条目跳过,不让它变成"对所有人开放"。
+
+    与 veo 白名单**分开一个字段**:两件事的开关合并的话,给某人开 veo 会连带解掉他的
+    3D 额度,而那两笔钱的量级完全不同(veo 按秒计费,3D 是每资产 30 积分且可无限累积)。
+    """
+    from windup_framework.config.provider import settings as _cfg
+
+    out = set()
+    for part in str(getattr(_cfg, "render3d_unlimited_user_ids", "") or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return frozenset(out)
+
+
+def is_unlimited_3d(user_id: int) -> bool:
+    """这个账号免 3D 额度吗。**空名单时对谁都不成立** —— 判据的默认方向是"受限"。"""
+    return user_id in _unlimited_3d_user_ids()
+
+
+def _owned_asset_count(session: Session, user_id: int) -> int:
+    """该用户名下已经建成的 3D 资产数。
+
+    数的是**当前持有**而不是历史建过多少次 —— 弃掉一个就释放一个名额。理由是混元的
+    模型生成即最终、改不动,不合格只能弃掉重建;名额若不释放,两个坏模型就把用户永久
+    卡死在这条路线外面。
+
+    只数已落 ``model_3d_url`` 的。建造中的不计入:那需要逐造型去问资产存储,而并发建多个
+    的代价本来就由积分挡着(每个都真金白银扣),不值得为它多打一圈存储。
+    """
+    rows = session.execute(
+        select(Character.character_data)
+        .join(Project, Character.project_id == Project.id)
+        .where(Project.user_id == user_id)
+    ).scalars().all()
+    owned = 0
+    for data in rows:
+        for outfit in (data or {}).get("outfits", []):
+            if outfit.get("model_3d_url"):
+                owned += 1
+    return owned
 
 
 def _asset_key(character_id: int, outfit_id: str) -> str:
@@ -85,19 +156,38 @@ def _master_url_or_raise(outfit: dict) -> str:
     return url
 
 
-def _sync_model_url(session: Session, character: Character, outfit_id: str, url: str | None) -> None:
+def _sync_model_url(
+    session: Session,
+    character: Character,
+    outfit_id: str,
+    url: str | None,
+    motion: str | None = None,
+) -> None:
     """把建好的模型 URL 回写到 ``character_data``。
 
     回写发生在**读状态**这一步而不是后台线程里:后台线程没有请求作用域的 session,
     而三渲二那条路线的判据(``Outfit.model_3d_url``)不回写就永远是 None —— 资产建好了
     却依旧显示"该造型暂无绑骨 3D 模型",钱白花。
+
+    ``motion`` 给出这一份产物烘的是哪个动作,写进 ``rigged_motions``。一份绑骨产物只带
+    一个动作片段(接口一次只吃一个 MotionType),所以多动作 = 多份产物 = 这张表多几条;
+    **不能覆盖** ``model_3d_url`` —— 覆盖了的话用户为第二个动作付的钱会把第一个顶掉。
+    ``model_3d_url`` 只在它还空着时写(即主产物那一次)。
     """
     if not url:
         return
     data = CharacterData.model_validate(character.character_data or {})
     changed = False
     for outfit in data.outfits:
-        if outfit.id == outfit_id and outfit.model_3d_url != url:
+        if outfit.id != outfit_id:
+            continue
+        # 只有说得出这一份烘的是哪个动作时才记进表。说不出就只写主产物别名 ——
+        # 猜一个动作名记进去,等于声称这个资产会一个它其实不会的动作。
+        if motion and outfit.rigged_motions.get(motion) != url:
+            outfit.rigged_motions[motion] = url
+            changed = True
+        # 主产物那一次(第一份)同时写别名槽,后续动作不再动它。
+        if not (outfit.model_3d_url or "").strip():
             outfit.model_3d_url = url
             changed = True
     if not changed:
@@ -134,7 +224,8 @@ def get_outfit_asset(
     character = get_character_with_auth(session, character_id, user_id)
     _outfit_or_raise(character, outfit_id)
     view = _operations(request).view(_asset_key(character_id, outfit_id))
-    _sync_model_url(session, character, outfit_id, view["model_3d_url"])
+    _sync_model_url(session, character, outfit_id, view["model_3d_url"],
+                    motion=view.get("primary_motion"))
     return Response.success(view)
 
 
@@ -142,6 +233,7 @@ def get_outfit_asset(
 def build_outfit_asset(
     character_id: int,
     outfit_id: str,
+    body: BuildAssetRequest,
     request: Request,
     session: Session = Depends(get_session),
 ) -> Response[dict]:
@@ -149,11 +241,19 @@ def build_outfit_asset(
     user_id = request.state.current_user.id
     character = get_character_with_auth(session, character_id, user_id)
     outfit = _outfit_or_raise(character, outfit_id)
+    owned = _owned_asset_count(session, user_id)
+    if owned >= MAX_ASSETS_PER_USER and not is_unlimited_3d(user_id):
+        raise BizException(
+            f"每个账号最多同时持有 {MAX_ASSETS_PER_USER} 个 3D 角色，你已经有 {owned} 个。"
+            "弃掉其中一个就能再建。",
+            code=BizCode.BAD_REQUEST,
+        )
     operations = _operations(request)
     try:
         return Response.success(
             operations.build(_asset_key(character_id, outfit_id),
-                             _master_url_or_raise(outfit)),
+                             _master_url_or_raise(outfit), body.stance,
+                             body.extra_view_urls),
             message="已开始生成 3D 模型",
         )
     except ValueError as exc:
@@ -180,6 +280,45 @@ def approve_outfit_asset(
     return Response.success(view, message="已放行,开始绑骨")
 
 
+class AddMotionRequest(BaseModel):
+    """给已建好的 3D 资产追加一个动作片段。
+
+    ``motion`` 取 ``render3d_assets.ACTION_MOTIONS`` 里有对应预设的那几个
+    (walk / idle / jump);attack 与 custom 没有对应预设,继续走 i2v。
+    """
+
+    motion: str = Field(..., min_length=1)
+
+
+@router.post("/characters/{character_id}/outfits/{outfit_id}/motions", response_model=Response[dict])
+def add_outfit_motion(
+    character_id: int,
+    outfit_id: str,
+    body: AddMotionRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[dict]:
+    """给已建好的造型再烘一个动作片段。**按次计费的触发点**,只认用户的显式请求。
+
+    只花绑骨那一笔:图生 3D 的产物一直留着,不重付。一份绑骨产物只带一个动作片段
+    (接口一次只吃一个 MotionType),所以"这个角色会走也会跳"= 两份产物。
+    """
+    user_id = request.state.current_user.id
+    character = get_character_with_auth(session, character_id, user_id)
+    _outfit_or_raise(character, outfit_id)
+    operations = _operations(request)
+    key = _asset_key(character_id, outfit_id)
+    try:
+        view = operations.add_motion(key, body.motion)
+    except ValueError as exc:
+        raise BizException(user_message(exc), code=BizCode.BAD_REQUEST) from exc
+    # 回写:这一份产物记在它自己那个动作名下,不覆盖主产物。
+    # 用**这一份**产物的 URL,不是 view 里那个主产物的 —— 记错了就是拿走路冒充跳跃。
+    _sync_model_url(session, character, outfit_id,
+                    view.get("motion_model_url"), motion=body.motion)
+    return Response.success(view, message=f"已为 {body.motion} 绑骨并烘入动作")
+
+
 @router.post("/characters/{character_id}/outfits/{outfit_id}/discard", response_model=Response[dict])
 def discard_outfit_asset(
     character_id: int,
@@ -203,11 +342,28 @@ def discard_outfit_asset(
 # 本段四个端点只搬运与校验,渲染参数由 ai_engine 的 RenderPlan 定,这里不重写一份。
 
 
+class BakeRigFacts(BaseModel):
+    """浏览器出帧台读到的骨架事实。**记录用,不是判据** —— 以骨数/命名当闸已被实测推翻。"""
+
+    bones: int = Field(default=0, ge=0)
+    root_bone: str | None = None
+    bone_names: list[str] = Field(default_factory=list)
+    skinned_meshes: int = Field(default=0, ge=0)
+    vertices: int = Field(default=0, ge=0)
+    available_clips: dict[str, float] = Field(default_factory=dict)
+
+
 class BakeCompleteRequest(BaseModel):
-    """浏览器自报交齐了。帧本身已逐帧 POST 上来,这里只带回可对账的采样信息。"""
+    """浏览器自报交齐了。帧本身已逐帧 POST 上来,这里带回可对账的采样信息与派生资产。
+
+    ``rig`` / ``root_motion`` 与服务端渲那条交回的是同一批数(#774):两条路存下来的
+    资产必须一样,否则同一造型走哪条路建出来的东西不同,而没有一处会红。
+    """
 
     clip: str = Field(..., min_length=1)
     sample_times: list[float] = Field(default_factory=list)
+    rig: BakeRigFacts | None = None
+    root_motion: list[tuple[float, float]] | None = None
 
 
 class BakeFailRequest(BaseModel):
@@ -291,6 +447,11 @@ def complete_bake(
         client_bake.collect_frames(task_id, spec.frames)
     except client_bake.ClientBakeError as exc:
         raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+    client_bake.save_derived(
+        task_id,
+        rig=body.rig.model_dump() if body.rig else None,
+        root_motion=[list(pair) for pair in body.root_motion] if body.root_motion else None,
+    )
     client_bake.schedule_resume(task_id)
     return Response.success(
         {"task_id": task_id, "frames": spec.frames}, message="帧已交齐,继续后处理"

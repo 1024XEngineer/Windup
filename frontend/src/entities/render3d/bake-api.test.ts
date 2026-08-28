@@ -96,7 +96,14 @@ describe('出帧任务的网络边界', () => {
     const { api, calls } = client(() => ({}))
     await createRender3DApis(api).completeBake(41, { clip: 'walk', sampleTimes: [0, 0.5] })
     expect(calls[0].path).toBe('/render3d/bake/41/complete')
-    expect(calls[0].json).toEqual({ clip: 'walk', sample_times: [0, 0.5] })
+    // rig / root_motion 缺省时显式发 null，而不是省略字段 —— 后端据此区分
+    // 「这条路没有骨架」与「字段忘了传」。
+    expect(calls[0].json).toEqual({
+      clip: 'walk',
+      sample_times: [0, 0.5],
+      rig: null,
+      root_motion: null,
+    })
   })
 
   it('报失败带上原因', async () => {
@@ -104,5 +111,27 @@ describe('出帧任务的网络边界', () => {
     await createRender3DApis(api).failBake(41, 'WebGL 起不来')
     expect(calls[0].path).toBe('/render3d/bake/41/fail')
     expect(calls[0].json).toEqual({ reason: 'WebGL 起不来' })
+  })
+})
+
+describe('建 3D 资产的体型入参', () => {
+  it('把 stance 放进请求体 —— 后端必填，前端不能省', async () => {
+    const { api, calls } = client(() => ({
+      state: 'building',
+      model_3d_url: null,
+      review_model_url: null,
+      error: null,
+      cost: {
+        model3d_credits: 20,
+        autorig_credits: 10,
+        total_credits: 30,
+        billing: 'postpaid',
+        scope: 'per_outfit_once',
+      },
+    }))
+    await createRender3DApis(api).buildOutfitAsset('7', 'outfit-default', 'quadruped')
+    expect(calls[0].path).toBe('/render3d/characters/7/outfits/outfit-default/build')
+    expect(calls[0].method).toBe('POST')
+    expect(calls[0].json).toEqual({ stance: 'quadruped' })
   })
 })

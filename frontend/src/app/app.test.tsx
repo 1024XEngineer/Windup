@@ -69,15 +69,23 @@ describe('AppRoutes authentication boundary', () => {
       </GuestAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: 'Windup 使用手册', level: 1 })).toBeTruthy()
-    expect(screen.getByRole('navigation', { name: '使用手册目录' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Windup 使用指南', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('article', { name: 'Windup 使用指南' })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: '使用指南章节' })).toBeTruthy()
+    expect(screen.getByRole('article').querySelectorAll('section ul')).toHaveLength(0)
+    expect(screen.getByRole('article').querySelectorAll('section ol')).toHaveLength(0)
+    expect(screen.getByRole('article').querySelectorAll('section h3')).toHaveLength(0)
+    expect(screen.queryByRole('heading', { name: '注册或登录' })).toBeNull()
+    expect(screen.getByRole('textbox', { name: '创作指令示例' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '打开 Quick Start' }).getAttribute('href')).toBe(
+      '/quick-start',
+    )
     expect(screen.getByRole('link', { name: 'Quick Start' }).getAttribute('href')).toBe(
       '#quick-start',
     )
     expect(screen.getByRole('link', { name: '使用手册' }).getAttribute('href')).toBe('/guide')
-    expect(screen.getByRole('link', { name: '新建项目' }).getAttribute('href')).toBe(
-      '/projects/new',
-    )
+    expect(screen.queryByRole('link', { name: '新建项目' })).toBeNull()
+    expect(screen.getByRole('link', { name: '进入创作' }).getAttribute('href')).toBe('/quick-start')
     expect(
       screen
         .getAllByRole('link', { name: '开始创建角色' })
@@ -233,7 +241,11 @@ describe('AppRoutes authentication boundary', () => {
       logout: async () => undefined,
       me: async () => Promise.reject(new Error('not used')),
       updateNickname: async () => Promise.reject(new Error('not used')),
+      setPassword: async () => Promise.reject(new Error('not used')),
       changePassword: async () => Promise.reject(new Error('not used')),
+      resetPassword: async () => Promise.reject(new Error('not used')),
+      sendPasswordChangeCode: async () => Promise.reject(new Error('not used')),
+      changePasswordWithCode: async () => Promise.reject(new Error('not used')),
     }
     window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')
 
@@ -261,7 +273,11 @@ describe('AppRoutes authentication boundary', () => {
       logout: async () => undefined,
       me: async () => Promise.reject(new Error('not used')),
       updateNickname: async () => Promise.reject(new Error('not used')),
+      setPassword: async () => Promise.reject(new Error('not used')),
       changePassword: async () => Promise.reject(new Error('not used')),
+      resetPassword: async () => Promise.reject(new Error('not used')),
+      sendPasswordChangeCode: async () => Promise.reject(new Error('not used')),
+      changePasswordWithCode: async () => Promise.reject(new Error('not used')),
     }
     window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')
 

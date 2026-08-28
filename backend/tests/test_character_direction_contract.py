@@ -76,6 +76,20 @@ def _data(version: int, templates: list[dict], sequences: list[dict]) -> Charact
     )
 
 
+def test_pixel_perfect_frame_variant_is_part_of_character_contract():
+    data = CharacterData.model_validate({
+        "version": 1,
+        "outfits": [{"id": "default", "name": "默认造型", "actions": [{
+            "id": "walk", "type": "walk", "name": "行走", "frame_count": 1,
+            "preferred_version": "pixel-perfect",
+            "frames": [{"index": 0, "image_url": "original.png", "pixel_perfect_image_url": "pixel.png"}],
+        }]}],
+    })
+    action = data.outfits[0].actions[0]
+    assert action.preferred_version == "pixel-perfect"
+    assert action.frames[0].pixel_perfect_image_url == "pixel.png"
+
+
 _FOUR_SOURCES = ["east", "north", "south"]
 _EIGHT_SOURCES = ["east", "north", "south", "north_east", "south_east"]
 _EIGHT_MIRRORS = [
@@ -155,7 +169,11 @@ def test_version_one_west_mirror_round_trips_unchanged():
 
     data = CharacterData.model_validate(payload)
 
-    assert data.model_dump() == payload
+    # 存量 payload(96/96 个线上角色)不带 stance,校验照收 —— 这是这条要守的兼容性。
+    # 但 dump 会多出 `stance: None`:新加的可空字段,None 表示"没人选过"。
+    # 期望值写成 payload | {...} 而不是把 stance 塞进 payload:后者会让这条看起来像
+    # "v1 本来就有这个字段",而它没有。
+    assert data.model_dump() == {**payload, "stance": None}
 
 
 def test_version_two_single_keeps_east_to_west_mirror_compatibility():

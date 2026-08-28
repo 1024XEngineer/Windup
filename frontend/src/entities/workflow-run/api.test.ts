@@ -362,6 +362,44 @@ describe('workflowRunApis', () => {
     })
   })
 
+  it('拒绝为镜像方向持久化独立动作首帧描述', async () => {
+    const invalidNodes = structuredClone(nodes)
+    const firstFrame = invalidNodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') {
+      throw new Error('测试缺少动作首帧节点')
+    }
+    Object.assign(firstFrame.input, { directionPrompts: { west: '向左行走' } })
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: invalidNodes }),
+    )
+
+    await expect(apis.get('17')).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+    })
+  })
+
+  it('恢复真实源方向各自持久化的动作首帧描述', async () => {
+    const directionalNodes = structuredClone(nodes)
+    const firstFrame = directionalNodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') {
+      throw new Error('测试缺少动作首帧节点')
+    }
+    firstFrame.input.directionPrompts = {
+      east: '向右行走',
+      north: '背向镜头行走',
+      south: '面向镜头行走',
+    }
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: directionalNodes }),
+    )
+
+    const restored = await apis.get('17')
+    expect(restored.nodes.find((node) => node.id === firstFrame.id)).toMatchObject({
+      input: { directionPrompts: firstFrame.input.directionPrompts },
+    })
+  })
+
   it('rejects a dependency that points outside the persisted graph', async () => {
     const apis = await loadWorkflowRunApis(async () =>
       jsonResponse({
@@ -494,5 +532,33 @@ describe('workflowRunApis', () => {
     expect(requestUrl).toBe(
       'https://api.windup.test/workflow-runs?project_id=42&page=2&page_size=10',
     )
+  })
+
+  it('lists the current users recent runs without a project filter', async () => {
+    let requestUrl = ''
+    const apis = await loadWorkflowRunApis(async (input) => {
+      requestUrl = String(input)
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: [workflowRunDto],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+
+    const recentApis = apis as typeof apis & {
+      listRecent(query?: { page?: number; pageSize?: number }): Promise<unknown>
+    }
+
+    await expect(recentApis.listRecent()).resolves.toMatchObject({
+      items: [{ id: '17', projectId: '42' }],
+      total: 1,
+    })
+    expect(requestUrl).toBe('https://api.windup.test/workflow-runs?page=1&page_size=20')
   })
 })

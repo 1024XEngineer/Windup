@@ -25,6 +25,7 @@ RMBG-2.0 在公开评测上更强(90% 对 85%),但它是 CC BY-NC 4.0,商用需�
 from __future__ import annotations
 
 import io
+import threading
 import logging
 from pathlib import Path
 
@@ -32,6 +33,7 @@ import numpy as np
 from PIL import Image
 
 from .interfaces import MatteProvider
+from .matte import _RUN_LOCK
 from .matte import _download_atomic, _fill_enclosed_holes, _flat_bg_penalty
 
 logger = logging.getLogger("windup.matte.birefnet")
@@ -66,6 +68,7 @@ class BiRefNetMatteProvider(MatteProvider):
         self._path = Path(model_path) if model_path else _CACHE
         self._session = None
         self._union = union_with_u2net
+        self._init_lock = threading.Lock()
         self._u2net = None
 
     def _ensure_model(self) -> Path:
@@ -83,13 +86,57 @@ class BiRefNetMatteProvider(MatteProvider):
             )
         return self._session
 
+    def warmup(self) -> None:
+        """把会话装进内存。**必须有这个方法** —— 没有它整条接线会静默失效。
+
+        ``bootstrap.worker`` 是 ``matte.warmup()`` 然后 ``bind_matte(matte)``,两句包在
+        同一个 ``except Exception`` 里。缺 ``warmup`` 时第一句抛 AttributeError,
+        **``bind_matte`` 就到不了** —— 于是三个 executor 各自惰性 new 一份 provider,
+        而本类默认 ``union_with_u2net=True``,每份内部再 new 一个 u2net,进程里就是
+        6 个 ONNX 会话。生产 worker 容器上限 5GiB,而本模型单帧峰值 6.85GB。
+        表面上只有一条 "ONNX 预热失败" 的 WARNING,开发机上完全跑得通。
+
+        并集那一路的 u2net 也一并预热:它是每帧都要跑的,留到首帧再装等于把两次冷启动
+        叠在一起。
+        """
+        self._get_session()
+        if self._union:
+            self._ensure_u2net().warmup()
+
+    def _ensure_u2net(self):
+        """并集那一路的 u2net,**带锁的惰性初始化**。
+
+        原先是 ``if self._u2net is None: self._u2net = ...`` 的检查后赋值,两个线程能
+        同时通过检查、各建一份 —— 而每份自带一套 ONNX 会话。worker 的生成并发是
+        IMAGE=4 / ACTION=2,这个竞态在生产上是够得着的。
+        """
+        with self._init_lock:
+            if self._u2net is None:
+                from .matte import OnnxU2NetMatteProvider
+
+                self._u2net = OnnxU2NetMatteProvider()
+            return self._u2net
+
     def _predict_mask(self, img: Image.Image) -> Image.Image:
         session = self._get_session()
         arr = np.asarray(
             img.convert("RGB").resize((_SIDE, _SIDE), Image.LANCZOS), dtype=np.float32
         )
         tensor = (((arr / 255.0) - _MEAN) / _STD).transpose(2, 0, 1)[None]
-        outputs = session.run(None, {session.get_inputs()[0].name: tensor.astype(np.float32)})
+        # **与 u2net 共用同一把锁**,让进程里同时只有一个 ONNX 前向在跑。
+        #
+        # 这一路的单帧峰值是 6.85GB(u2net 是 1.10GB),而 worker 的生成并发是
+        # IMAGE=4 / ACTION=2 —— 不串行的话四路并发前向就是四份激活值同时在内存里,
+        # 谁都装不下。u2net 那边早就这么做了(见 matte._RUN_LOCK 上方那段注释:
+        # "进程内串行 Run,吞吐靠多 worker 进程而不是同一进程里叠会话"),本类漏了。
+        #
+        # 共用而不是各持一把:并集模式下两个模型每帧都要各跑一次,各持一把锁只能保证
+        # "同类不并发",跨类照样叠 6.85+1.10。锁的作用域只包住 run 本身,
+        # 下面调 u2net 时这把锁已经释放,不会自锁。
+        with _RUN_LOCK:
+            outputs = session.run(
+                None, {session.get_inputs()[0].name: tensor.astype(np.float32)}
+            )
         # 多尺度监督的导出会给一串输出,最后一个是最高分辨率的那张;取 [0] 会拿到
         # 1/32 尺度的粗图,放大回来就是一团模糊。
         raw = np.asarray(outputs[-1] if isinstance(outputs, list) else outputs).squeeze()
@@ -105,12 +152,8 @@ class BiRefNetMatteProvider(MatteProvider):
         rgb = np.asarray(img.convert("RGB"), dtype=np.float32)
         alpha = np.asarray(self._predict_mask(img), dtype=np.float32) / 255.0
         if self._union:
-            if self._u2net is None:
-                from .matte import OnnxU2NetMatteProvider
-
-                self._u2net = OnnxU2NetMatteProvider()
             other = np.asarray(
-                Image.open(io.BytesIO(self._u2net.cutout(frame))).convert("RGBA")
+                Image.open(io.BytesIO(self._ensure_u2net().cutout(frame))).convert("RGBA")
             )[:, :, 3].astype(np.float32) / 255.0
             alpha = np.maximum(alpha, other)
         alpha = alpha * _flat_bg_penalty(rgb)

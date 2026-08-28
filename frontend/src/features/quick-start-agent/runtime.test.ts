@@ -299,6 +299,29 @@ describe('createQuickStartAgent', () => {
     })
   })
 
+  it('passes the fixed existing-character context to every add-action planning turn', async () => {
+    const planner = vi.fn<QuickStartPlanner>(async () =>
+      decisionResult({ kind: 'reply', message: '我会只整理新增动作。' }),
+    )
+    const agent = createQuickStartAgent({
+      planner,
+      startCharacterGeneration: vi.fn(),
+      addActionContext: {
+        characterPrompt: '紫发女巫，黑色尖顶帽，手持木质法杖',
+      },
+    })
+
+    await agent.start('让她快速向前翻滚')
+
+    expect(planner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        addActionContext: {
+          characterPrompt: '紫发女巫，黑色尖顶帽，手持木质法杖',
+        },
+      }),
+    )
+  })
+
   it('silently carries explicit pixel-art intent into the confirmed generation', async () => {
     const { agent, startCharacterGeneration } = fixture(
       decisionResult({

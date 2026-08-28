@@ -28,7 +28,7 @@ class FakeVideoAdapter:
         self.submit_models.append(model)
         return self.submits[model].pop(0)
 
-    def follow_job(self, job_id):
+    def follow_job(self, job_id, model=None):
         self.followed.append(job_id)
         return self.follows[job_id]
 
@@ -107,7 +107,7 @@ def test_submit_429_switches_key_on_same_base_url(monkeypatch):
     rate = AdapterResult(ok=False, error_type=ModelErrorType.RATE_LIMIT, http_status=429)
     key_a = FakeVideoAdapter(
         submits={
-            "kling-v2-5-turbo": [rate, rate, rate],
+            "kling-v2-5-turbo": [rate, rate],
             "kling-v2-6": [AdapterResult(ok=True, job_id="wrong", maybe_billed=True)],
         },
         follows={},
@@ -136,7 +136,7 @@ def test_submit_429_switches_key_on_same_base_url(monkeypatch):
     )
 
     assert gw.i2v(b"frame", "walk").startswith(b"\x00\x00\x00\x18ftyp")
-    assert key_a.submit_models == ["kling-v2-5-turbo"] * 3
+    assert key_a.submit_models == ["kling-v2-5-turbo"] * 2
     assert key_b.submit_models == ["kling-v2-5-turbo"]
     assert "kling-v2-6" not in key_a.submit_models
 
@@ -172,7 +172,8 @@ def test_timeout_does_not_submit_fallback():
     "error_type",
     [ModelErrorType.RATE_LIMIT, ModelErrorType.INVALID_RESPONSE],
 )
-def test_follow_fallback_without_upstream_fail_does_not_open_second_job(error_type):
+def test_follow_fallback_without_upstream_fail_does_not_open_second_job(error_type, monkeypatch):
+    monkeypatch.setattr("windup_framework.gateway.video.time.sleep", lambda _: None)
     follow_result = AdapterResult(
         ok=False,
         error_type=error_type,
@@ -190,7 +191,8 @@ def test_follow_fallback_without_upstream_fail_does_not_open_second_job(error_ty
     with pytest.raises(RuntimeError, match=error_type.value):
         _video_gw(ad).i2v(b"frame", "walk")
     assert ad.submit_models == ["kling-v2-5-turbo"]
-    assert ad.followed == ["j1", "j1", "j1"]
+    follows = 2 if error_type is ModelErrorType.RATE_LIMIT else 3
+    assert ad.followed == ["j1"] * follows
 
 
 def test_success_trace_has_phase_timings(caplog):
@@ -305,7 +307,7 @@ def test_start_i2v_returns_job_without_follow():
 
 def test_poll_i2v_pending_then_download():
     class _PollAdapter(FakeVideoAdapter):
-        def inspect_job(self, job_id):
+        def inspect_job(self, job_id, model=None):
             self.followed.append(f"inspect:{job_id}")
             return AdapterResult(
                 ok=True,
@@ -325,7 +327,7 @@ def test_poll_i2v_pending_then_download():
 
 def test_poll_i2v_still_pending():
     class _Pending(FakeVideoAdapter):
-        def inspect_job(self, job_id):
+        def inspect_job(self, job_id, model=None):
             return AdapterResult(ok=False, job_id=job_id, maybe_billed=True, job_status="in_progress")
 
     result = _video_gw(_Pending(submits={}, follows={})).poll_i2v("j1")

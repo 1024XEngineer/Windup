@@ -6,9 +6,14 @@ import {
   pixelPerfectApis as defaultPixelPerfectApis,
   workflowRunApis,
   characterTemplatesFromImages,
+  characterTemplatesFromViewSheetCells,
+  characterDataVersionForWrite,
+  assertMultiDirectionAssetPublishable,
   getDirectionProfile,
   type Action,
   type Character,
+  type CharacterAssetVersion,
+  type CharacterViewSheetCandidate,
   type CharacterApis,
   type ActionDirection,
   type CharacterSetupWorkflowNode,
@@ -16,6 +21,7 @@ import {
   type GenerationApis,
   type Generation,
   type MediaReference,
+  type MediaCategory,
   type Project,
   type ProjectApis,
   type PixelPerfectApis,
@@ -66,6 +72,7 @@ export interface QuickStartCandidate {
 
 export type QuickStartDirectionSelections = Readonly<Partial<Record<ActionDirection, string>>>
 type QuickStartCandidateSelection = string | QuickStartDirectionSelections
+type QuickStartTemplateSelection = QuickStartCandidateSelection | CharacterViewSheetCandidate
 
 export interface QuickStartFailedDirection {
   nodeId: WorkflowNode['id']
@@ -76,8 +83,17 @@ export interface QuickStartResumeOptions {
   automaticActionAdvance?: boolean
 }
 
+export interface QuickStartHistoryItem {
+  runId: WorkflowRun['id']
+  title: string
+}
+
 export interface QuickStartMediaApis {
-  upload(file: File, category: 'reference-image', signal?: AbortSignal): Promise<MediaReference>
+  upload(
+    file: File,
+    category: Extract<MediaCategory, 'reference-image' | 'action-frame'>,
+    signal?: AbortSignal,
+  ): Promise<MediaReference>
 }
 
 export interface QuickStartSession {
@@ -96,9 +112,16 @@ export interface QuickStartSession {
     signal?: AbortSignal,
   ): Promise<WorkflowRun>
   /** 在当前 WorkflowRun 的角色母版后追加动作，不创建新的 Run。 */
-  addAction(outfitId: string, actionDescription: string): Promise<WorkflowRun>
+  addAction(
+    outfitId: string,
+    actionDescription: string,
+    semantics?: {
+      actionType?: 'idle' | 'walk' | 'attack' | 'jump'
+      locomotion?: true
+    },
+  ): Promise<WorkflowRun>
   confirmCandidate(
-    selectedImages: QuickStartCandidateSelection,
+    selectedImages: QuickStartTemplateSelection,
     actionDescription?: string,
   ): Promise<WorkflowRun>
   /** 读取当前 Action 首帧生成任务的候选帧。 */
@@ -109,6 +132,7 @@ export interface QuickStartSession {
   getCharacterInfo(): { characterId: string; outfitId: string } | null
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly QuickStartCandidate[]>
+  getTemplateViewSheetCandidates?(): Promise<readonly CharacterViewSheetCandidate[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
   /** 当前活跃生成步骤里，排在最靠后的任务前方还有多少个任务。 */
   getQueueAhead(): Promise<number>
@@ -116,6 +140,11 @@ export interface QuickStartSession {
   pixelPerfectActionFrames?(
     frames: readonly QuickStartFrame[],
   ): Promise<readonly QuickStartPixelPerfectFrame[]>
+  persistPixelPerfectActionFrames?(
+    actionId: string,
+    frames: readonly QuickStartPixelPerfectFrame[],
+  ): Promise<Character>
+  setActionAssetVersion?(actionId: string, version: CharacterAssetVersion): Promise<Character>
   getFailedGenerationDirections(): Promise<readonly QuickStartFailedDirection[]>
   retryGenerationDirection(
     nodeId: WorkflowNode['id'],
@@ -137,6 +166,8 @@ export interface QuickStartSession {
 
 export interface QuickStartEntryService {
   readonly unavailableReason: string | null
+  /** 当前用户最近创建的 Quick Start 会话，按新到旧排序。 */
+  listHistory?(): Promise<readonly QuickStartHistoryItem[]>
   /** 上传为 Agent 与角色母版 Generation 共用的原始参考，不创建 WorkflowRun。 */
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   start(
@@ -308,6 +339,16 @@ export function createQuickStartService({
     return getDirectionProfile(movement).generationDirections
   }
 
+  function movementFor(controller: WorkflowController): DirectionalMovement {
+    return projectDirectionalMovements.get(controller.getWorkflow().projectId) ?? 'single'
+  }
+
+  function isViewSheetCandidate(
+    selection: QuickStartTemplateSelection,
+  ): selection is CharacterViewSheetCandidate {
+    return typeof selection === 'object' && 'cells' in selection && Array.isArray(selection.cells)
+  }
+
   async function candidatesByDirection(
     controller: WorkflowController,
     nodeId: WorkflowNode['id'],
@@ -385,6 +426,50 @@ export function createQuickStartService({
     const templates = characterTemplatesFromImages(selectedImages)
     if (JSON.stringify(character.templates ?? []) !== JSON.stringify(templates)) {
       await characterApis.update({ ...character, templates })
+    }
+  }
+
+  async function confirmSelectedViewSheet(
+    controller: WorkflowController,
+    nodeId: WorkflowNode['id'],
+    characterId: Character['id'],
+    candidate: CharacterViewSheetCandidate,
+  ) {
+    if (!characterApis) throw new Error('角色服务尚未配置，不能确认方向 sheet')
+    const character = await characterApis.get(characterId)
+    const south = candidate.cells.find((cell) => cell.direction === 'south')
+    if (!south || south.imageUrl !== character.referenceImageUrl) {
+      throw new Error('方向 sheet 的南向格与已确认母版不一致')
+    }
+    const templates = characterTemplatesFromViewSheetCells(candidate.cells)
+    const updated = await characterApis.update({ ...character, templates })
+    try {
+      await controller.confirmCharacterViewSheet(nodeId, candidate.cells)
+      return updated
+    } catch (cause) {
+      const shouldRollback = await shouldRollbackWorkflowChange(
+        controller.getWorkflow().id,
+        (latest) => {
+          const template = latest.nodes.find((node) => node.id === nodeId)
+          return template?.type === 'character-template' && template.status === 'passed'
+        },
+      )
+      if (shouldRollback) {
+        try {
+          await characterApis.update({
+            ...character,
+            dataVersion: updated.dataVersion,
+          })
+        } catch (rollbackCause) {
+          reportControllerError(
+            controller,
+            rollbackCause instanceof Error
+              ? rollbackCause
+              : new Error('方向 sheet 确认冲突后恢复角色资产失败'),
+          )
+        }
+      }
+      throw cause
     }
   }
 
@@ -541,9 +626,10 @@ export function createQuickStartService({
 
     // 先用 WorkflowRun 的 version 确定候选图胜者，失败的客户端不得改写共用 Character。
     await persistRun(setup.id, character.id)
+    const anchorDirection = movementFor(controller) === 'single' ? 'east' : 'south'
     const selectedImages = {
       ...templateNode(controller.getWorkflow()).selectedImages,
-      east: selectedImageUrl,
+      [anchorDirection]: selectedImageUrl,
     }
     const templates = characterTemplatesFromImages(selectedImages)
     const existingOutfit = character.outfits.find(
@@ -716,6 +802,8 @@ export function createQuickStartService({
       advancing = true
       void (async (): Promise<boolean> => {
         if (shouldConfirmTemplate) {
+          const movement = movementFor(controller)
+          const anchorDirection: ActionDirection = movement === 'single' ? 'east' : 'south'
           const candidates = await candidatesByDirection(
             controller,
             template.id,
@@ -724,38 +812,55 @@ export function createQuickStartService({
           const selections = Object.fromEntries(
             candidates.map((candidate) => [candidate.direction, candidate.imageUrl]),
           ) as QuickStartDirectionSelections
-          const east = selections.east
-          if (!east) return false
+          const anchor = selections[anchorDirection]
 
           let characterId = setup.input.characterId ?? null
           let outfitId: string | null = null
           if (!template.selectedImageUrl || !characterId) {
+            if (!anchor) return false
             const target = await persistCharacterTemplate(
               controller,
-              east,
+              anchor,
               (_setupId, selectedCharacterId) =>
-                controller.confirmCharacterTemplate(template.id, east, selectedCharacterId),
+                controller.confirmCharacterTemplate(
+                  template.id,
+                  anchor,
+                  selectedCharacterId,
+                  anchorDirection,
+                ),
             )
             characterId = target.characterId
             outfitId = target.outfitId
             const directions = generationDirectionsFor(controller)
             if (directions.length > 1) {
               const spriteSize = await resolveProjectSpriteSize(run.projectId)
-              await controller.generateCharacterTemplate(setup.id, {
+              await controller.generateCharacterViewSheet(template.id, {
+                characterId,
+                prompt: setup.input.prompt,
                 spriteWidth: spriteSize.width,
                 spriteHeight: spriteSize.height,
-                sourceImageUrl: east,
-                directions: directions.slice(1),
                 candidateCount: 1,
               })
               return true
             }
           } else if (generationDirectionsFor(controller).length > 1) {
-            const selectedImages = selectedDirections(controller, selections, {
-              east: template.selectedImageUrl,
-              ...(template.selectedImages ?? {}),
-            })
-            await confirmRemainingTemplateDirections(controller, characterId, selectedImages)
+            const role =
+              movement === 'four-way'
+                ? ('character_four_view' as const)
+                : ('character_eight_view' as const)
+            const generation = await controller.getGeneration(template.id, role)
+            const sheet = generation?.result?.type === role ? generation.result.sheets[0] : null
+            if (!sheet) return false
+            const character = await confirmSelectedViewSheet(
+              controller,
+              template.id,
+              characterId,
+              sheet,
+            )
+            outfitId =
+              character.outfits.find((item) => item.previewUrl === template.selectedImageUrl)?.id ??
+              character.outfits.find((item) => item.id === 'outfit-default')?.id ??
+              null
           }
 
           const actionPrompt = automation.actionPrompt?.trim()
@@ -765,7 +870,7 @@ export function createQuickStartService({
             if (!characterApis || !characterId) throw new Error('角色服务尚未配置，不能自动交付')
             const character = await characterApis.get(characterId)
             outfitId =
-              character.outfits.find((item) => item.previewUrl === east)?.id ??
+              character.outfits.find((item) => item.previewUrl === template.selectedImageUrl)?.id ??
               character.outfits.find((item) => item.id === 'outfit-default')?.id ??
               null
           }
@@ -878,9 +983,11 @@ export function createQuickStartService({
         }
         const templateReference = await mediaApis.upload(file, 'reference-image', signal)
         const setup = setupNode(controller.getWorkflow())
+        const movement = movementFor(controller)
+        const anchorDirection: ActionDirection = movement === 'single' ? 'east' : 'south'
         if (
           template.selectedImageUrl &&
-          !template.selectedImages?.east &&
+          !template.selectedImages?.[anchorDirection] &&
           setup.input.characterId &&
           characterApis
         ) {
@@ -898,13 +1005,15 @@ export function createQuickStartService({
               template.id,
               templateReference,
               characterId,
-              'east',
+              anchorDirection,
             ),
         )
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
         if (generationDirectionsFor(controller).length > 1) {
-          await controller.generateCharacterTemplate(setupNode(controller.getWorkflow()).id, {
+          await controller.generateCharacterViewSheet(template.id, {
+            characterId: target.characterId,
+            prompt: setup.input.prompt,
             spriteWidth: spriteSize.width,
             spriteHeight: spriteSize.height,
           })
@@ -929,7 +1038,11 @@ export function createQuickStartService({
         if (!activeNode) return 0
         const role =
           activeNode.type === 'character-template'
-            ? 'character_template'
+            ? (activeNode.generations.find(
+                (reference) =>
+                  reference.role === 'character_four_view' ||
+                  reference.role === 'character_eight_view',
+              )?.role ?? 'character_template')
             : activeNode.type === 'action-first-frame'
               ? 'first_frame'
               : 'complete_animation'
@@ -941,7 +1054,7 @@ export function createQuickStartService({
             .map((generation) => generation.queueAhead ?? 0),
         )
       },
-      async addAction(outfitId, actionDescription) {
+      async addAction(outfitId, actionDescription, semantics) {
         const prompt = actionDescription.trim()
         if (!prompt) throw new Error('请先描述要新增的动作')
         const run = controller.getWorkflow()
@@ -956,7 +1069,7 @@ export function createQuickStartService({
           }
         }
         const spriteSize = knownSpriteSize ?? (await resolveProjectSpriteSize(run.projectId))
-        await prepareAction(controller, outfitId, prompt, spriteSize)
+        await prepareAction(controller, outfitId, prompt, spriteSize, semantics)
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
@@ -965,18 +1078,41 @@ export function createQuickStartService({
         const command = (async () => {
           const template = templateNode(controller.getWorkflow())
           const setup = setupNode(controller.getWorkflow())
+          const movement = movementFor(controller)
+          const anchorDirection: ActionDirection = movement === 'single' ? 'east' : 'south'
+          const hasConfirmedMaster = Boolean(template.selectedImageUrl && setup.input.characterId)
+          if (isViewSheetCandidate(selection)) {
+            if (movement === 'single' || !hasConfirmedMaster || !setup.input.characterId) {
+              throw new Error('必须先确认南向正视母版，才能选择方向 sheet')
+            }
+            const character = await confirmSelectedViewSheet(
+              controller,
+              template.id,
+              setup.input.characterId,
+              selection,
+            )
+            const outfit =
+              character.outfits.find((item) => item.previewUrl === template.selectedImageUrl) ??
+              character.outfits.find((item) => item.id === 'outfit-default')
+            if (!outfit) throw new Error('角色母版缺少可用造型')
+            const spriteSize =
+              knownSpriteSize ??
+              (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+            await prepareAction(controller, outfit.id, actionDescription ?? '', spriteSize)
+            ensureAutomaticAdvance()
+            return controller.getWorkflow()
+          }
           const existingSelections: QuickStartDirectionSelections = {
-            ...(template.selectedImageUrl ? { east: template.selectedImageUrl } : {}),
+            ...(template.selectedImageUrl ? { [anchorDirection]: template.selectedImageUrl } : {}),
             ...(template.selectedImages ?? {}),
           }
           const requestedSelections: QuickStartDirectionSelections = {
             ...existingSelections,
-            ...(typeof selection === 'string' ? { east: selection } : selection),
+            ...(typeof selection === 'string' ? { [anchorDirection]: selection } : selection),
           }
-          const selectedImageUrl = requestedSelections.east
+          const selectedImageUrl = requestedSelections[anchorDirection]
           if (!selectedImageUrl) throw new Error('请先选择一张角色母版')
           let target: { characterId: string; outfitId: string }
-          const hasConfirmedMaster = Boolean(template.selectedImageUrl && setup.input.characterId)
           if (
             hasConfirmedMaster &&
             template.status === 'active' &&
@@ -996,7 +1132,12 @@ export function createQuickStartService({
               controller,
               selectedImageUrl,
               (_setupId, characterId) =>
-                controller.confirmCharacterTemplate(template.id, selectedImageUrl, characterId),
+                controller.confirmCharacterTemplate(
+                  template.id,
+                  selectedImageUrl,
+                  characterId,
+                  anchorDirection,
+                ),
             )
           }
           const directions = generationDirectionsFor(controller)
@@ -1004,11 +1145,11 @@ export function createQuickStartService({
             const spriteSize =
               knownSpriteSize ??
               (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
-            await controller.generateCharacterTemplate(setup.id, {
+            await controller.generateCharacterViewSheet(template.id, {
+              characterId: target.characterId,
+              prompt: setup.input.prompt,
               spriteWidth: spriteSize.width,
               spriteHeight: spriteSize.height,
-              sourceImageUrl: selectedImageUrl,
-              directions: directions.slice(1),
               candidateCount: 1,
             })
             return controller.getWorkflow()
@@ -1188,16 +1329,30 @@ export function createQuickStartService({
           frames: eastSequence.frames,
           sequences,
         }
+        const publishedOutfits = character.outfits.map((outfit) =>
+          outfit.id === info.outfitId
+            ? {
+                ...outfit,
+                actions: [...outfit.actions.filter((item) => item.id !== action.id), action],
+              }
+            : outfit,
+        )
+        const nextActions = publishedOutfits.flatMap((outfit) => outfit.actions)
+        const dataVersion = characterDataVersionForWrite(
+          character.dataVersion,
+          character.templates ?? [],
+          nextActions,
+        )
+        assertMultiDirectionAssetPublishable(
+          dataVersion,
+          directionalMovement,
+          character.templates ?? [],
+          nextActions,
+        )
         const publishedCharacter = await characterApis.update({
           ...character,
-          outfits: character.outfits.map((outfit) =>
-            outfit.id === info.outfitId
-              ? {
-                  ...outfit,
-                  actions: [...outfit.actions.filter((item) => item.id !== action.id), action],
-                }
-              : outfit,
-          ),
+          dataVersion,
+          outfits: publishedOutfits,
         })
         if (review.status === 'active') {
           try {
@@ -1267,6 +1422,17 @@ export function createQuickStartService({
         }
         return candidates
       },
+      async getTemplateViewSheetCandidates() {
+        const movement = movementFor(controller)
+        if (movement === 'single') return []
+        const template = templateNode(controller.getWorkflow())
+        const role =
+          movement === 'four-way'
+            ? ('character_four_view' as const)
+            : ('character_eight_view' as const)
+        const generation = await controller.getGeneration(template.id, role)
+        return generation?.result?.type === role ? generation.result.sheets : []
+      },
       async getActionFrames() {
         const fullFrame = latestFullFrame(controller.getWorkflow())
         if (!fullFrame || fullFrame.type !== 'action-full-frame') return []
@@ -1295,6 +1461,82 @@ export function createQuickStartService({
             durationMs: frame.durationMs,
             sourceImageUrl: frame.imageUrl,
           }
+        })
+      },
+      async persistPixelPerfectActionFrames(actionId, frames) {
+        if (!characterApis || !mediaApis) throw new Error('角色或媒体服务尚未配置')
+        const info = getCharacterInfo(controller) ?? (await resolveCharacterInfo(controller))
+        if (!info) throw new Error('WorkflowRun 缺少角色或造型绑定')
+        const character = await characterApis.get(info.characterId)
+        const outfit = character.outfits.find((candidate) => candidate.id === info.outfitId)
+        const action = outfit?.actions.find((candidate) => candidate.id === actionId)
+        if (!outfit || !action) throw new Error('角色资产中没有要保存的动作')
+        const sourceFrames =
+          action.sequences && action.sequences.length > 0
+            ? action.sequences.flatMap((sequence) =>
+                sequence.sourceDirection === null ? sequence.frames : [],
+              )
+            : action.frames
+        const sourceByIndex = new Map(sourceFrames.map((frame) => [frame.index, frame.imageUrl]))
+        const replacements = new Map<string, string>()
+        for (const frame of frames) {
+          const source = frame.sourceImageUrl ?? sourceByIndex.get(frame.index)
+          if (!source || replacements.has(source)) continue
+          const file = new File(
+            [frame.blob],
+            `pixel-perfect-${String(frame.index).padStart(3, '0')}.png`,
+            { type: 'image/png' },
+          )
+          replacements.set(source, await mediaApis.upload(file, 'action-frame'))
+        }
+        if (replacements.size === 0) throw new Error('完美像素化结果缺少原始帧对应关系')
+        const replaceFrame = (frame: Action['frames'][number]) => ({
+          ...frame,
+          ...(replacements.has(frame.imageUrl)
+            ? { pixelPerfectImageUrl: replacements.get(frame.imageUrl) }
+            : {}),
+        })
+        return characterApis.update({
+          ...character,
+          outfits: character.outfits.map((candidate) =>
+            candidate.id !== outfit.id
+              ? candidate
+              : {
+                  ...candidate,
+                  actions: candidate.actions.map((candidateAction) =>
+                    candidateAction.id !== actionId
+                      ? candidateAction
+                      : {
+                          ...candidateAction,
+                          preferredVersion: 'pixel-perfect' as const,
+                          frames: candidateAction.frames.map(replaceFrame),
+                          sequences: candidateAction.sequences?.map((sequence) => ({
+                            ...sequence,
+                            frames: sequence.frames.map(replaceFrame),
+                          })),
+                        },
+                  ),
+                },
+          ),
+        })
+      },
+      async setActionAssetVersion(actionId, version) {
+        if (!characterApis) throw new Error('角色服务尚未配置')
+        const info = getCharacterInfo(controller) ?? (await resolveCharacterInfo(controller))
+        if (!info) throw new Error('WorkflowRun 缺少角色或造型绑定')
+        const character = await characterApis.get(info.characterId)
+        return characterApis.update({
+          ...character,
+          outfits: character.outfits.map((outfit) =>
+            outfit.id !== info.outfitId
+              ? outfit
+              : {
+                  ...outfit,
+                  actions: outfit.actions.map((action) =>
+                    action.id === actionId ? { ...action, preferredVersion: version } : action,
+                  ),
+                },
+          ),
         })
       },
       async getExportModel() {
@@ -1329,6 +1571,16 @@ export function createQuickStartService({
   return {
     unavailableReason: null,
 
+    async listHistory() {
+      if (!workflowRunApis.listRecent) return []
+      const result = await workflowRunApis.listRecent({ page: 1, pageSize: 50 })
+      return result.items.map((run) => {
+        const setup = run.nodes.find((node) => node.type === 'character-setup')
+        const title = setup?.type === 'character-setup' ? setup.input.prompt.trim() : ''
+        return { runId: run.id, title: title || '未命名创作' }
+      })
+    },
+
     async uploadReferenceImage(file, signal) {
       if (!mediaApis) throw new Error('媒体上传服务尚未配置，不能使用角色参考图')
       return mediaApis.upload(file, 'reference-image', signal)
@@ -1349,7 +1601,7 @@ export function createQuickStartService({
       await controller.generateCharacterTemplate('character-setup', {
         spriteWidth: project.spriteSize.width,
         spriteHeight: project.spriteSize.height,
-        directions: ['east'],
+        directions: [projectDirectionalMovement === 'single' ? 'east' : 'south'],
         candidateCount: 3,
       })
       return createSession(controller, project.spriteSize)
@@ -1383,11 +1635,19 @@ export function createQuickStartService({
         controller,
         templateReference,
         (setupId, characterId) =>
-          controller.acceptUploadedCharacterTemplate(setupId, templateReference, characterId),
+          controller.acceptUploadedCharacterTemplate(
+            setupId,
+            templateReference,
+            characterId,
+            projectDirectionalMovement === 'single' ? 'east' : 'south',
+          ),
       )
       const directions = getDirectionProfile(projectDirectionalMovement).generationDirections
       if (directions.length > 1) {
-        await controller.generateCharacterTemplate('character-setup', {
+        const template = templateNode(controller.getWorkflow())
+        await controller.generateCharacterViewSheet(template.id, {
+          characterId: target.characterId,
+          prompt,
           spriteWidth: project.spriteSize.width,
           spriteHeight: project.spriteSize.height,
         })

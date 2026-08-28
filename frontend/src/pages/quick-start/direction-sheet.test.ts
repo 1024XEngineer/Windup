@@ -11,7 +11,7 @@ function candidate(
 }
 
 describe('buildDirectionSheetCandidates', () => {
-  it('按候选序号组装八向方向卡，并保留八个真实方向', () => {
+  it('按候选序号组装八向方向卡，并从五个真实源镜像三个西向', () => {
     const sheets = buildDirectionSheetCandidates(
       [
         candidate('east', 0),
@@ -46,17 +46,17 @@ describe('buildDirectionSheetCandidates', () => {
       },
     })
     expect(sheets[0]?.cells).toMatchObject({
-      west: { imageUrl: 'west-0.png', sourceDirection: 'west', mirrorX: false, empty: false },
+      west: { imageUrl: 'east-0.png', sourceDirection: 'east', mirrorX: true, empty: false },
       north_west: {
-        imageUrl: 'north_west-0.png',
-        sourceDirection: 'north_west',
-        mirrorX: false,
+        imageUrl: 'north_east-0.png',
+        sourceDirection: 'north_east',
+        mirrorX: true,
         empty: false,
       },
       south_west: {
-        imageUrl: 'south_west-0.png',
-        sourceDirection: 'south_west',
-        mirrorX: false,
+        imageUrl: 'south_east-0.png',
+        sourceDirection: 'south_east',
+        mirrorX: true,
         empty: false,
       },
     })
@@ -69,9 +69,20 @@ describe('buildDirectionSheetCandidates', () => {
     )
 
     expect(sheets).toHaveLength(1)
+    expect(sheets[0]?.selections).toEqual({
+      east: 'east-0.png',
+      north: 'north-0.png',
+      south: 'south-0.png',
+    })
+    expect(new Set(Object.values(sheets[0]!.selections)).size).toBe(3)
     expect(sheets[0]?.cells).toMatchObject({
       east: { imageUrl: 'east-0.png', empty: false },
-      west: { imageUrl: 'west-0.png', mirrorX: false, empty: false },
+      west: {
+        imageUrl: 'east-0.png',
+        sourceDirection: 'east',
+        mirrorX: true,
+        empty: false,
+      },
       north: { imageUrl: 'north-0.png', empty: false },
       south: { imageUrl: 'south-0.png', empty: false },
       north_east: { imageUrl: null, empty: true },

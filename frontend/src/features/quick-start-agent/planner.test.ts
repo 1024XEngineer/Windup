@@ -7,6 +7,14 @@ import {
 } from './planner'
 
 describe('quickStartPlannerInstructions', () => {
+  it('keeps direction count and grid composition out of optimizedPrompt', () => {
+    const instructions = quickStartPlannerInstructions(false, '像素艺术')
+
+    expect(instructions).toContain('optimizedPrompt 只描述一个角色实例')
+    expect(instructions).toContain('方向数量由宿主的方向控件单独传递')
+    expect(instructions).toContain('不得加入多视图、转面表、精灵表或宫格构图')
+  })
+
   it('separates conversation, optional proposals, and generation authorization', () => {
     const firstTurn = quickStartPlannerInstructions(false)
     const laterTurn = quickStartPlannerInstructions(true)
@@ -28,6 +36,26 @@ describe('quickStartPlannerInstructions', () => {
     expect(laterTurn).toContain('不得因为轮数强制生成')
     expect(laterTurn).toContain('不得再问第二个澄清问题')
     expect(laterTurn).toContain('可继续补充')
+  })
+
+  it('keeps an existing character fixed while proposing only a new action', () => {
+    const instructions = quickStartPlannerInstructions(false, undefined, {
+      characterPrompt: '紫发女巫，黑色尖顶帽，手持木质法杖',
+    })
+
+    expect(instructions).toContain('当前任务只为已有角色新增动作')
+    expect(instructions).toContain('紫发女巫，黑色尖顶帽，手持木质法杖')
+    expect(instructions).toContain('不得修改、补写或重新提案角色身份')
+    expect(instructions).toContain('actionPrompt')
+    expect(instructions).toContain('locomotion: true')
+  })
+
+  it('blocks multiple requested actions and tells the user to keep one action', () => {
+    const instructions = quickStartPlannerInstructions(false)
+
+    expect(instructions).toContain('一次只生成一个动作')
+    expect(instructions).toContain('用 blocked')
+    expect(instructions).toContain('请用户选择并只保留其中一个动作')
   })
 })
 

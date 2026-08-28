@@ -7,11 +7,12 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useParams } from 'react-router'
 import { UploadSimple } from '@phosphor-icons/react'
 
 import {
+  characterApis,
   projectApis,
   type ArtStyle,
   type ActionPreset,
@@ -22,6 +23,7 @@ import {
   type Character,
   type CharacterSetupWorkflowNode,
   type CharacterTemplateWorkflowNode,
+  type CharacterViewSheetCandidate,
   type Generation,
   type MasterPrecheckReport,
   type MasterWarning,
@@ -32,7 +34,9 @@ import {
   type WorkflowGenerationRole,
   type WorkflowNode,
   type WorkflowRun,
+  getDirectionGridLayout,
   getDirectionProfile,
+  resolveActionDirection,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
 import {
@@ -48,6 +52,7 @@ import {
   IMAGE_UPLOAD_HINT,
   useImageDropTarget,
 } from '@/shared/ui'
+import { Render3DAssetPanel } from './render3d-panel'
 import { loadDefaultActionPresets, type WorkflowEditorSession } from './runtime'
 import { useWorkflowEditorSession } from './use-workflow-editor-session'
 import { WorkflowEditorView, type WorkflowCardNode } from './workflow-editor-view'
@@ -144,6 +149,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   } = state
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({})
   const [setupPromptDrafts, setSetupPromptDrafts] = useState<Record<string, string>>({})
+  const [directionPromptDrafts, setDirectionPromptDrafts] = useState<Record<string, string>>({})
   const [actionPromptDraft, setActionPromptDraft] = useState('')
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
@@ -172,6 +178,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   useEffect(() => {
     setSelectedImages({})
     setSetupPromptDrafts({})
+    setDirectionPromptDrafts({})
     setActionPromptDraft('')
     setActionMenuOpen(false)
     setActionMenuLevel('root')
@@ -211,6 +218,11 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             run,
             controller: session.controller,
             confirmCharacterTemplate: session.confirmCharacterTemplate,
+            confirmCharacterViewSheet:
+              session.confirmCharacterViewSheet ??
+              (async () => {
+                throw new Error('当前会话不支持方向 sheet 确认，请刷新后重试')
+              }),
             uploadReferenceImage: session.uploadReferenceImage,
             publishReviewedAction: session.publishReviewedAction,
             project: session.project,
@@ -220,6 +232,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             exportModels,
             selectedImages,
             setupPromptDrafts,
+            directionPromptDrafts,
             actionPromptDraft,
             actionMenuOpen,
             actionMenuLevel,
@@ -230,6 +243,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             resumeBlocked: Boolean(resumeError),
             setSelectedImages,
             setSetupPromptDrafts,
+            setDirectionPromptDrafts,
             setActionPromptDraft,
             setActionMenuOpen,
             setActionMenuLevel,
@@ -248,6 +262,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       character,
       exportModels,
       generations,
+      directionPromptDrafts,
       run,
       runCommand,
       resumeError,
@@ -343,6 +358,10 @@ interface ProjectionInput {
     selectedImageUrl: string,
     direction?: ActionDirection,
   ): Promise<Character>
+  confirmCharacterViewSheet(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    candidate: CharacterViewSheetCandidate,
+  ): Promise<Character>
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   project: Project
@@ -353,6 +372,7 @@ interface ProjectionInput {
   exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
   setupPromptDrafts: Record<string, string>
+  directionPromptDrafts: Record<string, string>
   actionPromptDraft: string
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
@@ -364,6 +384,7 @@ interface ProjectionInput {
   resumeBlocked: boolean
   setSelectedImages: React.Dispatch<React.SetStateAction<Record<string, string>>>
   setSetupPromptDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  setDirectionPromptDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>
   setActionPromptDraft(value: string): void
   setActionMenuOpen(open: boolean): void
   setActionMenuLevel(level: ActionMenuLevel): void
@@ -392,22 +413,66 @@ function projectCanvas(input: ProjectionInput): {
     .filter((node) => node.type === 'action-first-frame')
     .map((node) => node.id)
   const nodesById = new Map(activeNodes.map((node) => [node.id, node]))
-  const nodes = activeNodes.map((node) =>
-    toCanvasNode(node, branchIndexFor(branchKeyFor(node, nodesById), actionRootIds), input),
-  )
+  const movement = input.project.directionalMovement
+  const directions = getDirectionProfile(movement).logicalDirections
+  const nodes = activeNodes.flatMap((node) => {
+    const branchIndex = branchIndexFor(branchKeyFor(node, nodesById), actionRootIds)
+    if (movement !== 'single' && node.type === 'action-first-frame') {
+      return directions.map((direction) =>
+        toDirectionCanvasNode(node, direction, branchIndex, input),
+      )
+    }
+    return [toCanvasNode(node, branchIndex, input)]
+  })
   const edges: Edge[] = activeNodes.flatMap((node) => {
     const confirmed = node.status === 'passed'
-    return node.dependsOnNodeIds.map((source) => ({
-      id: `${source}->${node.id}`,
-      source,
-      target: node.id,
-      selectable: false,
-      deletable: false,
-      className: confirmed ? 'workflow-edge--confirmed' : 'workflow-edge--flowing',
-    }))
+    const targetIds =
+      movement !== 'single' && node.type === 'action-first-frame'
+        ? directions.map((direction) => directionCanvasNodeId(node.id, direction))
+        : [node.id]
+    return node.dependsOnNodeIds.flatMap((source) => {
+      const sourceNode = nodesById.get(source)
+      const sourceIds =
+        movement !== 'single' && sourceNode?.type === 'action-first-frame'
+          ? directions.map((direction) => directionCanvasNodeId(source, direction))
+          : [source]
+      return sourceIds.flatMap((sourceId) =>
+        targetIds.map((targetId) => ({
+          id: `${sourceId}->${targetId}`,
+          source: sourceId,
+          target: targetId,
+          selectable: false,
+          deletable: false,
+          className: confirmed ? 'workflow-edge--confirmed' : 'workflow-edge--flowing',
+        })),
+      )
+    })
   })
 
   return { nodes, edges }
+}
+
+function toDirectionCanvasNode(
+  node: ActionFirstFrameWorkflowNode,
+  direction: ActionDirection,
+  branchIndex: number,
+  input: ProjectionInput,
+): WorkflowCardNode {
+  return {
+    id: directionCanvasNodeId(node.id, direction),
+    type: 'workflow-card',
+    position: positionForDirection(direction, branchIndex),
+    zIndex: 0,
+    draggable: true,
+    dragHandle: '.workflow-card__handle',
+    deletable: false,
+    data: {
+      eyebrow: CARD_LABELS[node.type].eyebrow,
+      title: `${directionLabel(direction)}向动作首帧`,
+      status: node.status,
+      content: <FirstFrameDirectionContent node={node} direction={direction} input={input} />,
+    },
+  }
 }
 
 function toCanvasNode(
@@ -418,7 +483,7 @@ function toCanvasNode(
   return {
     id: node.id,
     type: 'workflow-card',
-    position: positionFor(node.type, branchIndex),
+    position: positionFor(node.type, branchIndex, input.project.directionalMovement),
     zIndex: node.type === 'character-template' && input.actionMenuOpen ? 1000 : 0,
     draggable: true,
     dragHandle: '.workflow-card__handle',
@@ -497,6 +562,77 @@ function WorkflowImage({
         onError={() => setState('failed')}
       />
     </span>
+  )
+}
+
+function DirectionAssetGrid({
+  movement,
+  images,
+  kind,
+  singleAlt,
+}: {
+  movement: Project['directionalMovement']
+  images: Partial<Record<ActionDirection, string | null | undefined>>
+  kind: '角色母版' | '动作首帧'
+  singleAlt: string
+}) {
+  const layout =
+    movement === 'four-way'
+      ? {
+          columns: 3,
+          cells: [null, 'north', null, 'west', null, 'east', null, 'south', null] as const,
+        }
+      : getDirectionGridLayout(movement)
+  const eastImage = images.east
+  if (layout.columns === 1) {
+    return eastImage ? <WorkflowImage src={eastImage} alt={singleAlt} variant="master" /> : null
+  }
+
+  const directionCountLabel = movement === 'eight-way' ? '八向' : '四向'
+  return (
+    <div
+      role="group"
+      aria-label={`${directionCountLabel}${kind}集合`}
+      data-layout="direction-asset-grid"
+      className="grid aspect-square w-full grid-cols-3 gap-2 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-muted p-2"
+    >
+      {layout.cells.map((direction, index) => {
+        if (!direction) {
+          return (
+            <div
+              key={`empty-${index}`}
+              aria-label={`${directionCountLabel}宫格空位`}
+              className="min-h-0"
+            />
+          )
+        }
+        const imageUrl = images[direction]
+        return imageUrl ? (
+          <figure
+            key={direction}
+            className="relative m-0 min-h-0 overflow-hidden rounded-lg border border-app-line bg-app-surface-raised"
+          >
+            <WorkflowImage
+              src={imageUrl}
+              alt={`${directionLabel(direction)}方向${kind}`}
+              variant="thumbnail"
+            />
+            <figcaption className="absolute bottom-1 left-1 rounded-full bg-app-canvas/85 px-1.5 py-0.5 text-[8px] font-bold text-app-ink">
+              {directionLabel(direction)}
+            </figcaption>
+          </figure>
+        ) : (
+          <div
+            key={direction}
+            role="status"
+            aria-label={`${directionLabel(direction)}方向${kind}缺失`}
+            className="grid min-h-0 place-items-center rounded-lg border border-dashed border-app-line bg-app-surface-raised text-[9px] font-semibold text-app-muted"
+          >
+            {directionLabel(direction)}方向缺失
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -639,7 +775,7 @@ function CharacterSetupContent({
             input.controller.generateCharacterTemplate(node.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
-              directions: ['east'],
+              directions: [input.project.directionalMovement === 'single' ? 'east' : 'south'],
               candidateCount: 3,
               input: {
                 prompt,
@@ -680,7 +816,7 @@ function CharacterTemplateContent({
             input.controller.generateCharacterTemplate(setupNode.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
-              directions: ['east'],
+              directions: [input.project.directionalMovement === 'single' ? 'east' : 'south'],
               candidateCount: 3,
             }),
           )
@@ -692,10 +828,13 @@ function CharacterTemplateContent({
   }
   if (node.phase === 'selecting') {
     const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
+    const anchorDirection: ActionDirection =
+      input.project.directionalMovement === 'single' ? 'east' : 'south'
     const masterConfirmed = Boolean(node.selectedImageUrl)
     const hasPrematureDirectionTasks = node.generations.some(
       (reference) =>
-        reference.role === 'character_template' && (reference.direction ?? 'east') !== 'east',
+        reference.role === 'character_template' &&
+        (reference.direction ?? 'east') !== anchorDirection,
     )
     if (!masterConfirmed && hasPrematureDirectionTasks) {
       const setupNode = findDependency(input.run, node, 'character-setup')
@@ -720,7 +859,7 @@ function CharacterTemplateContent({
                 await input.controller.generateCharacterTemplate(setupNode.id, {
                   spriteWidth: input.project.spriteSize.width,
                   spriteHeight: input.project.spriteSize.height,
-                  directions: ['east'],
+                  directions: [anchorDirection],
                   candidateCount: 3,
                 })
               })
@@ -731,7 +870,7 @@ function CharacterTemplateContent({
         </div>
       )
     }
-    const visibleDirections = masterConfirmed ? directions : (['east'] as const)
+    const visibleDirections = masterConfirmed ? directions : ([anchorDirection] as const)
     const groups = visibleDirections.map((direction) => {
       const result =
         input.generations[generationKey(node.id, 'character_template', direction)]?.result
@@ -743,8 +882,9 @@ function CharacterTemplateContent({
     if (!masterConfirmed) {
       const images = groups[0]?.images ?? []
       const selectedImageUrl =
-        images.find((image) => image.url === input.selectedImages[selectionKey(node.id, 'east')])
-          ?.url ?? null
+        images.find(
+          (image) => image.url === input.selectedImages[selectionKey(node.id, anchorDirection)],
+        )?.url ?? null
       return (
         <div className={CARD_STACK}>
           <div className="grid grid-cols-2 gap-[7px]">
@@ -754,11 +894,13 @@ function CharacterTemplateContent({
                 key={image.url}
                 className={THUMB_BUTTON}
                 aria-label={`选择角色候选 ${index + 1}`}
-                aria-pressed={input.selectedImages[selectionKey(node.id, 'east')] === image.url}
+                aria-pressed={
+                  input.selectedImages[selectionKey(node.id, anchorDirection)] === image.url
+                }
                 onClick={() =>
                   input.setSelectedImages((selected) => ({
                     ...selected,
-                    [selectionKey(node.id, 'east')]: image.url,
+                    [selectionKey(node.id, anchorDirection)]: image.url,
                   }))
                 }
               >
@@ -781,91 +923,60 @@ function CharacterTemplateContent({
       )
     }
 
-    const directionImages = Object.fromEntries(
-      directions.map((direction) => {
-        if (direction === 'east') {
-          return [direction, node.selectedImages?.east ?? node.selectedImageUrl]
-        }
-        const group = groups.find((candidate) => candidate.direction === direction)
-        return [direction, group?.images.length === 1 ? group.images[0]!.url : null]
-      }),
-    ) as Partial<Record<ActionDirection, string | null>>
-    const directionSetComplete = directions.every((direction) => directionImages[direction])
-    const directionCountLabel = directions.length === 8 ? '八向' : '四向'
+    const sheetRole =
+      input.project.directionalMovement === 'four-way'
+        ? ('character_four_view' as const)
+        : ('character_eight_view' as const)
+    const result = input.generations[generationKey(node.id, sheetRole, 'east')]?.result
+    const sheets = result?.type === sheetRole ? result.sheets : []
+    const selectedSheetUrl = input.selectedImages[selectionKey(node.id, 'east')]
+    const selectedSheet = sheets.find((sheet) => sheet.sheetUrl === selectedSheetUrl) ?? null
+    if (sheets.length === 0) {
+      return <p className={CARD_TEXT}>方向立绘已经生成，正在读取候选结果…</p>
+    }
     return (
       <div className={CARD_STACK}>
-        <p className={CARD_TEXT}>所有方向均基于已确认母版生成，每个方向一张。</p>
-        <div
-          role="group"
-          aria-label={`${directionCountLabel}首帧集合`}
-          data-layout="direction-first-frame-stack"
-          className={`grid w-full gap-2 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-muted p-2 ${
-            directions.length === 8 ? 'aspect-[2/1] grid-cols-4' : 'aspect-square grid-cols-2'
-          }`}
-        >
-          {directions.map((direction) => {
-            const imageUrl = directionImages[direction]
-            return imageUrl ? (
-              <figure
-                key={direction}
-                className="relative m-0 min-h-0 overflow-hidden rounded-lg border border-app-line bg-app-surface-raised"
+        <p className={CARD_TEXT}>选择一套方向立绘；每个格子都是独立图片，镜像关系沿用 PR 758。</p>
+        <div className="grid gap-2">
+          {sheets.map((sheet, index) => {
+            const images = Object.fromEntries(
+              sheet.cells.map((cell) => [cell.direction, cell.imageUrl]),
+            ) as Partial<Record<ActionDirection, string>>
+            return (
+              <button
+                type="button"
+                key={sheet.sheetUrl}
+                className={`${THUMB_BUTTON} p-2`}
+                aria-label={`选择方向立绘候选 ${index + 1}`}
+                aria-pressed={selectedSheetUrl === sheet.sheetUrl}
+                onClick={() =>
+                  input.setSelectedImages((selected) => ({
+                    ...selected,
+                    [selectionKey(node.id, 'east')]: sheet.sheetUrl,
+                  }))
+                }
               >
-                <WorkflowImage
-                  src={imageUrl}
-                  alt={`${directionLabel(direction)}方向首帧`}
-                  variant="thumbnail"
+                <DirectionAssetGrid
+                  movement={input.project.directionalMovement}
+                  images={images}
+                  kind="角色母版"
+                  singleAlt="方向立绘候选"
                 />
-                <figcaption className="absolute bottom-1 left-1 rounded-full bg-app-canvas/85 px-1.5 py-0.5 text-[8px] font-bold text-app-ink">
-                  {directionLabel(direction)}
-                </figcaption>
-              </figure>
-            ) : (
-              <div
-                key={direction}
-                role="status"
-                aria-label={`${directionLabel(direction)}方向首帧生成中`}
-                className="grid min-h-0 place-items-center rounded-lg border border-dashed border-app-line bg-app-surface-raised text-[9px] font-semibold text-app-muted"
-              >
-                {directionLabel(direction)}方向生成中
-              </div>
+              </button>
             )
           })}
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {directions.slice(1).map((direction) => (
-            <button
-              type="button"
-              key={direction}
-              className={CARD_BUTTON_SECONDARY}
-              disabled={branchBusy}
-              onClick={() =>
-                input.runCommand(branchKey, () =>
-                  input.controller.retryGenerationDirection(node.id, direction, {
-                    spriteWidth: input.project.spriteSize.width,
-                    spriteHeight: input.project.spriteSize.height,
-                  }),
-                )
-              }
-            >
-              重做{directionLabel(direction)}方向
-            </button>
-          ))}
         </div>
         <button
           type="button"
           className={CARD_BUTTON}
-          disabled={!directionSetComplete || branchBusy}
-          onClick={() =>
+          disabled={!selectedSheet || branchBusy}
+          onClick={() => {
+            if (!selectedSheet) return
             input.runCommand(branchKey, async () => {
-              let character: Character | null = null
-              for (const direction of directions.slice(1)) {
-                const imageUrl = directionImages[direction]
-                if (!imageUrl) throw new Error(`${directionLabel(direction)}方向尚未生成完成`)
-                character = await input.confirmCharacterTemplate(node.id, imageUrl, direction)
-              }
-              if (character) input.setCharacter(character)
+              const character = await input.confirmCharacterViewSheet(node.id, selectedSheet)
+              input.setCharacter(character)
             })
-          }
+          }}
         >
           确认方向集合
         </button>
@@ -879,10 +990,23 @@ function CharacterTemplateContent({
       ) ?? input.character?.outfits[0]
     return (
       <div className={CARD_STACK}>
-        <WorkflowImage src={node.selectedImageUrl} alt="已确认身份母版" variant="master" />
+        <DirectionAssetGrid
+          movement={input.project.directionalMovement}
+          images={{ east: node.selectedImageUrl, ...node.selectedImages }}
+          kind="角色母版"
+          singleAlt="已确认身份母版"
+        />
         <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
         <div className="grid gap-2" role="group" aria-label="角色母版操作">
           {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
+          {outfit ? (
+            <Render3DAssetPanelHost
+              input={input}
+              outfitId={outfit.id}
+              masterUrl={node.selectedImageUrl}
+              disabled={branchBusy}
+            />
+          ) : null}
           <div className="grid grid-cols-2 gap-2" role="group" aria-label="调整角色母版">
             <button
               type="button"
@@ -1012,18 +1136,24 @@ function MasterGate({
         title={rejected ? precheck.report.detail : undefined}
         onClick={() =>
           input.runCommand(branchKey, async () => {
-            const character = await input.confirmCharacterTemplate(node.id, imageUrl)
+            const anchorDirection =
+              input.project.directionalMovement === 'single' ? 'east' : 'south'
+            const character = await input.confirmCharacterTemplate(
+              node.id,
+              imageUrl,
+              anchorDirection,
+            )
             input.setCharacter(character)
             const directions = getDirectionProfile(
               input.project.directionalMovement,
             ).generationDirections
             if (directions.length > 1) {
               if (!setupNode) throw new Error('身份母版缺少角色设定')
-              await input.controller.generateCharacterTemplate(setupNode.id, {
+              await input.controller.generateCharacterViewSheet(node.id, {
+                characterId: character.id,
+                prompt: setupNode.input.prompt,
                 spriteWidth: input.project.spriteSize.width,
                 spriteHeight: input.project.spriteSize.height,
-                sourceImageUrl: imageUrl,
-                directions: directions.slice(1),
                 candidateCount: 1,
               })
             }
@@ -1050,7 +1180,7 @@ function MasterGate({
             await input.controller.generateCharacterTemplate(setupNode.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
-              directions: ['east'],
+              directions: [input.project.directionalMovement === 'single' ? 'east' : 'south'],
               candidateCount: 3,
             })
           })
@@ -1090,6 +1220,46 @@ function useMasterPrecheck(input: ProjectionInput, imageUrl: string): MasterPrec
   }, [height, imageUrl, render3d, width])
 
   return state
+}
+
+/** 把母版预检接到面板上。面板只吃结果，不知道预检怎么来的。 */
+function Render3DAssetPanelHost({
+  input,
+  outfitId,
+  masterUrl,
+  disabled,
+}: {
+  input: ProjectionInput
+  outfitId: string
+  masterUrl: string
+  disabled: boolean
+}) {
+  const precheck = useMasterPrecheck(input, masterUrl)
+  const characterId = input.character?.id
+  // 角色数据上挂着 model_3d_url 与 rigged_motions,而「生产方式」等节点读的是这份数据。
+  // 建资产不在角色数据的更新路径上,所以建完必须把它重取一遍 —— 不重取的话,
+  // 用户刚在这里看到「3D 资产已就绪」,走到下游却被告知「该造型暂无绑骨 3D 模型」。
+  const refreshCharacter = useCallback(() => {
+    if (!characterId) return
+    void characterApis
+      .get(characterId)
+      .then((fresh) => input.setCharacter(fresh))
+      .catch(() => {
+        // 重取失败不该打断建资产那条主线:资产本身已经建成了,这里只是同步一份视图。
+        // 下游最坏退回到"需要刷新页面",与修这条之前一样,不会更糟。
+      })
+  }, [characterId, input])
+  if (!characterId) return null
+  return (
+    <Render3DAssetPanel
+      render3d={input.render3d}
+      characterId={characterId}
+      outfitId={outfitId}
+      precheck={precheck.status === 'done' ? precheck.report : null}
+      disabled={disabled}
+      onAssetChanged={refreshCharacter}
+    />
+  )
 }
 
 const WARNING_TITLE: Record<MasterWarning['code'], string> = {
@@ -1309,6 +1479,224 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
   )
 }
 
+function FirstFrameDirectionContent({
+  node,
+  direction,
+  input,
+}: {
+  node: ActionFirstFrameWorkflowNode
+  direction: ActionDirection
+  input: ProjectionInput
+}) {
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
+  const profile = getDirectionProfile(input.project.directionalMovement)
+  const resolved = resolveActionDirection(direction)
+  const sourceDirection = resolved.sourceDirection
+  const generation = input.generations[generationKey(node.id, 'first_frame', sourceDirection)]
+  const result = generation?.result
+  const images = result?.type === 'first_frame' ? result.images : []
+  const selectedImage =
+    node.selectedFirstFrameUrls?.[sourceDirection] ??
+    (sourceDirection === 'east' ? node.selectedFirstFrameUrl : null)
+  const selectedCandidateKey = selectionKey(node.id, sourceDirection)
+  const storedCandidate = input.selectedImages[selectedCandidateKey]
+  const selectedCandidate = images.find((image) => image.url === storedCandidate)?.url
+  const retryDirection = () => {
+    input.setSelectedImages((selected) => {
+      if (!(selectedCandidateKey in selected)) return selected
+      const next = { ...selected }
+      delete next[selectedCandidateKey]
+      return next
+    })
+    return input.runCommand(branchKey, () =>
+      input.controller.retryGenerationDirection(node.id, sourceDirection, {
+        spriteWidth: input.project.spriteSize.width,
+        spriteHeight: input.project.spriteSize.height,
+        referenceMedia: [],
+      }),
+    )
+  }
+
+  if (resolved.mirrorX) {
+    const preview = selectedImage ?? selectedCandidate ?? images[0]?.url
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_SUMMARY}>
+          由{directionLabel(sourceDirection)}向结果水平镜像，不单独调用模型
+        </p>
+        {preview ? (
+          <div className="-scale-x-100">
+            <WorkflowImage
+              src={preview}
+              alt={`${directionLabel(direction)}向镜像动作首帧`}
+              variant="frame"
+            />
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  const promptKey = directionPromptKey(node.id, direction)
+  const promptDraft =
+    input.directionPromptDrafts[promptKey] ??
+    node.input.directionPrompts?.[direction] ??
+    node.input.prompt ??
+    ''
+
+  if (node.phase === 'configuring') {
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_TEXT}>
+          {node.input.name} · {node.input.fps} FPS
+        </p>
+        <textarea
+          aria-label={`${directionLabel(direction)}向动作描述`}
+          rows={3}
+          value={promptDraft}
+          disabled={branchBusy}
+          onChange={(event) =>
+            input.setDirectionPromptDrafts((drafts) => ({
+              ...drafts,
+              [promptKey]: event.target.value,
+            }))
+          }
+          className="nodrag nopan nowheel min-h-20 resize-y rounded-md border border-app-line-strong bg-app-surface p-2 text-[11px] text-app-ink outline-none focus:border-app-accent"
+        />
+        {direction === profile.generationDirections[0] ? (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, async () => {
+                const prompts = Object.fromEntries(
+                  profile.generationDirections.map((source) => [
+                    source,
+                    input.directionPromptDrafts[directionPromptKey(node.id, source)] ??
+                      node.input.directionPrompts?.[source] ??
+                      node.input.prompt ??
+                      '',
+                  ]),
+                ) as Partial<Record<ActionDirection, string>>
+                await input.controller.updateFirstFrameDirectionPrompts(node.id, prompts)
+                await input.controller.generateFirstFrame(node.id, {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                })
+              })
+            }
+          >
+            生成全部真实方向首帧
+          </button>
+        ) : null}
+      </div>
+    )
+  }
+
+  if (!selectedImage && images.length > 0) {
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_TEXT}>选择{directionLabel(direction)}向动作首帧</p>
+        <div className="grid grid-cols-2 gap-[7px]">
+          {images.map((image, index) => (
+            <button
+              key={image.url}
+              type="button"
+              className={THUMB_BUTTON}
+              aria-label={`选择${directionLabel(direction)}动作首帧候选 ${index + 1}`}
+              aria-pressed={selectedCandidate === image.url}
+              onClick={() =>
+                input.setSelectedImages((selected) => ({
+                  ...selected,
+                  [selectionKey(node.id, direction)]: image.url,
+                }))
+              }
+            >
+              <WorkflowImage
+                src={image.url}
+                alt={`${directionLabel(direction)}动作首帧候选 ${index + 1}`}
+                variant="thumbnail"
+              />
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className={CARD_BUTTON}
+          disabled={!selectedCandidate || branchBusy}
+          onClick={() => {
+            if (!selectedCandidate) return
+            input.runCommand(branchKey, () =>
+              input.controller.confirmFirstFrame(node.id, selectedCandidate, direction),
+            )
+          }}
+        >
+          确认{directionLabel(direction)}向首帧
+        </button>
+        <button
+          type="button"
+          className={CARD_BUTTON_SECONDARY}
+          disabled={branchBusy}
+          onClick={retryDirection}
+        >
+          重做{directionLabel(direction)}方向
+        </button>
+      </div>
+    )
+  }
+
+  if (selectedImage) {
+    return (
+      <div className={CARD_STACK}>
+        <WorkflowImage
+          src={selectedImage}
+          alt={`${directionLabel(direction)}向已确认动作首帧`}
+          variant="frame"
+        />
+        <p className={CARD_SUMMARY}>该方向首帧已确认</p>
+        {node.phase === 'completed' && direction === profile.generationDirections[0] ? (
+          <FirstFrameCompletedControls node={node} input={input} />
+        ) : null}
+      </div>
+    )
+  }
+
+  if (generation?.status === 'failed') {
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_SUMMARY}>
+          {generation.error ?? `${directionLabel(direction)}向生成失败`}
+        </p>
+        <button
+          type="button"
+          className={CARD_BUTTON}
+          disabled={branchBusy}
+          onClick={retryDirection}
+        >
+          重试{directionLabel(direction)}方向
+        </button>
+      </div>
+    )
+  }
+
+  if (node.status === 'failed') return <StatusText node={node} input={input} />
+  if (node.phase === 'generating') {
+    return (
+      <div className={`${CARD_STACK} justify-items-center`}>
+        <GenerationProgressCopy
+          kind="action-first-frame"
+          label="动作首帧生成进度"
+          placement="node"
+        />
+        <GenerationPreviewCard label="动作首帧生成预览" radius="node" size="candidate" />
+      </div>
+    )
+  }
+  return <p className={CARD_SUMMARY}>等待该方向结果</p>
+}
+
 function FirstFrameContent({
   node,
   input,
@@ -1318,8 +1706,6 @@ function FirstFrameContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const [refining, setRefining] = useState(false)
-  const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
   const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
   const groups = directions.map((direction) => {
     const result = input.generations[generationKey(node.id, 'first_frame', direction)]?.result
@@ -1432,80 +1818,104 @@ function FirstFrameContent({
     )
   }
   if (node.phase === 'completed' && (node.selectedFirstFrameUrl || node.selectedFirstFrameUrls)) {
-    const selectedImageUrl =
-      node.selectedFirstFrameUrls?.east ?? node.selectedFirstFrameUrl ?? undefined
-    if (!selectedImageUrl) return <StatusText node={node} input={input} />
+    const selectedImages = {
+      east: node.selectedFirstFrameUrls?.east ?? node.selectedFirstFrameUrl ?? undefined,
+      ...node.selectedFirstFrameUrls,
+    }
+    if (!selectedImages.east) return <StatusText node={node} input={input} />
     return (
       <div className={CARD_STACK}>
-        <WorkflowImage src={selectedImageUrl} alt="已确认动作首帧" variant="master" />
-        <div className="grid gap-2">
-          <button
-            type="button"
-            className={CARD_BUTTON}
-            disabled={branchBusy}
-            onClick={() =>
-              input.runCommand(branchKey, () =>
-                input.controller.regenerateFirstFrame(node.id, {
-                  spriteWidth: input.project.spriteSize.width,
-                  spriteHeight: input.project.spriteSize.height,
-                  mode: 'regenerate',
-                }),
-              )
-            }
-          >
-            重新生成动作首帧
-          </button>
-          <button
-            type="button"
-            className={CARD_BUTTON}
-            disabled={branchBusy}
-            onClick={() => setRefining((active) => !active)}
-          >
-            微调动作首帧
-          </button>
-          {refining ? (
-            <div className="grid gap-2">
-              <textarea
-                aria-label="动作首帧微调描述"
-                rows={3}
-                className="min-h-[64px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
-                value={adjustmentPrompt}
-                disabled={branchBusy}
-                onChange={(event) => setAdjustmentPrompt(event.target.value)}
-              />
-              <button
-                type="button"
-                className={CARD_BUTTON}
-                disabled={branchBusy || !adjustmentPrompt.trim()}
-                onClick={() => {
-                  const prompt = adjustmentPrompt.trim()
-                  if (!prompt) return
-                  input.runCommand(
-                    branchKey,
-                    () =>
-                      input.controller.regenerateFirstFrame(node.id, {
-                        spriteWidth: input.project.spriteSize.width,
-                        spriteHeight: input.project.spriteSize.height,
-                        mode: 'refine',
-                        adjustmentPrompt: prompt,
-                      }),
-                    () => {
-                      setRefining(false)
-                      setAdjustmentPrompt('')
-                    },
-                  )
-                }}
-              >
-                提交动作首帧微调
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <NodeExportButton model={input.exportModels.get(node.input.outfitId)} />
+        <DirectionAssetGrid
+          movement={input.project.directionalMovement}
+          images={selectedImages}
+          kind="动作首帧"
+          singleAlt="已确认动作首帧"
+        />
+        <FirstFrameCompletedControls node={node} input={input} />
       </div>
     )
   }
   return <StatusText node={node} input={input} />
+}
+
+function FirstFrameCompletedControls({
+  node,
+  input,
+}: {
+  node: ActionFirstFrameWorkflowNode
+  input: ProjectionInput
+}) {
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
+  const [refining, setRefining] = useState(false)
+  const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
+
+  return (
+    <div className="grid gap-2">
+      <button
+        type="button"
+        className={CARD_BUTTON}
+        disabled={branchBusy}
+        onClick={() =>
+          input.runCommand(branchKey, () =>
+            input.controller.regenerateFirstFrame(node.id, {
+              spriteWidth: input.project.spriteSize.width,
+              spriteHeight: input.project.spriteSize.height,
+              mode: 'regenerate',
+            }),
+          )
+        }
+      >
+        重新生成动作首帧
+      </button>
+      <button
+        type="button"
+        className={CARD_BUTTON}
+        disabled={branchBusy}
+        onClick={() => setRefining((active) => !active)}
+      >
+        微调动作首帧
+      </button>
+      {refining ? (
+        <div className="grid gap-2">
+          <textarea
+            aria-label="动作首帧微调描述"
+            rows={3}
+            className="min-h-[64px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+            value={adjustmentPrompt}
+            disabled={branchBusy}
+            onChange={(event) => setAdjustmentPrompt(event.target.value)}
+          />
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy || !adjustmentPrompt.trim()}
+            onClick={() => {
+              const prompt = adjustmentPrompt.trim()
+              if (!prompt) return
+              input.runCommand(
+                branchKey,
+                () =>
+                  input.controller.regenerateFirstFrame(node.id, {
+                    spriteWidth: input.project.spriteSize.width,
+                    spriteHeight: input.project.spriteSize.height,
+                    mode: 'refine',
+                    adjustmentPrompt: prompt,
+                  }),
+                () => {
+                  setRefining(false)
+                  setAdjustmentPrompt('')
+                },
+              )
+            }}
+          >
+            提交动作首帧微调
+          </button>
+        </div>
+      ) : null}
+      <NodeExportButton model={input.exportModels.get(node.input.outfitId)} />
+    </div>
+  )
 }
 
 function MethodContent({
@@ -1734,19 +2144,32 @@ function WorkflowCard({ data, selected }: NodeProps<WorkflowCardNode>) {
 function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInput }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const generationRole =
+  const viewSheetRole =
     node.type === 'character-template'
+      ? (node.generations.find(
+          (reference) =>
+            reference.role === 'character_four_view' || reference.role === 'character_eight_view',
+        )?.role ?? null)
+      : null
+  const generationRole =
+    viewSheetRole ??
+    (node.type === 'character-template'
       ? 'character_template'
       : node.type === 'action-first-frame'
         ? 'first_frame'
         : node.type === 'action-full-frame'
           ? 'complete_animation'
-          : null
+          : null)
   const failedDirections = generationRole
-    ? getDirectionProfile(input.project.directionalMovement).generationDirections.filter(
-        (direction) =>
-          input.generations[generationKey(node.id, generationRole, direction)]?.status === 'failed',
-      )
+    ? viewSheetRole
+      ? input.generations[generationKey(node.id, viewSheetRole, 'east')]?.status === 'failed'
+        ? (['east'] as const)
+        : []
+      : getDirectionProfile(input.project.directionalMovement).generationDirections.filter(
+          (direction) =>
+            input.generations[generationKey(node.id, generationRole, direction)]?.status ===
+            'failed',
+        )
     : []
   const resumeBlocked =
     input.resumeBlocked && node.status === 'active' && node.phase === 'generating'
@@ -1756,7 +2179,23 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
         <p className={CARD_SUMMARY}>
           {node.status === 'failed' ? (node.error ?? '生成失败') : '生成任务恢复失败'}
         </p>
-        {failedDirections.length > 0 ? (
+        {viewSheetRole && failedDirections.length > 0 ? (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, () =>
+                input.controller.retryGenerationDirection(node.id, 'east', {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                }),
+              )
+            }
+          >
+            重新生成整张方向立绘
+          </button>
+        ) : failedDirections.length > 0 ? (
           failedDirections.map((direction) => (
             <button
               type="button"
@@ -1792,8 +2231,15 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
     )
   }
   if (node.phase === 'generating') {
-    const feedback =
-      node.type === 'character-template'
+    const generatingViewSheet =
+      node.type === 'character-template' &&
+      node.generations.some(
+        (reference) =>
+          reference.role === 'character_four_view' || reference.role === 'character_eight_view',
+      )
+    const feedback = generatingViewSheet
+      ? (['character-view-sheet', '方向立绘生成进度', '方向立绘生成预览'] as const)
+      : node.type === 'character-template'
         ? (['character-template', '身份母版生成进度', '身份母版生成预览'] as const)
         : node.type === 'action-first-frame'
           ? (['action-first-frame', '动作首帧生成进度', '动作首帧生成预览'] as const)
@@ -1845,6 +2291,14 @@ function selectionKey(nodeId: WorkflowNode['id'], direction: ActionDirection) {
   return direction === 'east' ? nodeId : `${nodeId}:${direction}`
 }
 
+function directionPromptKey(nodeId: WorkflowNode['id'], direction: ActionDirection) {
+  return `${nodeId}:prompt:${direction}`
+}
+
+function directionCanvasNodeId(nodeId: WorkflowNode['id'], direction: ActionDirection) {
+  return `${nodeId}:direction:${direction}`
+}
+
 function directionLabel(direction: ActionDirection) {
   const labels: Record<ActionDirection, string> = {
     east: '东',
@@ -1881,19 +2335,50 @@ function branchIndexFor(branchKey: string, actionRootIds: string[]): number {
   return Math.max(0, actionRootIds.indexOf(branchKey))
 }
 
-function positionFor(type: WorkflowNode['type'], branchIndex: number) {
+const DIRECTION_ROW_GAP = 440
+const MULTI_DIRECTION_BRANCH_GAP = 1400
+
+function positionFor(
+  type: WorkflowNode['type'],
+  branchIndex: number,
+  movement: Project['directionalMovement'],
+) {
+  const multiDirection = movement !== 'single'
   const x: Record<WorkflowNode['type'], number> = {
     'character-setup': 60,
     'character-template': 400,
     'action-first-frame': 740,
-    'action-generation-method': 1080,
-    'action-full-frame': 1420,
-    review: 1760,
+    'action-generation-method': multiDirection ? 1760 : 1080,
+    'action-full-frame': multiDirection ? 2100 : 1420,
+    review: multiDirection ? 2440 : 1760,
   }
   const isActionBranch = type.startsWith('action') || type === 'review'
+  const branchStep = multiDirection ? MULTI_DIRECTION_BRANCH_GAP : 380
   return {
     x: x[type],
-    y: isActionBranch ? 48 + branchIndex * 380 : 218,
+    y: isActionBranch
+      ? 48 +
+        branchIndex * branchStep +
+        (multiDirection && type !== 'action-first-frame' ? DIRECTION_ROW_GAP : 0)
+      : 218,
+  }
+}
+
+function positionForDirection(direction: ActionDirection, branchIndex: number) {
+  const cells: Record<ActionDirection, readonly [column: number, row: number]> = {
+    north_west: [0, 0],
+    north: [1, 0],
+    north_east: [2, 0],
+    west: [0, 1],
+    east: [2, 1],
+    south_west: [0, 2],
+    south: [1, 2],
+    south_east: [2, 2],
+  }
+  const [column, row] = cells[direction]
+  return {
+    x: 740 + column * 320,
+    y: 48 + branchIndex * MULTI_DIRECTION_BRANCH_GAP + row * DIRECTION_ROW_GAP,
   }
 }
 

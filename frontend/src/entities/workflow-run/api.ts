@@ -46,6 +46,21 @@ function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === 'string'
 }
 
+const ACTION_SOURCE_DIRECTIONS = ['east', 'north', 'south', 'north_east', 'south_east'] as const
+
+function isDirectionPromptMap(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      Object.entries(value).every(
+        ([direction, prompt]) =>
+          isMember(direction, ACTION_SOURCE_DIRECTIONS) &&
+          typeof prompt === 'string' &&
+          prompt.trim().length > 0,
+      ))
+  )
+}
+
 function isGenerationRef(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -106,6 +121,16 @@ function hasOnlyGenerationRole(value: Record<string, unknown>, role: string | nu
   )
 }
 
+function hasOnlyGenerationRoles(value: Record<string, unknown>, roles: readonly string[]): boolean {
+  if (!Array.isArray(value.generations)) return false
+  const refs = value.generations.filter(isRecord)
+  return (
+    refs.length === value.generations.length &&
+    refs.every((reference) => roles.includes(String(reference.role))) &&
+    new Set(refs.map((reference) => reference.taskId)).size === refs.length
+  )
+}
+
 function hasValidCharacterInput(value: unknown): boolean {
   if (!isRecord(value)) return false
   return (
@@ -146,6 +171,7 @@ function hasValidActionInput(value: unknown): boolean {
     typeof value.type === 'string' &&
     value.type.length > 0 &&
     isNullableString(value.prompt) &&
+    isDirectionPromptMap(value.directionPrompts) &&
     typeof value.fps === 'number' &&
     Number.isFinite(value.fps) &&
     value.fps > 0 &&
@@ -173,7 +199,11 @@ function isCharacterTemplateNode(value: unknown): value is CharacterTemplateWork
     value.type === 'character-template' &&
     hasValidCommonNodeFields(value) &&
     ['ready', 'generating', 'selecting', 'completed'].includes(String(value.phase)) &&
-    hasOnlyGenerationRole(value, 'character_template') &&
+    hasOnlyGenerationRoles(value, [
+      'character_template',
+      'character_four_view',
+      'character_eight_view',
+    ]) &&
     isNullableString(value.selectedImageUrl) &&
     isDirectionalSelectionMap(value.selectedImages) &&
     (value.phase !== 'completed' ||
@@ -320,8 +350,9 @@ function getApiClient() {
   return createApiClient({ getAccessToken: getApiAccessToken })
 }
 
-/** 精确对应后端已公开的 CRUD 与项目内分页列表；不声明尚未提供的按 Character 查询。 */
-export const workflowRunApis: WorkflowRunApis & Required<Pick<WorkflowRunApis, 'listByProject'>> = {
+/** 精确对应后端已公开的 CRUD 与运行记录分页列表。 */
+export const workflowRunApis: WorkflowRunApis &
+  Required<Pick<WorkflowRunApis, 'listByProject' | 'listRecent'>> = {
   async create(input) {
     return mapWorkflowRun(
       await getApiClient().request<WorkflowRunDto>('/workflow-runs', {
@@ -336,6 +367,15 @@ export const workflowRunApis: WorkflowRunApis & Required<Pick<WorkflowRunApis, '
         project_id: toBackendId(projectId, 'projectId'),
         page: query.page,
         page_size: query.pageSize,
+      },
+    })
+    return { ...result, items: result.items.map(mapWorkflowRun) }
+  },
+  async listRecent(query = {}) {
+    const result = await getApiClient().requestList<WorkflowRunDto>('/workflow-runs', {
+      query: {
+        page: query.page ?? 1,
+        page_size: query.pageSize ?? 20,
       },
     })
     return { ...result, items: result.items.map(mapWorkflowRun) }

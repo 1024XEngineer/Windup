@@ -47,8 +47,13 @@ try {
   const clips = await page.evaluate(() => window.__clips());
   const names = Object.keys(clips);
   if (!names.length) throw new Error('模型里没有任何动画片段 —— 绑骨时没带 MotionType?');
-  const clip = CLIP && CLIP.length ? CLIP : names[0];
-  if (!clips[clip]) throw new Error(`模型里没有片段 ${JSON.stringify(clip)};有的是 ${JSON.stringify(names)}`);
+  // 片段名由绑骨接口的动作库自己起(实测 `Armature|32795ddb244644eac67ccfd8b84060c3_remap`),
+  // 对不上产品动作名是常态。只有一个片段时就用它 —— 只有一个候选就不存在"选错"。多于一个还对不上名字仍然
+  // 抛:那时候选谁都是猜,而猜错会渲出另一个动作,帧数、时长、成色全部正常。
+  // 与浏览器那份宿主的 resolveClip 同一条规则,两边分叉不会报错,只会渲出不同的东西。
+  const want = CLIP && CLIP.length ? CLIP : names[0];
+  const clip = clips[want] ? want : (names.length === 1 ? names[0] : null);
+  if (!clip) throw new Error(`模型里没有片段 ${JSON.stringify(want)};有的是 ${JSON.stringify(names)}`);
 
   const rig = await page.evaluate(() => window.__rigInfo());
   const rootMotion = await page.evaluate(() => window.__rootMotion());

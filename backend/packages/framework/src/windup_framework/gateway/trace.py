@@ -34,6 +34,16 @@ class AttemptDetail:
     upstream_reached: str | None = None
     model_index: int | None = None
     error_message: str | None = None
+    #: 这一跳**实际发给上游的提示词正文**(#841)。
+    #:
+    #: 存正文而不是只存 ``input_hash``:哈希能证明"两次发的一样",却答不了用户那句
+    #: "这不是我要的动作"——而那正是它唯一会被查的场合。生产 #564 的诊断全部成本
+    #: 都花在这里:任务结果里只有 ``prompt_version: v2``,要证明"我们发的和用户写的
+    #: 不是一回事",只能读代码反推 + 去上游捞源视频(而源视频会过期)。
+    #:
+    #: 落 ``extra`` 而不是新开一列:这张表本来就是"我们往上游发了什么"的台账,
+    #: 而 ``extra`` 已经在装同类的取证字段(policy_next_step / upstream_reached)。
+    prompt: str | None = None
     finish_reason: str | None = None
     has_tool_calls: bool | None = None
 
@@ -112,9 +122,20 @@ def estimate_cost(
 
         return IMAGE_UNIT_COST_USD.get(model or "")
     if scene == Scene.CHARACTER_ACTION:
-        if video_unit_cost_per_second is None:
+        from windup_framework.gateway.registry import (
+            VIDEO_UNIT_COST_USD_PER_SECOND,
+            billed_seconds,
+        )
+
+        # 配置的单值优先(网关转售价与官方牌价不一致时用它整体覆盖),否则按型号查牌价表。
+        # 视频链跨型号之后每秒单价能差一倍以上,再用单值记账会把成本算错,而错的方向
+        # 随兜底是否触发而变 —— 不是固定偏差,事后无法回补(与出图侧同一条理由)。
+        rate = video_unit_cost_per_second
+        if rate is None:
+            rate = VIDEO_UNIT_COST_USD_PER_SECOND.get(model or "")
+        if rate is None:
             return None
-        return video_unit_cost_per_second * seconds
+        return rate * billed_seconds(model, seconds)
     return None
 
 
