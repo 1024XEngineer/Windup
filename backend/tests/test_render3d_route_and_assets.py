@@ -29,6 +29,7 @@ from windup_app.server.orchestrator.model import ActionType as InputActionType
 from windup_app.server.orchestrator.model import ActionDirection, CharacterActionInput
 from windup_app.server.orchestrator.render3d_assets import (
     RIGJOB_KEY_PREFIX,
+    RIGJOB_MAX_RESUMES,
     LocalDirAssetStore,
     LocalDirModelReview,
     ModelAwaitingReview,
@@ -44,6 +45,7 @@ from windup_common.models import (
 )
 try:
     from windup_framework.providers.render3d import (
+        JobTimeoutError,
         PresetMotion,
         RiggedModel,
         RigInfo,
@@ -767,3 +769,67 @@ def test_a_provider_without_resume_still_works(tmp_path):
     builder, _, rig = _builder(tmp_path)
     builder.ensure(OUTFIT, _png(), _NullProgress())
     assert rig.calls == 1
+
+
+class _FlakyResumeRig(_ResumableRig):
+    """续取会连续失败若干次的替身。模拟"任务还在上游跑"这一段。"""
+
+    def __init__(self, *, fetch_failures: int) -> None:
+        super().__init__(fail_after_submit=True)
+        self._left = fetch_failures
+
+    def fetch(self, job_id, *, want="GLB", motion=None) -> RiggedModel:
+        if self._left > 0:
+            self._left -= 1
+            self.fetches.append(job_id)   # 失败那次也算一次续取,否则"试过几轮"数不准
+            raise JobTimeoutError("任务还在跑,轮询预算耗尽")
+        return super().fetch(job_id, want=want, motion=motion)
+
+
+def test_a_failed_resume_keeps_the_job_and_does_not_resubmit(tmp_path):
+    """续取失败**不足以**断定任务没了,所以既不能删号,也不能退回重新提交。
+
+    ``JobTimeoutError`` 的字面意思就是"任务可能还在跑、积分可能已经扣了";产物下载
+    失败也照样抛 ``JobFailedError``。这时候重新提交 = 同一份产物付两次钱,正是这套
+    机制要防的那件事。
+    """
+    rig = _FlakyResumeRig(fetch_failures=1)
+    store = LocalDirAssetStore(tmp_path)
+    builder = Render3DAssetBuilder(
+        model3d=_FakeModel3D(), autorig=rig, store=store,
+        review=_AutoApproveReview(), may_build_assets=True,
+    )
+    with pytest.raises(TimeoutError):
+        builder.ensure(OUTFIT, _png(), _NullProgress())   # 第一轮:提交后取件失败
+    assert rig.submits == 1
+
+    with pytest.raises(JobTimeoutError):
+        builder.ensure(OUTFIT, _png(), _NullProgress())   # 第二轮:续取失败
+    assert rig.submits == 1, "续取失败后又提交了一次 —— 这一单被付了两次"
+    assert store.get(f"{RIGJOB_KEY_PREFIX}{OUTFIT}#walk") is not None, "任务号被删了"
+
+    rig._fail_after_submit = False
+    builder.ensure(OUTFIT, _png(), _NullProgress())       # 第三轮:续回来了
+    assert rig.submits == 1
+    assert rig.fetches == ["JOB-1", "JOB-1"]
+
+
+def test_a_job_that_never_comes_back_is_eventually_given_up_on(tmp_path):
+    """反过来也不能永远留着 —— 任务真失效时会卡死在续取上,谁也建不出资产。"""
+    rig = _FlakyResumeRig(fetch_failures=99)
+    store = LocalDirAssetStore(tmp_path)
+    builder = Render3DAssetBuilder(
+        model3d=_FakeModel3D(), autorig=rig, store=store,
+        review=_AutoApproveReview(), may_build_assets=True,
+    )
+    with pytest.raises(TimeoutError):
+        builder.ensure(OUTFIT, _png(), _NullProgress())
+    for _ in range(RIGJOB_MAX_RESUMES - 1):
+        with pytest.raises(JobTimeoutError):
+            builder.ensure(OUTFIT, _png(), _NullProgress())
+    assert rig.submits == 1
+
+    rig._fail_after_submit = False
+    builder.ensure(OUTFIT, _png(), _NullProgress())   # 第 RIGJOB_MAX_RESUMES 轮:放弃并重提
+    assert rig.submits == 2, "续了这么多轮还不放弃,资产永远建不出来"
+    assert store.get(f"{RIGJOB_KEY_PREFIX}{OUTFIT}#walk") is None

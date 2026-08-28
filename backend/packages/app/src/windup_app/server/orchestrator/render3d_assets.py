@@ -70,6 +70,12 @@ URL_KEY_PREFIX = "rawurl:"
 # (等待、下载、进程存活)都可能失败,而失败一次就重新提交等于再扣一次。存着它,
 # 下次进来先零成本续取。取回来就删 —— 留着会让下一次真正的新请求被续取顶掉。
 RIGJOB_KEY_PREFIX = "rigjob:"
+# 连续几轮续不回来才放弃这个任务号。
+# 不能"续取一失败就删":``JobTimeoutError`` 的意思是**任务还在上游跑、费已经扣了**,
+# 而产物下载失败也照样抛 ``JobFailedError`` —— 两种都不代表任务没了。删掉再提交
+# 就是同一份产物付两次钱,正是本机制要防的。反过来永远不删也不行:任务真的失效时
+# 会卡死在续取上,谁也建不出资产。所以留几轮,超了才当它没了。
+RIGJOB_MAX_RESUMES = 3
 
 # 两段的报价。**不在这里抄数字**,从计费实现取 —— 抄一份过去,供应商调价时两处会分叉,
 # 而分叉的那一份正是给用户看的成本提示(告知了错的价钱比不告知更糟)。
@@ -511,16 +517,21 @@ def _rig(provider, model: bytes, upstream_url: bytes | None, *, motion: str,
     if resumable:
         prior = store.get(job_key)
         if prior:
-            job_id = prior.decode()
+            job_id, _, tried = prior.decode().partition("|")
+            n = int(tried or 0)
             try:
                 got = provider.fetch(job_id, want="GLB", motion=motion)
                 logger.info("续取上次已计费的绑骨产物 JobId=%s,没有重复提交", job_id)
                 store.delete(job_key)
                 return got
-            except Exception as exc:      # noqa: BLE001 —— 续取是尽力而为
-                # 任务号可能已过期/上游把它判失败了。删掉再走正常提交,
-                # 留着会让每一次重试都先白等一轮。
-                logger.info("JobId=%s 续不回来(%s),按新任务提交", job_id, exc)
+            except Exception as exc:      # noqa: BLE001 —— 什么错都不足以断定任务没了
+                n += 1
+                if n < RIGJOB_MAX_RESUMES:
+                    # **不退回重新提交** —— 退回就是再扣一次,而这一单大概率还在上游跑。
+                    store.put(job_key, f"{job_id}|{n}".encode())
+                    raise
+                logger.info("JobId=%s 连续 %d 轮续不回来(%s),当它没了,按新任务提交",
+                            job_id, n, exc)
                 store.delete(job_key)
 
     # 只有支持续取的 provider 才收得下这个钩子。不支持的(测试替身、别家实现)连
