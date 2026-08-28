@@ -162,6 +162,32 @@ export class BakeStage {
     if (this.rootBone) for (const clip of animations) this.flattenRootXZ(clip, this.rootBone)
     this.unionBox = this.computeUnionBox()
     this.placeCam()
+    await this.warmUp()
+  }
+
+  /**
+   * 编译着色器并把贴图传上 GPU,**在渲第一帧之前**。
+   *
+   * 不做的后果是第 0 帧渲出一个没上贴图的**纯黑剪影** —— 而它逃得过所有闸:
+   * ``coverage()`` 只数 alpha,黑剪影的不透明像素占比与正常帧一模一样(实测
+   * 0.101 对 0.101);``grab()`` 拿到的是一张体积正常的 PNG。交付出去才看得见。
+   *
+   * ``loadAsync`` 在模型解析完就 resolve,内嵌贴图的解码是另一条异步路,没人等它。
+   */
+  private async warmUp(): Promise<void> {
+    const compileAsync = (
+      this.renderer as unknown as {
+        compileAsync?: (s: THREE.Scene, c: THREE.Camera) => Promise<unknown>
+      }
+    ).compileAsync
+    if (typeof compileAsync === 'function') {
+      await compileAsync.call(this.renderer, this.scene, this.cam)
+      return
+    }
+    // 老版本没有 compileAsync:退回同步 compile + 一次渲染。挡不住"贴图还在解码"
+    // 那一档,但比什么都不做强,而且不会让整条链路失败。
+    this.renderer.compile(this.scene, this.cam)
+    this.renderer.render(this.scene, this.cam)
   }
 
   /** 总高缩到 1.0、脚底落在 y=0 —— 1.0 与 root_motion 的单位一致。 */
@@ -447,6 +473,34 @@ export class BakeStage {
     let n = 0
     for (let i = 3; i < data.length; i += 4) if (data[i] > 8) n++
     return n / (w * h)
+  }
+
+  /**
+   * 主体的平均亮度。**贴图没传上 GPU 时模型渲成纯黑**,而那样的帧覆盖率与正常帧
+   * 一模一样(实测 0.101 对 0.101)—— 只数 alpha 的闸放它过去,交付出去才看得见。
+   *
+   * 返回 0–255;主体为空时返回 -1,交给覆盖率那道去判。
+   */
+  subjectLuma(): number {
+    this.renderer.render(this.scene, this.cam)
+    const src = this.renderer.domElement
+    const w = 128
+    const h = Math.max(1, Math.round((src.height / src.width) * w))
+    if (!this.probe) this.probe = document.createElement('canvas')
+    this.probe.width = w
+    this.probe.height = h
+    const ctx = this.probe.getContext('2d', { willReadFrequently: true })!
+    ctx.clearRect(0, 0, w, h)
+    ctx.drawImage(src, 0, 0, w, h)
+    const data = ctx.getImageData(0, 0, w, h).data
+    let sum = 0
+    let n = 0
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] <= 8) continue
+      sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+      n++
+    }
+    return n ? sum / n : -1
   }
 
   /** 取这一帧的 PNG。**从 WebGL 缓冲取,不截页面** —— 见文件头第 1 条。 */

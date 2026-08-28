@@ -6,6 +6,7 @@ import { bakeJob, stubRender3DApis } from '@/test/render3d-apis'
 const stage = vi.hoisted(() => ({
   clips: { walk: 1.0667 } as Record<string, number>,
   coverage: 0.01,
+  luma: 148,
   setups: [] as Array<[string, number, number]>,
   yaw: null as number | null,
   disposed: 0,
@@ -36,6 +37,7 @@ vi.mock('./stage', async () => {
             return i * 0.1
           },
           coverage: () => stage.coverage,
+          subjectLuma: () => stage.luma,
           rigInfo: () => ({
             loader: 'gltf',
             rootBone: 'Hips',
@@ -68,6 +70,7 @@ const { runClientBake, BakeAborted } = await import('.')
 beforeEach(() => {
   stage.clips = { walk: 1.0667 }
   stage.coverage = 0.01
+  stage.luma = 148
   stage.setups = []
   stage.yaw = null
   stage.disposed = 0
@@ -113,6 +116,27 @@ describe('浏览器出帧驱动', () => {
       [0.1, 0],
     ])
     expect(stage.disposed).toBe(1)
+  })
+
+  it('主体是纯黑时当场失败 —— 覆盖率那道闸拦不住它', async () => {
+    // 贴图还没传上 GPU 就渲的话,模型是个纯黑剪影,而它的 alpha 占比与正常帧
+    // **一模一样**(线上实测 0.101 对 0.101)—— 只数 alpha 的闸放它过去。
+    stage.luma = 0
+    const uploaded: number[] = []
+    let failed = ''
+    const apis = stubRender3DApis({
+      putBakeFrame: async (_t, index) => {
+        uploaded.push(index)
+        return 1
+      },
+      completeBake: async () => expect.unreachable('纯黑帧却报了交齐'),
+      failBake: async (_t, reason) => {
+        failed = reason
+      },
+    })
+    await expect(runClientBake({ job: bakeJob(), apis })).rejects.toThrow('纯黑')
+    expect(uploaded).toEqual([])
+    expect(failed).toContain('纯黑')
   })
 
   it('覆盖率不足当场失败,并且不把那一帧传上去', async () => {
