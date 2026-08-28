@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 
 import { usePrefersReducedMotion } from '@/shared/hooks'
 import { calculateCapabilitiesRailProgress } from './capabilities-rail-model'
+import { HeroDitherBackground } from './hero-dither-background'
 import { WalkingCharacterPreview } from './walking-character-preview'
 
 const capabilities = [
@@ -69,45 +70,53 @@ export function CapabilitiesRail() {
       ref={sectionRef}
       id="capabilities"
       aria-labelledby="capabilities-heading"
-      className="relative overflow-hidden scroll-mt-28 border-b border-rule pt-16"
+      className="relative isolate overflow-visible scroll-mt-28 border-b border-rule pt-16 [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea]"
     >
-      <div className="mx-auto grid w-full max-w-[82rem] items-center gap-10 px-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:px-12">
-        <div>
-          <h2 id="capabilities-heading" className="max-w-[7.4em] text-display text-ink">
-            角色做出来，还要留下来、跑起来。
-          </h2>
-          <p className="mt-6 max-w-[28em] text-lead text-ink-muted">
-            资产库保存角色的全部来路，预览台检验动作真正的样子，工作流画布让质量不靠一次碰运气。
-          </p>
+      <div
+        className="pointer-events-none absolute inset-x-0 -top-48 z-0 h-[calc(100%+12rem)]"
+        aria-hidden="true"
+      >
+        <HeroDitherBackground />
+      </div>
+      <div className="relative z-10">
+        <div className="mx-auto grid w-full max-w-[82rem] items-center gap-10 px-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:px-12">
+          <div>
+            <h2 id="capabilities-heading" className="max-w-[7.4em] text-display text-ink">
+              角色做出来，还要留下来、跑起来。
+            </h2>
+            <p className="mt-6 max-w-[28em] text-lead text-ink-muted">
+              资产库保存角色的全部来路，预览台检验动作真正的样子，工作流画布让质量不靠一次碰运气。
+            </p>
+          </div>
+
+          <WalkingCharacterPreview />
         </div>
 
-        <WalkingCharacterPreview />
-      </div>
-
-      <div
-        ref={viewportRef}
-        className="mt-6 overflow-hidden border-y border-rule bg-paper-sunken max-lg:snap-x max-lg:snap-mandatory max-lg:overflow-x-auto motion-reduce:snap-x motion-reduce:snap-mandatory motion-reduce:overflow-x-auto"
-      >
         <div
-          ref={trackRef}
-          role="list"
-          aria-label="产品能力横向滚动"
-          className="flex w-max items-center px-[5vw] py-8 [transform:translate3d(var(--rail-x,0px),0,0)] will-change-transform max-lg:!transform-none max-lg:will-change-auto motion-reduce:transform-none"
+          ref={viewportRef}
+          className="mt-6 overflow-hidden border-y border-rule bg-paper-sunken max-lg:snap-x max-lg:snap-mandatory max-lg:overflow-x-auto motion-reduce:snap-x motion-reduce:snap-mandatory motion-reduce:overflow-x-auto"
         >
-          {capabilities.map(({ statement, title }) => (
-            <article
-              key={title}
-              role="listitem"
-              className="group flex shrink-0 items-baseline gap-7 border-r border-rule px-14 first:pl-0 last:border-r-0 max-lg:snap-start motion-reduce:snap-start"
-            >
-              <h3 className="font-mono text-meta whitespace-nowrap text-ink-faint transition-colors duration-200 group-hover:text-spark">
-                {title}
-              </h3>
-              <strong className="font-serif text-subtitle font-medium whitespace-nowrap text-ink-muted transition-colors duration-200 group-hover:text-ink">
-                {statement}
-              </strong>
-            </article>
-          ))}
+          <div
+            ref={trackRef}
+            role="list"
+            aria-label="产品能力横向滚动"
+            className="flex w-max items-center px-[5vw] py-8 [transform:translate3d(var(--rail-x,0px),0,0)] will-change-transform max-lg:!transform-none max-lg:will-change-auto motion-reduce:transform-none"
+          >
+            {capabilities.map(({ statement, title }) => (
+              <article
+                key={title}
+                role="listitem"
+                className="group flex shrink-0 items-baseline gap-7 border-r border-rule px-14 first:pl-0 last:border-r-0 max-lg:snap-start motion-reduce:snap-start"
+              >
+                <h3 className="font-mono text-meta whitespace-nowrap text-ink-faint transition-colors duration-200 group-hover:text-spark">
+                  {title}
+                </h3>
+                <strong className="font-serif text-subtitle font-medium whitespace-nowrap text-ink-muted transition-colors duration-200 group-hover:text-ink">
+                  {statement}
+                </strong>
+              </article>
+            ))}
+          </div>
         </div>
       </div>
     </section>

@@ -15,6 +15,18 @@ afterEach(() => {
 })
 
 describe('LandingPage', () => {
+  it('能力段沿用首屏 shader 质感', () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter>
+          <LandingPage />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    expect(document.querySelector('#capabilities .landing-hero-stage')).toBeTruthy()
+  })
+
   it('在产品能力段落循环展示真实的角色行走动作', async () => {
     const animationFrames: FrameRequestCallback[] = []
     vi.stubGlobal(
@@ -161,8 +173,39 @@ describe('LandingPage', () => {
     }
     expect(screen.getByText('从角色设定到可玩的 2D 动作资产')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '角色做出来，还要留下来、跑起来。' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: '同一份创作，两种进入方式。' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '一句话，到一个角色' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '资产会留下来，继续生长。' })).toBeTruthy()
+  })
+
+  it('同时展示 Quick Start 与 Workflow Editor 两条真实视频', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter>
+          <LandingPage />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    expect(await screen.findByLabelText('Workflow Editor 生产演示')).toBeTruthy()
+    expect(screen.getByLabelText('Workflow Editor 实际运行演示')).toBeTruthy()
+  })
+
+  it('用四视图展示完美像素化，不再渲染旧的抽象角色段落', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter>
+          <LandingPage />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    expect(screen.queryByRole('heading', { name: '角色不只被生成一次。' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '同一个角色，可以属于不同的画面。' })).toBeNull()
+    expect(
+      screen.getByRole('heading', { name: '二向、四向、八向，都能保持同一个角色。' }),
+    ).toBeTruthy()
+    expect(screen.getAllByRole('img', { name: /角色方向视图/ })).toHaveLength(4)
+    expect(screen.getByLabelText('角色方向视图示例').className).not.toContain('border')
   })
 
   it('让已登录用户留在宣传页，主动点击入口后再进入工作台', async () => {
@@ -235,7 +278,7 @@ describe('LandingPage', () => {
       ),
     )
     expect(pause).toHaveBeenCalledTimes(1)
-    expect(await screen.findAllByTestId('workflow-editor-placeholder')).toHaveLength(2)
+    expect(await screen.findAllByTestId('workflow-editor-placeholder')).toHaveLength(1)
   })
 
   it('在收尾插画之后提供真实的开源项目入口', async () => {
