@@ -1,4 +1,10 @@
-import type { ActionDirection, ActionType, Character, Frame } from '@/entities'
+import {
+  resolvedFrameImageUrl,
+  type ActionDirection,
+  type ActionType,
+  type Character,
+  type Frame,
+} from '@/entities'
 
 export interface PlaytestFrame {
   readonly imageUrl: string
@@ -103,7 +109,7 @@ function playtestFrames(
 ): readonly PlaytestFrame[] {
   const ordered = orderedFrames(frames)
   const playbackFrames = ordered.map((frame) => ({
-    imageUrl: frame.imageUrl,
+    imageUrl: resolvedFrameImageUrl(frame, action.preferredVersion ?? 'original'),
     durationMs: frameDuration(frame.durationMs, action.fps),
   }))
   const denseTiming =

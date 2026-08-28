@@ -346,6 +346,19 @@ describe('createPlaytestModel', () => {
     expect(result.ok && result.model.actions[0]?.frames[0]?.durationMs).toBe(1)
   })
 
+  it('plays the persisted pixel-perfect frame when the action selects that version', () => {
+    const versioned = structuredClone(character) as unknown as Character
+    const walk = versioned.outfits[0]!
+      .actions[1]! as Character['outfits'][number]['actions'][number] & {
+      preferredVersion: 'pixel-perfect'
+    }
+    walk.preferredVersion = 'pixel-perfect'
+    walk.frames.find((frame) => frame.index === 0)!.pixelPerfectImageUrl = '/walk-pixel.png'
+    const result = createPlaytestModel(versioned, 'outfit-default')
+    const mapped = result.ok ? result.model.actions.find((action) => action.id === 'walk') : null
+    expect(mapped?.frames[0]?.imageUrl).toBe('/walk-pixel.png')
+  })
+
   it('keeps a north-only sequence out of the legacy side-frame field', () => {
     const directionalCharacter = structuredClone(character)
     const idle = directionalCharacter.outfits[0]!.actions[0]!

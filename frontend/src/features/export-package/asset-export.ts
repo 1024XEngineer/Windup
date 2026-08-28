@@ -267,16 +267,19 @@ async function loadSequence(
   const settled = await Promise.allSettled(
     item.frames.map(async (frame) => {
       const loaded = await loadFrame(frame, runtime, cache)
+      const resolved = item.sequence.mirrorX
+        ? await mirrorLoadedFrame(loaded, model, runtime)
+        : loaded
       if (
-        loaded.decoded.width !== model.canvas.width ||
-        loaded.decoded.height !== model.canvas.height
+        resolved.decoded.width !== model.canvas.width ||
+        resolved.decoded.height !== model.canvas.height
       ) {
-        loaded.decoded.close()
+        resolved.decoded.close()
         throw new Error(
           `${frame.relativeFile}: 画布应为 ${model.canvas.width}x${model.canvas.height}，实际为 ${loaded.decoded.width}x${loaded.decoded.height}`,
         )
       }
-      return loaded
+      return resolved
     }),
   )
 
@@ -290,6 +293,27 @@ async function loadSequence(
   }
 
   return { item, frames: fulfilled }
+}
+
+async function mirrorLoadedFrame(
+  loaded: LoadedFrame,
+  model: ExportPackageModel,
+  runtime: AssetExportRuntime,
+): Promise<LoadedFrame> {
+  const canvas = runtime.createCanvas(model.canvas.width, model.canvas.height)
+  const context = context2d(canvas, loaded.relativeFile)
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  context.save()
+  context.translate(canvas.width, 0)
+  context.scale(-1, 1)
+  context.drawImage(loaded.decoded.source, 0, 0)
+  context.restore()
+  const data = await bytes(await canvasPng(canvas))
+  loaded.decoded.close()
+  const decoded = await runtime.decodeFrame(
+    new Blob([data.buffer as ArrayBuffer], { type: 'image/png' }),
+  )
+  return { ...loaded, data, decoded }
 }
 
 async function loadStaticAssets(

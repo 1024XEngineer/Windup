@@ -128,6 +128,11 @@ class CharacterFrame(BaseModel):
     index: int = Field(ge=0, description="帧序号")
     image_url: str = Field(..., description="帧图片 URL")
     duration_ms: int | None = Field(default=None, gt=0, description="帧时长(毫秒)")
+    pixel_perfect_image_url: str | None = Field(
+        default=None,
+        description="完美像素化帧 URL",
+        exclude_if=lambda value: value is None,
+    )
 
 
 ActionDirection = Literal[
@@ -207,6 +212,10 @@ class CharacterAction(BaseModel):
     fps: float = Field(default=12, gt=0, description="播放帧率")
     frame_count: int = Field(ge=0, description="帧数")
     frames: list[CharacterFrame] = Field(default_factory=list, description="帧列表")
+    preferred_version: Literal["original", "pixel-perfect"] = Field(
+        default="original",
+        exclude_if=lambda value: value == "original",
+    )
     sequences: list[CharacterActionSequence] = Field(
         default_factory=list,
         description="可选多方向源序列与镜像关系；旧数据的 frames 视为 east",

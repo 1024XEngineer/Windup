@@ -29,6 +29,7 @@ export type { DirectionalAssetValidation }
 
 /** PR #75 将动作类型定义为字符串；已知类型之外的后端扩展也应原样保留。 */
 export type ActionType = string
+export type CharacterAssetVersion = 'original' | 'pixel-perfect'
 
 export const CHARACTER_STATUS = {
   DRAFT: 0,
@@ -47,6 +48,7 @@ export interface Frame {
   imageUrl: string
   /** null 时才按所属 Action.fps 计算等时长。 */
   durationMs: number | null
+  pixelPerfectImageUrl?: string | null
 }
 
 export interface ActionSequence {
@@ -79,6 +81,16 @@ export interface Action {
   frames: Frame[]
   /** 可选多方向序列；旧资产的顶层 frames 在单向项目中视为 east。 */
   sequences?: ActionSequence[]
+  preferredVersion?: CharacterAssetVersion
+}
+
+export function resolvedFrameImageUrl(
+  frame: Pick<Frame, 'imageUrl' | 'pixelPerfectImageUrl'>,
+  version: CharacterAssetVersion = 'original',
+): string {
+  return version === 'pixel-perfect' && frame.pixelPerfectImageUrl?.trim()
+    ? frame.pixelPerfectImageUrl
+    : frame.imageUrl
 }
 
 export interface Outfit {
@@ -160,6 +172,7 @@ interface CharacterFrameDto {
   index: number
   image_url: string
   duration_ms: number | null
+  pixel_perfect_image_url?: string | null
 }
 
 interface CharacterActionSequenceDto {
@@ -187,6 +200,7 @@ interface CharacterActionDto {
   frame_count: number
   frames: CharacterFrameDto[]
   sequences?: CharacterActionSequenceDto[]
+  preferred_version?: CharacterAssetVersion
 }
 
 interface CharacterOutfitDto {
@@ -242,6 +256,7 @@ function mapFrame(dto: CharacterFrameDto): Frame {
     index: dto.index,
     imageUrl: dto.image_url,
     durationMs: dto.duration_ms,
+    ...(dto.pixel_perfect_image_url ? { pixelPerfectImageUrl: dto.pixel_perfect_image_url } : {}),
   }
 }
 
@@ -466,6 +481,9 @@ function mapAction(dto: CharacterActionDto, outfitId: string): Action {
     fps: dto.fps,
     frameCount: dto.frame_count,
     frames: dto.frames.map(mapFrame),
+    ...(dto.preferred_version === 'pixel-perfect'
+      ? { preferredVersion: dto.preferred_version }
+      : {}),
     ...(dto.sequences === undefined
       ? {}
       : {
@@ -520,6 +538,7 @@ function toFrameDto(frame: Frame): CharacterFrameDto {
     index: frame.index,
     image_url: frame.imageUrl,
     duration_ms: frame.durationMs,
+    pixel_perfect_image_url: frame.pixelPerfectImageUrl ?? null,
   }
 }
 
@@ -533,6 +552,7 @@ function toActionDto(action: Action): CharacterActionDto {
     fps: action.fps,
     frame_count: action.frameCount,
     frames: action.frames.map(toFrameDto),
+    preferred_version: action.preferredVersion ?? 'original',
     ...(action.sequences === undefined
       ? {}
       : {

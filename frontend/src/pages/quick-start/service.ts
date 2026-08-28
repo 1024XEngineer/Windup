@@ -12,6 +12,7 @@ import {
   getDirectionProfile,
   type Action,
   type Character,
+  type CharacterAssetVersion,
   type CharacterViewSheetCandidate,
   type CharacterApis,
   type ActionDirection,
@@ -20,6 +21,7 @@ import {
   type GenerationApis,
   type Generation,
   type MediaReference,
+  type MediaCategory,
   type Project,
   type ProjectApis,
   type PixelPerfectApis,
@@ -87,7 +89,11 @@ export interface QuickStartHistoryItem {
 }
 
 export interface QuickStartMediaApis {
-  upload(file: File, category: 'reference-image', signal?: AbortSignal): Promise<MediaReference>
+  upload(
+    file: File,
+    category: Extract<MediaCategory, 'reference-image' | 'action-frame'>,
+    signal?: AbortSignal,
+  ): Promise<MediaReference>
 }
 
 export interface QuickStartSession {
@@ -134,6 +140,11 @@ export interface QuickStartSession {
   pixelPerfectActionFrames?(
     frames: readonly QuickStartFrame[],
   ): Promise<readonly QuickStartPixelPerfectFrame[]>
+  persistPixelPerfectActionFrames?(
+    actionId: string,
+    frames: readonly QuickStartPixelPerfectFrame[],
+  ): Promise<Character>
+  setActionAssetVersion?(actionId: string, version: CharacterAssetVersion): Promise<Character>
   getFailedGenerationDirections(): Promise<readonly QuickStartFailedDirection[]>
   retryGenerationDirection(
     nodeId: WorkflowNode['id'],
@@ -1450,6 +1461,82 @@ export function createQuickStartService({
             durationMs: frame.durationMs,
             sourceImageUrl: frame.imageUrl,
           }
+        })
+      },
+      async persistPixelPerfectActionFrames(actionId, frames) {
+        if (!characterApis || !mediaApis) throw new Error('角色或媒体服务尚未配置')
+        const info = getCharacterInfo(controller) ?? (await resolveCharacterInfo(controller))
+        if (!info) throw new Error('WorkflowRun 缺少角色或造型绑定')
+        const character = await characterApis.get(info.characterId)
+        const outfit = character.outfits.find((candidate) => candidate.id === info.outfitId)
+        const action = outfit?.actions.find((candidate) => candidate.id === actionId)
+        if (!outfit || !action) throw new Error('角色资产中没有要保存的动作')
+        const sourceFrames =
+          action.sequences && action.sequences.length > 0
+            ? action.sequences.flatMap((sequence) =>
+                sequence.sourceDirection === null ? sequence.frames : [],
+              )
+            : action.frames
+        const sourceByIndex = new Map(sourceFrames.map((frame) => [frame.index, frame.imageUrl]))
+        const replacements = new Map<string, string>()
+        for (const frame of frames) {
+          const source = frame.sourceImageUrl ?? sourceByIndex.get(frame.index)
+          if (!source || replacements.has(source)) continue
+          const file = new File(
+            [frame.blob],
+            `pixel-perfect-${String(frame.index).padStart(3, '0')}.png`,
+            { type: 'image/png' },
+          )
+          replacements.set(source, await mediaApis.upload(file, 'action-frame'))
+        }
+        if (replacements.size === 0) throw new Error('完美像素化结果缺少原始帧对应关系')
+        const replaceFrame = (frame: Action['frames'][number]) => ({
+          ...frame,
+          ...(replacements.has(frame.imageUrl)
+            ? { pixelPerfectImageUrl: replacements.get(frame.imageUrl) }
+            : {}),
+        })
+        return characterApis.update({
+          ...character,
+          outfits: character.outfits.map((candidate) =>
+            candidate.id !== outfit.id
+              ? candidate
+              : {
+                  ...candidate,
+                  actions: candidate.actions.map((candidateAction) =>
+                    candidateAction.id !== actionId
+                      ? candidateAction
+                      : {
+                          ...candidateAction,
+                          preferredVersion: 'pixel-perfect' as const,
+                          frames: candidateAction.frames.map(replaceFrame),
+                          sequences: candidateAction.sequences?.map((sequence) => ({
+                            ...sequence,
+                            frames: sequence.frames.map(replaceFrame),
+                          })),
+                        },
+                  ),
+                },
+          ),
+        })
+      },
+      async setActionAssetVersion(actionId, version) {
+        if (!characterApis) throw new Error('角色服务尚未配置')
+        const info = getCharacterInfo(controller) ?? (await resolveCharacterInfo(controller))
+        if (!info) throw new Error('WorkflowRun 缺少角色或造型绑定')
+        const character = await characterApis.get(info.characterId)
+        return characterApis.update({
+          ...character,
+          outfits: character.outfits.map((outfit) =>
+            outfit.id !== info.outfitId
+              ? outfit
+              : {
+                  ...outfit,
+                  actions: outfit.actions.map((action) =>
+                    action.id === actionId ? { ...action, preferredVersion: version } : action,
+                  ),
+                },
+          ),
         })
       },
       async getExportModel() {

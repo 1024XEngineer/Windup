@@ -76,6 +76,20 @@ def _data(version: int, templates: list[dict], sequences: list[dict]) -> Charact
     )
 
 
+def test_pixel_perfect_frame_variant_is_part_of_character_contract():
+    data = CharacterData.model_validate({
+        "version": 1,
+        "outfits": [{"id": "default", "name": "默认造型", "actions": [{
+            "id": "walk", "type": "walk", "name": "行走", "frame_count": 1,
+            "preferred_version": "pixel-perfect",
+            "frames": [{"index": 0, "image_url": "original.png", "pixel_perfect_image_url": "pixel.png"}],
+        }]}],
+    })
+    action = data.outfits[0].actions[0]
+    assert action.preferred_version == "pixel-perfect"
+    assert action.frames[0].pixel_perfect_image_url == "pixel.png"
+
+
 _FOUR_SOURCES = ["east", "north", "south"]
 _EIGHT_SOURCES = ["east", "north", "south", "north_east", "south_east"]
 _EIGHT_MIRRORS = [
