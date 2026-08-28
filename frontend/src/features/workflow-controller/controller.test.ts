@@ -599,6 +599,62 @@ describe('WorkflowController', () => {
     })
   })
 
+  it.each([
+    ['four-way', 'character_four_view'],
+    ['eight-way', 'character_eight_view'],
+  ] as const)('%s sheet 失败后保留 south 母版并重新提交整张 sheet', async (movement, role) => {
+    const run = createRun([
+      setupNode({
+        status: 'passed',
+        phase: 'completed',
+        input: {
+          prompt: '多向像素骑士',
+          referenceMedia: [],
+          characterId: '7',
+        },
+      }),
+      templateNode({
+        status: 'failed',
+        phase: 'generating',
+        error: 'sheet provider failed',
+        selectedImageUrl: 'https://img/south.png',
+        selectedImages: { south: 'https://img/south.png' },
+        generations: [
+          { taskId: 'template-south', role: 'character_template', direction: 'south' },
+          { taskId: 'sheet-old', role },
+        ],
+      }),
+    ])
+    const { controller, generation } = createController(run, movement)
+
+    await controller.retryGenerationDirection('template-1', 'east', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: role,
+      projectId: '1',
+      characterId: '7',
+      prompt: '多向像素骑士',
+      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 96,
+      candidateCount: 1,
+    })
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'generating',
+      selectedImageUrl: 'https://img/south.png',
+      selectedImages: { south: 'https://img/south.png' },
+      generations: expect.arrayContaining([
+        { taskId: 'template-south', role: 'character_template', direction: 'south' },
+        { taskId: 'task-1', role, direction: 'east' },
+      ]),
+      error: null,
+    })
+  })
+
   it('未注入项目准备能力时拒绝 Quick Start 生成命令', async () => {
     const { controller } = createController()
 
@@ -1307,43 +1363,41 @@ describe('WorkflowController', () => {
     })
   })
 
-  it.each([
-    ['four-way', ['east', 'north', 'south']],
-    ['eight-way', ['east', 'north', 'south', 'north_east', 'south_east']],
-  ] as const)('按项目方向为 %s 创建全部源方向的候选任务', async (movement, directions) => {
-    const { controller, generation } = createController(createRun(), movement)
+  it.each(['four-way', 'eight-way'] as const)(
+    '%s 未显式指定方向时也只生成 south 身份锚',
+    async (movement) => {
+      const { controller, generation } = createController(createRun(), movement)
 
-    await controller.generateCharacterTemplate('setup-1', {
-      spriteWidth: 64,
-      spriteHeight: 64,
-    })
+      await controller.generateCharacterTemplate('setup-1', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      })
 
-    expect(generation.apis.create).toHaveBeenCalledTimes(directions.length)
-    for (const [index, direction] of directions.entries()) {
+      expect(generation.apis.create).toHaveBeenCalledTimes(1)
+      expect(generation.apis.create).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'character_template', direction: 'south' }),
+      )
       generation.emit({
-        taskId: `task-${index + 1}`,
+        taskId: 'task-1',
         type: 'character_template',
         status: 'completed',
         result: {
           type: 'character_template',
-          direction,
-          images: imageCandidates(direction),
+          direction: 'south',
+          images: imageCandidates('south'),
         },
         error: null,
       })
-    }
-    await flushAsyncWork()
+      await flushAsyncWork()
 
-    const template = controller.getWorkflow().nodes[1]
-    expect(template).toMatchObject({
-      phase: 'selecting',
-      status: 'active',
-      generations: directions.map((_, index) => ({
-        taskId: `task-${index + 1}`,
-        role: 'character_template',
-      })),
-    })
-  })
+      const template = controller.getWorkflow().nodes[1]
+      expect(template).toMatchObject({
+        phase: 'selecting',
+        status: 'active',
+        generations: [{ taskId: 'task-1', role: 'character_template', direction: 'south' }],
+      })
+    },
+  )
 
   it('一个方向提交失败时先保留其它已创建任务，重试只补缺失方向', async () => {
     const { controller, generation } = createController(createRun(), 'four-way')
@@ -1362,6 +1416,7 @@ describe('WorkflowController', () => {
     const generationRequest = controller.generateCharacterTemplate('setup-1', {
       spriteWidth: 64,
       spriteHeight: 64,
+      directions: ['east', 'north', 'south'],
     })
     let requestState: 'pending' | 'rejected' = 'pending'
     void generationRequest.catch(() => {
@@ -1386,6 +1441,7 @@ describe('WorkflowController', () => {
     await controller.generateCharacterTemplate('setup-1', {
       spriteWidth: 64,
       spriteHeight: 64,
+      directions: ['east', 'north', 'south'],
     })
 
     expect(create).toHaveBeenCalledTimes(4)
@@ -1720,6 +1776,7 @@ describe('WorkflowController', () => {
     await controller.generateCharacterTemplate('setup-1', {
       spriteWidth: 64,
       spriteHeight: 64,
+      directions: ['east', 'north', 'south'],
     })
     generation.emit({
       taskId: 'task-1',
@@ -1910,6 +1967,7 @@ describe('WorkflowController', () => {
     await controller.generateCharacterTemplate('setup-1', {
       spriteWidth: 64,
       spriteHeight: 64,
+      directions: ['east', 'north', 'south'],
     })
     for (const [index, direction] of ['east', 'north', 'south'].entries()) {
       generation.emit({
@@ -2715,7 +2773,7 @@ describe('WorkflowController', () => {
     expect(generation.apis.create).not.toHaveBeenCalled()
   })
 
-  it('四向微调在重启节点前拒绝缺失的同方向参考图', async () => {
+  it('四向母版微调在重启节点前拒绝缺失的 south 身份锚', async () => {
     const templateRun = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),
       templateNode({
@@ -2725,7 +2783,6 @@ describe('WorkflowController', () => {
         selectedImages: {
           east: 'east-template.png',
           west: 'west-template.png',
-          south: 'south-template.png',
         },
       }),
     ])
@@ -2738,7 +2795,7 @@ describe('WorkflowController', () => {
         mode: 'refine',
         adjustmentPrompt: '加强阴影',
       }),
-    ).rejects.toThrow('角色母版尚未确认方向 north')
+    ).rejects.toThrow('角色母版方向 south 不能为空')
     expect(template.generation.apis.create).not.toHaveBeenCalled()
     expect(template.controller.getWorkflow()).toEqual(templateBefore)
 
@@ -3970,40 +4027,49 @@ describe('WorkflowController', () => {
     })
   })
 
-  it('四向角色母版微调分别使用同方向已确认图片', async () => {
-    const run = createRun([
-      setupNode({ status: 'passed', phase: 'completed' }),
-      templateNode({
-        status: 'passed',
-        phase: 'completed',
-        selectedImageUrl: 'east-template.png',
-        selectedImages: {
-          east: 'east-template.png',
-          north: 'north-template.png',
-          south: 'south-template.png',
-        },
-      }),
-    ])
-    const { controller, generation } = createController(run, 'four-way')
+  it.each(['four-way', 'eight-way'] as const)(
+    '%s 角色母版微调只重做 south 身份锚，不回退到逐方向 character_template',
+    async (movement) => {
+      const run = createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({
+          status: 'passed',
+          phase: 'completed',
+          selectedImageUrl: 'south-template.png',
+          selectedImages: {
+            east: 'east-template.png',
+            north: 'north-template.png',
+            south: 'south-template.png',
+            ...(movement === 'eight-way'
+              ? {
+                  north_east: 'north-east-template.png',
+                  south_east: 'south-east-template.png',
+                }
+              : {}),
+          },
+        }),
+      ])
+      const { controller, generation } = createController(run, movement)
 
-    await controller.regenerateCharacterTemplate('template-1', {
-      spriteWidth: 64,
-      spriteHeight: 96,
-      mode: 'refine',
-      adjustmentPrompt: '增加轮廓光',
-    })
+      await controller.regenerateCharacterTemplate('template-1', {
+        spriteWidth: 64,
+        spriteHeight: 96,
+        mode: 'refine',
+        adjustmentPrompt: '增加轮廓光',
+      })
 
-    expect(
-      vi.mocked(generation.apis.create).mock.calls.map(([input]) => ({
-        direction: input.direction,
-        referenceMedia: input.referenceMedia,
-      })),
-    ).toEqual([
-      { direction: 'east', referenceMedia: ['east-template.png'] },
-      { direction: 'north', referenceMedia: ['north-template.png'] },
-      { direction: 'south', referenceMedia: ['south-template.png'] },
-    ])
-  })
+      expect(vi.mocked(generation.apis.create)).toHaveBeenCalledTimes(1)
+      expect(generation.apis.create).toHaveBeenCalledWith({
+        type: 'character_template',
+        projectId: '1',
+        prompt: '像素骑士\n增加轮廓光',
+        referenceMedia: ['south-template.png'],
+        spriteWidth: 64,
+        spriteHeight: 96,
+        direction: 'south',
+      })
+    },
+  )
 
   it('四向动作首帧微调分别使用同方向已确认图片', async () => {
     const run = createRun([

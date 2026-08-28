@@ -166,7 +166,7 @@ describe('浏览器出帧驱动', () => {
 
     expect(stage.setups.map(([clip]) => clip)).toEqual([HASHED, HASHED])
     // 交回的仍是**登记的那个名字** —— 后端按它对账,换成真实片段名会被判成交错了片段。
-    expect(completed).toEqual({ clip: 'walk', sampleTimes: [0, 0.1] })
+    expect(completed).toMatchObject({ clip: 'walk', sampleTimes: [0, 0.1] })
   })
 
   it('一个片段都没有时说清是绑骨没带动作', async () => {

@@ -51,13 +51,13 @@ export interface GenerateCharacterTemplateOptions {
   spriteHeight: number
   /** 重生成时用上一版图片约束本次结果；不覆盖角色设定中的原始参考素材。 */
   sourceImageUrl?: GeneratedImage['url']
-  /** 多方向微调时，每个源方向必须使用自己上一版的已确认图片。 */
+  /** 调用方显式补方向时，为该方向提供上一版已确认图片。 */
   sourceImageUrls?: Partial<Record<ActionDirection, GeneratedImage['url']>>
   /** 只影响本次请求的 prompt 覆盖值；不改写角色设定节点的原始输入。 */
   prompt?: string
   /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
   input?: WorkflowCharacterInput
-  /** 只提交本阶段需要的真实源方向；缺省仍按项目完整方向集生成。 */
+  /** 只提交本阶段需要的方向；缺省使用项目身份锚（单向 east，多向 south）。 */
   directions?: readonly ActionDirection[]
   /** 本阶段每个方向的候选数；母版三选一，派生方向通常每向一张。 */
   candidateCount?: ImageCandidateCount
@@ -659,7 +659,9 @@ export function createWorkflowController({
             )
           })
     const templateNode = findSingleDependentNode(advanced, nodeId, 'character-template')
-    const requestedDirections = options.directions ?? generationDirections
+    const requestedDirections = options.directions ?? [
+      currentDirectionalMovement === 'single' ? 'east' : 'south',
+    ]
     for (const direction of requestedDirections) {
       assertGenerationDirection(direction, generationDirections)
     }
@@ -1086,23 +1088,24 @@ export function createWorkflowController({
     }
     const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
     const prompt = adjustedPrompt(setupNode.input.prompt, options)
+    const anchorDirection: ActionDirection =
+      currentDirectionalMovement === 'single' ? 'east' : 'south'
     const sourceImageUrls =
       options.mode === 'refine'
         ? isCandidateSelection
-          ? { east: nonEmpty(options.sourceImageUrl ?? '', 'sourceImageUrl') }
-          : Object.fromEntries(
-              generationDirections.map((direction) => {
-                const imageUrl = selectedDirectionUrl(
+          ? { [anchorDirection]: nonEmpty(options.sourceImageUrl ?? '', 'sourceImageUrl') }
+          : {
+              [anchorDirection]: nonEmpty(
+                selectedDirectionUrl(
                   templateNode.selectedImages,
                   templateNode.selectedImageUrl,
-                  direction,
-                )
-                if (!imageUrl) throw new Error(`角色母版尚未确认方向 ${direction}`)
-                return [direction, imageUrl]
-              }),
-            )
+                  anchorDirection,
+                ) ?? '',
+                `角色母版方向 ${anchorDirection}`,
+              ),
+            }
         : undefined
-    const requestedDirections = isCandidateSelection ? (['east'] as const) : generationDirections
+    const requestedDirections = [anchorDirection]
     const keys = requestedDirections.map((direction) =>
       generationKey(nodeId, 'character_template', direction),
     )
@@ -1304,6 +1307,15 @@ export function createWorkflowController({
       const node = findNode(run, nodeId)
       const generations = node.generations.filter((item) => item.taskId !== reference.taskId)
       if (node.type === 'character-template') {
+        if (role === 'character_four_view' || role === 'character_eight_view') {
+          return replaceNode(run, {
+            ...node,
+            status: 'active',
+            phase: 'generating',
+            generations,
+            error: null,
+          })
+        }
         const selectedImages = { ...(node.selectedImages ?? {}) }
         delete selectedImages[direction]
         return replaceNode(run, {
@@ -1348,6 +1360,23 @@ export function createWorkflowController({
         (run, node, retryDirection) => {
           if (node.type === 'character-template') {
             const setupNode = findSingleDependencyNode(run, node, 'character-setup')
+            if (role === 'character_four_view' || role === 'character_eight_view') {
+              if (!node.selectedImageUrl || !node.selectedImages?.south) {
+                throw new Error('必须先确认南向正视母版')
+              }
+              const characterId = nonEmpty(setupNode.input.characterId ?? '', 'characterId')
+              const input: CharacterViewSheetGenerationInput = {
+                type: role,
+                projectId: run.projectId,
+                characterId,
+                prompt: setupNode.input.prompt,
+                referenceMedia: [],
+                spriteWidth: options.spriteWidth,
+                spriteHeight: options.spriteHeight,
+                candidateCount: 1,
+              }
+              return input
+            }
             const confirmedMaster = generatedImageReference(node.selectedImageUrl ?? undefined)
             const input: CharacterTemplateGenerationInput = {
               type: 'character_template',
