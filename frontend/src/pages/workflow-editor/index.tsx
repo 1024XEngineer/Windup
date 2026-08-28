@@ -834,7 +834,18 @@ function CharacterTemplateContent({
       }
     })
     if (!masterConfirmed) {
-      const images = groups[0]?.images ?? []
+      const generated = groups[0]?.images ?? []
+      // 用户上传的参考图也是一个候选。他手上已经有成品图时，再生成一遍只会更差 ——
+      // 而「直接用我这张」此前是个不存在的选项，只能眼看着系统拿它去重画。
+      const setupNode = findDependency(input.run, node, 'character-setup')
+      const uploaded = setupNode?.input.referenceMedia?.[0]
+      const uploadedUrl = uploaded ? String(uploaded) : null
+      const images = uploadedUrl
+        ? [
+            { url: uploadedUrl, uploaded: true },
+            ...generated.map((i) => ({ ...i, uploaded: false })),
+          ]
+        : generated.map((i) => ({ ...i, uploaded: false }))
       const selectedImageUrl =
         images.find(
           (image) => image.url === input.selectedImages[selectionKey(node.id, anchorDirection)],
@@ -847,7 +858,7 @@ function CharacterTemplateContent({
                 type="button"
                 key={image.url}
                 className={THUMB_BUTTON}
-                aria-label={`选择角色候选 ${index + 1}`}
+                aria-label={image.uploaded ? '选择我上传的参考图' : `选择角色候选 ${index + 1}`}
                 aria-pressed={
                   input.selectedImages[selectionKey(node.id, anchorDirection)] === image.url
                 }
@@ -858,7 +869,16 @@ function CharacterTemplateContent({
                   }))
                 }
               >
-                <WorkflowImage src={image.url} alt={`角色候选 ${index + 1}`} variant="thumbnail" />
+                <WorkflowImage
+                  src={image.url}
+                  alt={image.uploaded ? '我上传的参考图' : `角色候选 ${index + 1}`}
+                  variant="thumbnail"
+                />
+                {image.uploaded ? (
+                  <small className="mt-[3px] block text-[9px] font-[750] text-app-accent">
+                    我上传的图
+                  </small>
+                ) : null}
               </button>
             ))}
           </div>
@@ -871,7 +891,9 @@ function CharacterTemplateContent({
               branchBusy={branchBusy}
             />
           ) : (
-            <p className={CARD_TEXT}>先选一张候选，再决定是否把它定为母版。</p>
+            <p className={CARD_TEXT}>
+              先选一张，再决定是否把它定为母版。已上传的参考图也可以直接选。
+            </p>
           )}
         </div>
       )
