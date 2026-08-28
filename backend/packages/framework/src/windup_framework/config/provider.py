@@ -62,6 +62,16 @@ class AIProviderSettings(BaseSettings):
     # 空值 = 所有人都受额度限制(默认)。逗号分隔的用户 id,如 "1,2,3"。
     render3d_unlimited_user_ids: str = ""
 
+    # ── 图生 3D 的三个建模参数 ────────────────────────────────────────────
+    # 接出来是因为原先它们只有构造默认值,部署上改不动 —— 而其中 face_count 直接决定
+    # 用户要下多大的模型:实测线上产物 45 万顶点、FBX 20.7MB,而出帧最终只渲成
+    # 1536x2560 的平面精灵,面数用不上。降不降、降到多少要靠实测,前提是得能改。
+    #
+    # 空值 = 沿用 provider 的构造默认(Normal / 150000 / 关),行为与接出来之前一致。
+    render3d_generate_type: str = ""      # Normal 20 / Geometry 15 / LowPoly 25 / Sketch 25 积分
+    render3d_face_count: int = 0          # 0 = 不覆盖
+    render3d_enable_pbr: bool = False     # 开启 +10 积分。出帧走平面着色,PBR 材质用不上
+
     chat_fallbacks: str = ""
     image_fallbacks: str = "gemini-3.1-flash-image-preview"
     video_fallbacks: str = ""

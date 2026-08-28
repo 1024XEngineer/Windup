@@ -316,6 +316,20 @@
       "BuildAssetRequest": {
         "description": "建 3D 资产的入参。\n\n``stance`` 必填、无默认:自动绑骨只支持双足,而四足/无肢从模型几何判不出来\n(实测归档模型的包围盒比例完全重叠)。给默认值等于把「没声明」当成「双足」放行。",
         "properties": {
+          "extra_view_urls": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra View Urls"
+          },
           "stance": {
             "$ref": "#/components/schemas/CharacterStance"
           }

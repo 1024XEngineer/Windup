@@ -833,3 +833,47 @@ def test_a_job_that_never_comes_back_is_eventually_given_up_on(tmp_path):
     builder.ensure(OUTFIT, _png(), _NullProgress())   # 第 RIGJOB_MAX_RESUMES 轮:放弃并重提
     assert rig.submits == 2, "续了这么多轮还不放弃,资产永远建不出来"
     assert store.get(f"{RIGJOB_KEY_PREFIX}{OUTFIT}#walk") is None
+
+
+# ══ 多视图与建模参数:provider 早就支持,应用层此前一个都用不到 ══════════
+
+
+class _ViewRecordingModel3D(_FakeModel3D):
+    """记下拿到的多视图。不传时**不该收到这个关键字** —— 不接它的实现会 TypeError。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.views: dict | None = None
+        self.saw_kwarg = False
+
+    def image_to_3d(self, master, *, want="GLB", **kw):
+        self.saw_kwarg = "extra_views" in kw
+        self.views = kw.get("extra_views")
+        return super().image_to_3d(master, want=want)
+
+
+def test_extra_views_reach_the_provider(tmp_path):
+    """多视图要一路走到 provider。中间任何一层漏接,用户按多视图付了钱,
+    拿到的却是单图重建的模型 —— 而每一道闸都正常。"""
+    m = _ViewRecordingModel3D()
+    builder = Render3DAssetBuilder(
+        model3d=m, autorig=_FakeAutoRig(), store=LocalDirAssetStore(tmp_path),
+        review=_AutoApproveReview(), may_build_assets=True,
+    )
+    builder.ensure(OUTFIT, _png(), _NullProgress(), {"back": b"BACK", "left": b"LEFT"})
+    assert m.views == {"back": b"BACK", "left": b"LEFT"}
+
+
+def test_no_views_means_the_keyword_is_not_passed_at_all(tmp_path):
+    """没有多视图时连关键字都不传。
+
+    传 ``extra_views=None`` 会让不接它的实现当场 TypeError —— 测试替身、别家 provider
+    都在此列,而那时它们本来就没有这件事要做。
+    """
+    m = _ViewRecordingModel3D()
+    builder = Render3DAssetBuilder(
+        model3d=m, autorig=_FakeAutoRig(), store=LocalDirAssetStore(tmp_path),
+        review=_AutoApproveReview(), may_build_assets=True,
+    )
+    builder.ensure(OUTFIT, _png(), _NullProgress())
+    assert m.saw_kwarg is False, "没有多视图却把关键字传下去了"

@@ -342,7 +342,8 @@ class Render3DAssetBuilder:
         self._store.delete(f"{RAW_KEY_PREFIX}{outfit_key}")
         self._review.discard(outfit_key)
 
-    def ensure(self, outfit_key: str, master: bytes, progress: ProgressPort) -> bytes:
+    def ensure(self, outfit_key: str, master: bytes, progress: ProgressPort,
+               extra_views: Mapping[str, bytes] | None = None) -> bytes:
         """取该造型的绑骨模型;没有且获准时才现建。
 
         建一次的计费 = 图生 3D + 绑骨,取值见本模块顶部常量,**每造型一次性**。
@@ -364,10 +365,11 @@ class Render3DAssetBuilder:
                 f"绑骨 {AUTORIG_CREDITS})。要现建请显式授权花钱,"
                 "或先把资产备好,或改走 video_i2v。"
             )
-        return self._build(outfit_key, master, progress)
+        return self._build(outfit_key, master, progress, extra_views)
 
     # ── 内部 ─────────────────────────────────────────────────────────────
-    def _build(self, key: str, master: bytes, progress: ProgressPort) -> bytes:
+    def _build(self, key: str, master: bytes, progress: ProgressPort,
+               extra_views: Mapping[str, bytes] | None = None) -> bytes:
         """① 图生 3D →(人工确认)→ ② 绑骨并烘入 :data:`BUILD_MOTION`。**按次计费,每造型一次性。**
 
         中间那道人工确认是硬停点,原因见 :class:`ModelReviewGate`:模型不可事后修改,
@@ -385,7 +387,7 @@ class Render3DAssetBuilder:
         model = self._store.get(raw_key)
         if model is None:
             progress.step("assets", 0, 2, "造型级 3D 资产未就绪:图生 3D(按次计费)")
-            model, upstream_url = _image_to_3d(self._model3d, master)
+            model, upstream_url = _image_to_3d(self._model3d, master, extra_views)
             self._store.put(raw_key, model)
             if upstream_url:
                 # 上游那个 URL 单独存一份,给绑骨当**云到云**的输入 —— 它是上游自家的
@@ -480,16 +482,20 @@ class Render3DAssetBuilder:
         logger.info("造型追加动作已落点 key=%s motion=%s", motion_key, want)
         return rigged.data
 
-def _image_to_3d(provider, master: bytes) -> tuple[bytes, str | None]:
+def _image_to_3d(provider, master: bytes,
+                 extra_views: Mapping[str, bytes] | None = None) -> tuple[bytes, str | None]:
     """图生 3D,顺带取回上游那个产物 URL。
 
     provider 没有 ``image_to_3d_with_url`` 时退回旧方法、URL 给 None —— 测试里的桩与
     别的实现不该因为这个新增能力而全部要改。
     """
     fn = getattr(provider, "image_to_3d_with_url", None)
+    # 没有多视图时**不传这个关键字** —— 不接它的实现(测试替身、别家 provider)
+    # 收到就是 TypeError,而那时它本来就没这件事要做。
+    kw = {"extra_views": extra_views} if extra_views else {}
     if fn is None:
-        return provider.image_to_3d(master, want="GLB"), None
-    return fn(master, want="GLB")
+        return provider.image_to_3d(master, want="GLB", **kw), None
+    return fn(master, want="GLB", **kw)
 
 
 def _model_not_public():
