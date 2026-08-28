@@ -33,7 +33,13 @@ class AIProviderSettings(BaseSettings):
     # 运行期 —— 字段塞错不会立刻报错,任务照常 queued,直到生成阶段才 failed,
     # 而费用可能已经产生(2026-07-29 实测)。
     chat_model: str = "gpt-4o-mini"
-    video_model: str = "kling-v2-5-turbo"
+    # 2026-08-27 起默认 kling v3 turbo:同一角色同一提示词的对照里它明显更好。
+    # 交付率也支持这个方向 —— 按首选型号统计线上动作任务的最终状态:
+    # agnes-video-2.5-flash 15 完成 / 6 失败(71%),kling-v2-5-turbo 56 完成 / 1 失败(95%)。
+    # 口径注意:``windup_ai_gateway_attempt`` 只记 ``submit`` 这一相,提交成功 ≠ 出片
+    # (agnes 21 次提交全部 200,但其中 6 个任务最终 failed),所以交付率必须回到任务状态看。
+    # **部署侧的 AI_VIDEO_MODEL 会覆盖这里**,改默认值不等于线上生效,还要动 .env。
+    video_model: str = "kling-v3-turbo-std"
     image_model: str = "gpt-image-2"
     # 判官是**看图的聊天模型**,不是图像生成模型:它要读一张图然后回一段 JSON,而
     # ``image_model`` 那个型号只会回图;共用一个字段的话,换判官会连带把出图换掉。

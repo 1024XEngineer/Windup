@@ -94,3 +94,51 @@ def test_every_example_key_is_actually_read():
         "填了不生效比不填更糟——部署方以为配置生效了。"
         "确认前缀与对应 BaseSettings 的 env_prefix 一致。"
     )
+
+
+# ── 值也要对，不只是键存在 ────────────────────────────────────────────────
+
+
+def _example_pairs() -> dict[str, str]:
+    if not _ENV_EXAMPLE.is_file():
+        pytest.skip(f"没有 {_ENV_EXAMPLE}")
+    out: dict[str, str] = {}
+    for line in _ENV_EXAMPLE.read_text(encoding="utf-8").splitlines():
+        if m := re.match(r"^([A-Z][A-Z0-9_]*)=(.*)$", line.strip()):
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+#: 声称"取值即默认值"的那几个键。只列这几个而不是全表:大部分键是**站位值**
+#: (``AI_API_KEY=your-ai-api-key``),它们本来就不该等于默认值。
+_PINNED_TO_DEFAULT = {
+    "AI_CHAT_FALLBACKS": ("provider", "chat_fallbacks"),
+    "AI_IMAGE_MODEL": ("provider", "image_model"),
+    "AI_VIDEO_MODEL": ("provider", "video_model"),
+    "AI_IMAGE_FALLBACKS": ("provider", "image_fallbacks"),
+    "AI_VIDEO_FALLBACKS": ("provider", "video_fallbacks"),
+    "AI_VIDEO_VEO_USER_IDS": ("provider", "video_veo_user_ids"),
+}
+
+
+@pytest.mark.parametrize("key", sorted(_PINNED_TO_DEFAULT))
+def test_env_example_matches_code_defaults(key):
+    """拦的坏例:模板里的型号和代码默认值各走各的。
+
+    实测的漂移(2026-08-27):模板写 ``AI_VIDEO_MODEL=kling-v2-5-turbo``、代码默认是
+    ``kling-v3-turbo-std``、生产 .env 里是 ``agnes-video-2.5-flash`` —— 同一个配置项
+    三个地方三个值。照模板部署的人拿到的既不是他以为的那个,也不是生产在跑的那个,
+    而且不会有任何一道报错:型号是合法的,只是不是你想要的那个。
+
+    只钉那几行明说了"取值即默认值"的;站位值(API key 一类)不在此列。
+    """
+    import importlib
+
+    mod_name, field = _PINNED_TO_DEFAULT[key]
+    mod = importlib.import_module(f"windup_framework.config.{mod_name}")
+    cls = type(mod.settings)
+    default = cls.model_fields[field].default
+    assert _example_pairs()[key] == str(default), (
+        f".env.example 的 {key} 是 {_example_pairs()[key]!r},"
+        f"而代码默认值是 {default!r} —— 改了默认值就要同步模板"
+    )

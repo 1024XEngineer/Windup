@@ -236,8 +236,10 @@ def test_only_the_opened_models_are_accepted():
     from windup_framework.gateway.registry import ModelRegistry
     from windup_framework.gateway.types import Scene
 
-    r = ModelRegistry.from_settings(AIProviderSettings(video_fallbacks="kling-v2-6"))
-    assert set(r.chain(Scene.CHARACTER_ACTION)) == {"kling-v2-5-turbo", "kling-v2-6"}
+    cfg = AIProviderSettings(video_fallbacks="kling-v2-6")
+    r = ModelRegistry.from_settings(cfg)
+    # 主力从配置推:这条断言的是"链 = 主力 + 兜底",不是"默认型号叫什么"。
+    assert set(r.chain(Scene.CHARACTER_ACTION)) == {cfg.video_model, "kling-v2-6"}
 
 
 def test_unknown_model_fails_at_entry_not_at_the_paid_call():
@@ -246,7 +248,9 @@ def test_unknown_model_fails_at_entry_not_at_the_paid_call():
 
     with pytest.raises(ValueError) as e:
         _resolve_video_model("sora-2")
-    assert "kling-v2-5-turbo" in str(e.value), "报错要带上可选值,否则调用方无从改"
+    from windup_framework.config.provider import AIProviderSettings
+
+    assert AIProviderSettings().video_model in str(e.value), "报错要带上可选值,否则调用方无从改"
 
 
 def test_start_from_model_reuses_one_generator():
