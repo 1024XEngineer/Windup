@@ -13,7 +13,6 @@ import {
   type MasterPrecheckReport,
   type Render3DApis,
   type Render3DAsset,
-  type Render3DMotion,
 } from '@/entities'
 import { KineticCopyCycle } from '@/shared/ui'
 
@@ -302,9 +301,7 @@ export function Render3DAssetPanel({
                       : `烘入${RENDER3D_MOTION_LABELS[motion]}，${RENDER3D_MOTION_CREDITS} 积分`
                   }
                   disabled={locked || done}
-                  onClick={() =>
-                    run(() => render3d.addOutfitMotion(characterId, outfitId, motion))
-                  }
+                  onClick={() => run(() => render3d.addOutfitMotion(characterId, outfitId, motion))}
                 >
                   {done
                     ? `${RENDER3D_MOTION_LABELS[motion]} 已就绪`

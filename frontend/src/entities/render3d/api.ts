@@ -141,9 +141,7 @@ const KNOWN_MOTIONS: ReadonlySet<string> = new Set(['walk', 'idle', 'jump'])
 /** 认不出的动作名跳过,不带进界面 —— 界面上多一个点不动的按钮比少一个更糟。 */
 function parseMotions(value: unknown): Render3DMotion[] {
   if (!Array.isArray(value)) return []
-  return value.filter(
-    (m): m is Render3DMotion => typeof m === 'string' && KNOWN_MOTIONS.has(m),
-  )
+  return value.filter((m): m is Render3DMotion => typeof m === 'string' && KNOWN_MOTIONS.has(m))
 }
 
 function parseAsset(value: unknown): Render3DAsset {
@@ -317,6 +315,8 @@ export const render3DApis: Render3DApis = {
     createRender3DApis().buildOutfitAsset(characterId, outfitId, stance),
   approveOutfitAsset: (characterId, outfitId) =>
     createRender3DApis().approveOutfitAsset(characterId, outfitId),
+  addOutfitMotion: (characterId, outfitId, motion) =>
+    createRender3DApis().addOutfitMotion(characterId, outfitId, motion),
   discardOutfitAsset: (characterId, outfitId) =>
     createRender3DApis().discardOutfitAsset(characterId, outfitId),
   getBakeJob: (taskId) => createRender3DApis().getBakeJob(taskId),

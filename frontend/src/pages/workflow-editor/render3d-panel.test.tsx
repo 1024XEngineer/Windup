@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { MasterPrecheckReport, Render3DApis, Render3DAsset } from '@/entities'
+import type { MasterPrecheckReport, Render3DApis, Render3DAsset, Render3DMotion } from '@/entities'
 import { Render3DAssetPanel } from './render3d-panel'
 
 const COST: Render3DAsset['cost'] = {
@@ -137,10 +137,9 @@ describe('3D 资产面板', () => {
 
   it('已经烘过的动作点不动 —— 重复点就是重复付一次绑骨', async () => {
     const add = vi.fn(async () => asset({ state: 'ready' }))
-    mount(
-      asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakedMotions: ['walk'] }),
-      { addOutfitMotion: add },
-    )
+    mount(asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakedMotions: ['walk'] }), {
+      addOutfitMotion: add,
+    })
     const walk = await screen.findByRole('button', { name: '走路已就绪' })
     expect((walk as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(walk)
@@ -148,11 +147,14 @@ describe('3D 资产面板', () => {
   })
 
   it('点一个没烘过的动作，把动作名传给后端', async () => {
-    const add = vi.fn(async () => asset({ state: 'ready' }))
-    mount(
-      asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakedMotions: [] }),
-      { addOutfitMotion: add },
+    // 形参要写出来:不写的话 mock.calls 的元组类型是 [],下面那句取 [2] 连编译都过不了,
+    // 而"动作名传错"正是这条用例唯一要拦的东西。
+    const add = vi.fn(async (_characterId: string, _outfitId: string, _motion: Render3DMotion) =>
+      asset({ state: 'ready' }),
     )
+    mount(asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakedMotions: [] }), {
+      addOutfitMotion: add,
+    })
     fireEvent.click(await screen.findByRole('button', { name: '烘入跳跃，10 积分' }))
     await waitFor(() => expect(add).toHaveBeenCalled())
     // 拿错动作名 = 花了钱烘出另一个动作，而界面照样显示成功。
