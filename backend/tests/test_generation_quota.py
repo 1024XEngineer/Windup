@@ -88,7 +88,6 @@ def test_submit_image_generation_reserves_prepaid_credit(auth_client, db_session
         "/projects",
         json={
             "project_name": "积分项目",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,
@@ -121,7 +120,6 @@ def test_submit_image_generation_reserves_per_requested_image(auth_client, db_se
         "/projects",
         json={
             "project_name": "按张计费",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,
@@ -160,7 +158,6 @@ def test_submit_rejects_when_credit_is_insufficient(auth_client, db_session):
         "/projects",
         json={
             "project_name": "没钱项目",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,
@@ -190,7 +187,6 @@ def test_submit_rejects_when_credit_covers_one_image_but_not_three(auth_client, 
         "/projects",
         json={
             "project_name": "一张的钱不够三张",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,

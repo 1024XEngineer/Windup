@@ -28,7 +28,6 @@ def _create_project(
         "/projects",
         json={
             "project_name": name,
-            "character_perspective": 1,
             "directional_movement": directional_movement,
             "sprite_width": 64,
             "sprite_height": 64,

@@ -413,12 +413,12 @@ class _SpyGenerator:
         )
 
 
-def test_project_perspective_constrains_facing(session_factory):
-    # perspective=2 → front(见 executor._PERSPECTIVE_TO_FACING)
+def test_project_movement_constrains_facing(session_factory):
+    # directional_movement=2 四向 → 俯视 front(见 executor._MOVEMENT_FACING)
     with session_factory() as s:
         proj = Project(
-            user_id=1, project_name="p", character_perspective=2,
-            directional_movement=1, sprite_width=64, sprite_height=64,
+            user_id=1, project_name="p",
+            directional_movement=2, sprite_width=64, sprite_height=64,
         )
         s.add(proj)
         s.commit()
@@ -441,7 +441,23 @@ def test_project_perspective_constrains_facing(session_factory):
 
     executor.run_action_task(task_id, action_input, project_id)  # 带项目约束
 
-    assert spy.seen_facing == "front", "项目 perspective 应约束生成朝向"
+    assert spy.seen_facing == "front", "项目朝向规格应约束生成朝向"
+
+
+def test_unidirectional_project_keeps_side_facing(session_factory):
+    with session_factory() as s:
+        proj = Project(
+            user_id=1, project_name="side",
+            directional_movement=1, sprite_width=64, sprite_height=64,
+        )
+        s.add(proj)
+        s.commit()
+        from windup_app.server.orchestrator.executor import _load_constraints
+
+        cons = _load_constraints(s, proj.id)
+    assert cons.facing == "side"
+    assert cons.perspective == 1
+    assert cons.directions == 1
 
 
 def test_custom_action_reuses_oneshot_route_and_preserves_prompt(session_factory):
@@ -577,7 +593,7 @@ def _run_with_project(session_factory, spy, sprite=(64, 64)):
     """建一个指定 sprite 尺寸的项目,跑一次动作任务,返回 (task_id, project_id)。"""
     with session_factory() as s:
         proj = Project(
-            user_id=1, project_name="p", character_perspective=1,
+            user_id=1, project_name="p",
             directional_movement=1, sprite_width=sprite[0], sprite_height=sprite[1],
         )
         s.add(proj)
@@ -983,7 +999,7 @@ def _delivered_colors(game_style: str | None, session_factory, monkeypatch) -> i
     )
     with session_factory() as s:
         project = Project(
-            user_id=1, project_name=f"画风-{game_style}", character_perspective=1,
+            user_id=1, project_name=f"画风-{game_style}",
             directional_movement=1, sprite_width=64, sprite_height=64,
             game_style=game_style,
         )

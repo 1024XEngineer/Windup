@@ -93,9 +93,9 @@ def test_it_fixes_the_real_case_a_live_table_missing_a_new_column():
     with eng.begin() as conn:                  # 退回加列之前的库
         conn.execute(text(f"ALTER TABLE windup_project DROP COLUMN {new_column}"))
         conn.execute(text(
-            "INSERT INTO windup_project (id, project_name, user_id, character_perspective,"
+            "INSERT INTO windup_project (id, project_name, user_id,"
             " directional_movement, sprite_width, sprite_height, create_at, update_at)"
-            " VALUES (1,'存量项目',1,1,0,256,256,'2026-01-01','2026-01-01')"
+            " VALUES (1,'存量项目',1,0,256,256,'2026-01-01','2026-01-01')"
         ))
 
     with pytest.raises(Exception, match="sprite_sample_url"):

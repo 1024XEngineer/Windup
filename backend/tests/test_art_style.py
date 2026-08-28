@@ -8,7 +8,6 @@ from windup_common.enums import ArtStyle
 def _payload(**overrides):
     base = {
         "project_name": "画风",
-        "character_perspective": 1,
         "directional_movement": 2,
         "sprite_width": 64,
         "sprite_height": 64,
@@ -159,7 +158,6 @@ def test_constraints_follow_the_project_style(db_session, stored, stylize, phras
     project = Project(
         user_id=1,
         project_name=f"约束-{stored}",
-        character_perspective=1,
         directional_movement=1,
         sprite_width=64,
         sprite_height=64,

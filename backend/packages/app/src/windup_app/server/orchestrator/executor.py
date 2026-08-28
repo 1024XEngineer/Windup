@@ -113,14 +113,14 @@ def _close_failed(session: Session, task_id: int, error_message: str) -> None:
 
 
 # ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
-# character_perspective 游戏视角:1=横版(侧视) 2=俯视 3=2.5D → 生成朝向/视角
-_PERSPECTIVE_FACING: dict[int, str] = {1: "side", 2: "front", 3: "front"}
-_PERSPECTIVE_VIEW: dict[int, str] = {
+# directional_movement 是唯一方向规格(#664):
+# 1=单向 → 横版侧视 / 1 向; 2=四向 → 俯视 / 4 向; 3=八向 → 2.5D / 8 向
+_MOVEMENT_FACING: dict[int, str] = {1: "side", 2: "front", 3: "front"}
+_MOVEMENT_VIEW: dict[int, str] = {
     1: "side view, horizontal side-scroller",
     2: "top-down view",
     3: "2.5D three-quarter view",
 }
-# directional_movement 移动方向:1=单向 2=四向 3=八向 → 需生成的方向数
 _MOVEMENT_DIRECTIONS: dict[int, int] = {1: 1, 2: 4, 3: 8}
 
 
@@ -128,9 +128,9 @@ _MOVEMENT_DIRECTIONS: dict[int, int] = {1: 1, 2: 4, 3: 8}
 class ProjectConstraints:
     """从 Project 取的全局生成约束,统一约束角色图/动作生成。"""
 
-    facing: str = "side"  # character_perspective → 朝向(须与母版一致 #35)
+    facing: str = "side"  # directional_movement → 朝向(须与母版一致 #35)
     view: str = "side view, horizontal side-scroller"
-    perspective: int = 1  # 1横版 2俯视 3 2.5D
+    perspective: int = 1  # 由朝向派生:1横版 2俯视 3 2.5D
     directions: int = 1  # directional_movement → 方向数(1/4/8)
     sprite_w: int = 256  # 输出/切帧尺寸(关键)
     sprite_h: int = 256
@@ -163,11 +163,12 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
     if p is None:
         return ProjectConstraints()
     art_style = ArtStyle.from_stored(p.game_style)
+    movement = p.directional_movement
     return ProjectConstraints(
-        facing=_PERSPECTIVE_FACING.get(p.character_perspective, "side"),
-        view=_PERSPECTIVE_VIEW.get(p.character_perspective, _PERSPECTIVE_VIEW[1]),
-        perspective=p.character_perspective,
-        directions=_MOVEMENT_DIRECTIONS.get(p.directional_movement, 1),
+        facing=_MOVEMENT_FACING.get(movement, "side"),
+        view=_MOVEMENT_VIEW.get(movement, _MOVEMENT_VIEW[1]),
+        perspective=movement if movement in _MOVEMENT_FACING else 1,
+        directions=_MOVEMENT_DIRECTIONS.get(movement, 1),
         sprite_w=p.sprite_width,
         sprite_h=p.sprite_height,
         style=ArtStyle.phrase_from_stored(p.game_style),

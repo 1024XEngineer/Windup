@@ -21,7 +21,6 @@ def test_sensitive_prompt_is_rejected_before_task_and_credit(
         "/projects",
         json={
             "project_name": "过滤项目",
-            "character_perspective": 1,
             "directional_movement": 2,
             "sprite_width": 64,
             "sprite_height": 64,

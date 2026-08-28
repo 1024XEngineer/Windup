@@ -4,7 +4,14 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -39,7 +46,9 @@ def _legacy_style_or_none(value: object) -> ArtStyle | str | None:
     try:
         return ArtStyle(value.strip())
     except ValueError:
-        return ArtStyle.PIXEL if ArtStyle.from_stored(value) is ArtStyle.PIXEL else value
+        return (
+            ArtStyle.PIXEL if ArtStyle.from_stored(value) is ArtStyle.PIXEL else value
+        )
 
 
 def _stored_style(style: ArtStyle | str | None) -> str | None:
@@ -53,13 +62,16 @@ def _stored_style(style: ArtStyle | str | None) -> str | None:
 
 
 class ProjectCreate(BaseModel):
-    """创建项目请求。"""
+    """创建项目请求。
+
+    ``character_perspective`` 已退役(#664):旧客户端多传该字段会被忽略,
+    方向规格只认 ``directional_movement``。
+    """
 
     workflow_id: int | None = None
     project_name: str | None = Field(default=None, min_length=1, max_length=20)
     name_context: str | None = None
-    character_perspective: int = Field(ge=1, le=3)
-    directional_movement: int = Field(ge=1, le=3)
+    directional_movement: int = Field(ge=1, le=3, description="1=单向 2=四向 3=八向")
     sprite_width: int = Field(ge=32, le=2048)
     sprite_height: int = Field(ge=32, le=2048)
     game_style: ArtStyle | str = ArtStyle.UNSPECIFIED
@@ -80,9 +92,7 @@ class ProjectPatch(BaseModel):
     game_style: ArtStyle | str | None = None
     auto_pixelate: bool | None = None
 
-    _accept_legacy = field_validator("game_style", mode="before")(
-        _legacy_style_or_none
-    )
+    _accept_legacy = field_validator("game_style", mode="before")(_legacy_style_or_none)
 
     @model_validator(mode="after")
     def _at_least_one(self) -> "ProjectPatch":
@@ -96,14 +106,17 @@ class ProjectPatch(BaseModel):
 
 
 class ProjectOut(BaseModel):
-    """项目响应。"""
+    """项目响应。
+
+    ``character_perspective`` 不再落库,由 ``directional_movement`` 派生,
+    让尚未对齐的前端读列表/详情时不至于映射失败。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     workflow_id: int | None
     project_name: str
-    character_perspective: int
     directional_movement: int
     sprite_width: int
     sprite_height: int
@@ -112,6 +125,12 @@ class ProjectOut(BaseModel):
     sprite_sample_url: str | None
     create_at: datetime
     update_at: datetime
+
+    @computed_field
+    @property
+    def character_perspective(self) -> int:
+        """与朝向 1:1:单向→横版、四向→俯视、八向→2.5D。"""
+        return self.directional_movement
 
     @field_validator("game_style", mode="before")
     @classmethod
@@ -128,7 +147,9 @@ class ProjectOut(BaseModel):
         try:
             return ArtStyle(text)
         except ValueError:
-            return ArtStyle.PIXEL if ArtStyle.from_stored(text) is ArtStyle.PIXEL else text
+            return (
+                ArtStyle.PIXEL if ArtStyle.from_stored(text) is ArtStyle.PIXEL else text
+            )
 
 
 class ProjectListOut(ProjectOut):
@@ -145,7 +166,9 @@ def create_project(
 ) -> Response[ProjectOut]:
     user_id = request.state.current_user.id
     automatic_name = not (body.project_name or "").strip()
-    base_name = resolve_project_name(body.project_name, body.name_context, service._namer)
+    base_name = resolve_project_name(
+        body.project_name, body.name_context, service._namer
+    )
     fields = body.model_dump(exclude={"project_name", "name_context"})
     fields["game_style"] = _stored_style(body.game_style)
 
@@ -166,7 +189,9 @@ def create_project(
             project = service.create_project(
                 session, user_id=user_id, project_name=project_name, **fields
             )
-            return Response.success(ProjectOut.model_validate(project), message="创建成功")
+            return Response.success(
+                ProjectOut.model_validate(project), message="创建成功"
+            )
         except IntegrityError:
             logger.warning(
                 "[WINDUP] 创建并发重名 | user_id=%s project_name=%s",

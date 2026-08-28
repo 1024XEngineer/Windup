@@ -46,7 +46,6 @@ def insert_project(session, **overrides) -> Project:
     fields = {
         "user_id": 1,
         "project_name": "测试项目",
-        "character_perspective": 1,
         "directional_movement": 2,
         "sprite_width": 64,
         "sprite_height": 64,

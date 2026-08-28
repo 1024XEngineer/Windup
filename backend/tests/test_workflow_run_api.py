@@ -5,7 +5,6 @@ def _create_project(auth_client, name: str = "默认项目") -> dict:
     """创建一个项目并返回响应 data。"""
     return auth_client.post("/projects", json={
         "project_name": name,
-        "character_perspective": 1,
         "directional_movement": 2,
         "sprite_width": 64,
         "sprite_height": 64,

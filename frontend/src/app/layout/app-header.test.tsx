@@ -169,7 +169,7 @@ describe('AppHeader 进行中任务入口', () => {
     expect(document.querySelector('[data-active-run-bot]')).toBeNull()
 
     act(() => rememberActiveRun('7', '77'))
-    const entry = screen.getByRole('button', { name: '创作，有任务进行中' })
+    const entry = await screen.findByRole('button', { name: '创作，有任务进行中' })
     const bot = entry.querySelector('[data-active-run-bot]')
     expect(bot).toBeTruthy()
     // 文字保留：这一项不该在图标和文字之间换形态。
