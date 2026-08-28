@@ -6,7 +6,11 @@ import {
   type Action,
   type CharacterTemplate,
 } from '.'
-import { validateDirectionalAsset } from './directional-asset'
+import {
+  assertMultiDirectionAssetPublishable,
+  characterDataVersionForWrite,
+  validateDirectionalAsset,
+} from './directional-asset'
 
 function realTemplate(direction: CharacterTemplate['direction']): CharacterTemplate {
   return {
@@ -225,5 +229,31 @@ describe('validateDirectionalAsset', () => {
         '单向资产包含无效方向：north',
       ],
     })
+  })
+})
+
+describe('characterDataVersionForWrite', () => {
+  it('keeps version 1 for east/west-only assets', () => {
+    expect(
+      characterDataVersionForWrite(1, [realTemplate('east')], [realAction(['east', 'west'])]),
+    ).toBe(1)
+  })
+
+  it('stamps version 2 when a four-way sequence is present', () => {
+    expect(
+      characterDataVersionForWrite(1, [realTemplate('east')], [realAction(['east', 'north'])]),
+    ).toBe(2)
+  })
+})
+
+describe('assertMultiDirectionAssetPublishable', () => {
+  it('does not block single-direction publishes', () => {
+    expect(() => assertMultiDirectionAssetPublishable(1, 'single', [], [])).not.toThrow()
+  })
+
+  it('raises the first completeness problem after stamping version 2', () => {
+    expect(() =>
+      assertMultiDirectionAssetPublishable(2, 'four-way', [realTemplate('east')], []),
+    ).toThrow('角色母版缺少真实方向：north、south')
   })
 })

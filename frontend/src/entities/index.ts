@@ -75,10 +75,13 @@ export type {
 } from './character'
 export {
   CHARACTER_STATUS,
+  assertMultiDirectionAssetPublishable,
   characterApis,
+  characterDataVersionForWrite,
   characterTemplateImages,
   characterTemplatesFromImages,
   characterTemplatesFromViewSheetCells,
+  validateDirectionalAsset,
 } from './character'
 export {
   ACTION_DIRECTIONS,

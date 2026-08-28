@@ -7,6 +7,8 @@ import {
   workflowRunApis,
   characterTemplatesFromImages,
   characterTemplatesFromViewSheetCells,
+  characterDataVersionForWrite,
+  assertMultiDirectionAssetPublishable,
   getDirectionProfile,
   type Action,
   type Character,
@@ -1316,16 +1318,30 @@ export function createQuickStartService({
           frames: eastSequence.frames,
           sequences,
         }
+        const publishedOutfits = character.outfits.map((outfit) =>
+          outfit.id === info.outfitId
+            ? {
+                ...outfit,
+                actions: [...outfit.actions.filter((item) => item.id !== action.id), action],
+              }
+            : outfit,
+        )
+        const nextActions = publishedOutfits.flatMap((outfit) => outfit.actions)
+        const dataVersion = characterDataVersionForWrite(
+          character.dataVersion,
+          character.templates ?? [],
+          nextActions,
+        )
+        assertMultiDirectionAssetPublishable(
+          dataVersion,
+          directionalMovement,
+          character.templates ?? [],
+          nextActions,
+        )
         const publishedCharacter = await characterApis.update({
           ...character,
-          outfits: character.outfits.map((outfit) =>
-            outfit.id === info.outfitId
-              ? {
-                  ...outfit,
-                  actions: [...outfit.actions.filter((item) => item.id !== action.id), action],
-                }
-              : outfit,
-          ),
+          dataVersion,
+          outfits: publishedOutfits,
         })
         if (review.status === 'active') {
           try {

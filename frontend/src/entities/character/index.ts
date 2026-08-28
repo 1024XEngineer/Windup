@@ -7,11 +7,25 @@ import {
   resolveActionDirection,
   type ActionDirection,
 } from './directions'
+import {
+  assertMultiDirectionAssetPublishable,
+  characterDataVersionForWrite,
+  MULTI_DIRECTION_CHARACTER_DATA_VERSION,
+  validateDirectionalAsset,
+  type DirectionalAssetValidation,
+} from './directional-asset'
 
 export type { ActionDirection } from './directions'
 export { getDirectionGridLayout } from './directions'
 export type { DirectionGridLayout } from './directions'
-export { validateDirectionalAsset, type DirectionalAssetValidation } from './directional-asset'
+
+export {
+  assertMultiDirectionAssetPublishable,
+  characterDataVersionForWrite,
+  MULTI_DIRECTION_CHARACTER_DATA_VERSION,
+  validateDirectionalAsset,
+}
+export type { DirectionalAssetValidation }
 
 /** PR #75 将动作类型定义为字符串；已知类型之外的后端扩展也应原样保留。 */
 export type ActionType = string
@@ -90,7 +104,7 @@ export interface Character {
   referenceImageUrl: string | null
   /** 后续新增动作时恢复各方向输入，避免用 east 母版生成其他朝向。 */
   templates?: CharacterTemplate[]
-  /** character_data.version，更新整棵资产树时必须原样带回。 */
+  /** character_data.version。多方向合同写入时升到 2；单向旧资产保持 1。 */
   dataVersion: number
   status: CharacterStatus
   outfits: Outfit[]
@@ -604,7 +618,11 @@ export const characterApis: CharacterApis & CharacterSummaryApis = {
           description: character.description,
           reference_image_url: character.referenceImageUrl,
           character_data: {
-            version: character.dataVersion,
+            version: characterDataVersionForWrite(
+              character.dataVersion,
+              character.templates ?? [],
+              character.outfits.flatMap((outfit) => outfit.actions),
+            ),
             templates: (character.templates ?? []).map((template) => ({
               direction: template.direction,
               source_direction: template.sourceDirection,

@@ -715,13 +715,13 @@ describe('createRealWorkflowEditorSession', () => {
       },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
-          items: [characterWithOutfitFixture()],
+          items: [fourWayCharacterFixture()],
           total: 1,
           page: 1,
           pageSize: 100,
         }),
         create: vi.fn(),
-        get: vi.fn().mockResolvedValue(characterWithOutfitFixture()),
+        get: vi.fn().mockResolvedValue(fourWayCharacterFixture()),
         update: vi.fn(async (character) => structuredClone(character)),
         remove: vi.fn(),
       },
@@ -1265,6 +1265,18 @@ function characterWithOutfitFixture(): Character {
         model3dUrl: null,
         actions: [],
       },
+    ],
+  }
+}
+
+function fourWayCharacterFixture(): Character {
+  return {
+    ...characterWithOutfitFixture(),
+    templates: [
+      { direction: 'east', sourceDirection: null, mirrorX: false, imageUrl: 'east.png' },
+      { direction: 'west', sourceDirection: 'east', mirrorX: true, imageUrl: null },
+      { direction: 'north', sourceDirection: null, mirrorX: false, imageUrl: 'north.png' },
+      { direction: 'south', sourceDirection: null, mirrorX: false, imageUrl: 'south.png' },
     ],
   }
 }
