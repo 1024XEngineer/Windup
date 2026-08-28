@@ -515,9 +515,10 @@ describe('createGenerationApis', () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
         taskData({
-          input_payload: { num_images: 3, direction: 'east', lock_orientation: true },
+          task_type: 'character_first_frame',
+          input_payload: { num_images: 3, direction: 'east', action_type: 'walk' },
           result: {
-            type: 'character_image',
+            type: 'character_first_frame',
             direction: 'east',
             image_urls: candidateUrls(),
           },
@@ -552,7 +553,42 @@ describe('createGenerationApis', () => {
       height: 96,
       num_images: 3,
       direction: 'east',
+      action_type: 'walk',
     })
+    expect(generation.result).toEqual({
+      type: 'first_frame',
+      direction: 'east',
+      images: candidates(),
+    })
+  })
+
+  it('查询无期望时按 character_first_frame 恢复为首帧阶段', async () => {
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(async () =>
+          success(
+            taskData({
+              task_type: 'character_first_frame',
+              input_payload: {
+                num_images: 3,
+                direction: 'east',
+                action_type: 'walk',
+              },
+              result: {
+                type: 'character_first_frame',
+                direction: 'east',
+                image_urls: candidateUrls(),
+              },
+            }),
+          ),
+        ),
+        stream: vi.fn(() => vi.fn()),
+      },
+    })
+
+    const generation = await apis.get('42', '91')
+
+    expect(generation.type).toBe('first_frame')
     expect(generation.result).toEqual({
       type: 'first_frame',
       direction: 'east',

@@ -789,6 +789,9 @@
         "additionalProperties": false,
         "description": "四向 / 八向动作首帧:以该朝向立绘为参考,锁住朝向后出动作起手姿态。",
         "properties": {
+          "action_type": {
+            "$ref": "#/components/schemas/ActionType"
+          },
           "character_id": {
             "exclusiveMinimum": 0.0,
             "title": "Character Id",
@@ -842,7 +845,8 @@
           "character_id",
           "reference_image_url",
           "prompt",
-          "direction"
+          "direction",
+          "action_type"
         ],
         "title": "CharacterFirstFrameGenerateRequest",
         "type": "object"

@@ -201,50 +201,6 @@ def test_confirmed_master_is_sent_as_identity_reference_without_style_sample():
     assert "preserve its identity" in str(seen["prompt"])
 
 
-def test_lock_orientation_first_frame_keeps_attached_heading():
-    master = _master()
-    seen: dict[str, object] = {}
-
-    class _RecordingGen:
-        def gen_image(self, prompt, refs):
-            seen["prompt"] = prompt
-            seen["n_refs"] = len(refs)
-            return master
-
-    ImageTaskExecutor(
-        image=_RecordingGen(),
-        matte=_BackgroundMatte(),
-        upload=lambda _png: "https://cdn.example.com/result.png",
-        fetch_ref=lambda _url: master,
-    )._produce_image(
-        CharacterImageInput(
-            reference_image_url="https://cdn.example.com/east.png",
-            prompt="walk cycle first frame, left foot forward",
-            width=64,
-            height=64,
-            num_images=1,
-            direction=ActionDirection.EAST,
-            lock_orientation=True,
-        ),
-        ProjectConstraints(
-            directions=4,
-            perspective=2,
-            view="top-down view",
-            sprite_w=64,
-            sprite_h=64,
-            sprite_sample_url="https://cdn.example.com/style.png",
-        ),
-    )
-
-    prompt = str(seen["prompt"]).lower()
-    assert "already facing the requested compass heading" in prompt
-    assert "ninety-degree" in prompt
-    assert "walk cycle first frame" in prompt
-    assert "rotate the character, not the camera" not in prompt
-    assert "front-view character master" not in prompt
-    assert seen["n_refs"] == 1
-
-
 @pytest.mark.parametrize(
     ("direction", "heading"),
     [

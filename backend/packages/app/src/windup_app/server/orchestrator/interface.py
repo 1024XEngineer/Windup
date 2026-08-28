@@ -6,7 +6,8 @@ API 层只依赖本模块定义的抽象。具体实现（AI 引擎调用、任�
 调用流程
 --------
 1. 前端调用 ``generate_character_image`` / ``generate_character_four_view`` /
-   ``generate_character_eight_view`` / ``generate_character_action`` 提交任务，
+   ``generate_character_eight_view`` / ``generate_character_first_frame`` /
+   ``generate_character_action`` 提交任务，
    拿到 ``task_id``。
 2. 前端通过 SSE 订阅任务状态变更,无需轮询。
    web 层提供 ``GET /generation/tasks/{task_id}/stream`` 端点,
@@ -20,6 +21,7 @@ API 层只依赖本模块定义的抽象。具体实现（AI 引擎调用、任�
        CharacterImageOutput.image_urls[]  → Character.reference_image_url
        CharacterViewSheetOutput.sheets[]          → 3×3 sheet_url + 各方向 image_url
                                                     (四向十字、八向八角;确认后源方向回填 templates[])
+       CharacterFirstFrameOutput.image_urls[] → 该朝向动作首帧候选
        CharacterActionOutput.frames[]  → character_data.outfits[].actions[].frames[]
 """
 
@@ -30,6 +32,7 @@ from sqlalchemy.orm import Session
 from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterDirectionSetInput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     CharacterViewSheetInput,
     GenerationTask,
@@ -76,6 +79,20 @@ class GenerationService(ABC):
 
         必须绑定已确认的正视母版（south）；出参为 ``CharacterViewSheetOutput``
         （每张候选 = 1 张 3×3 十字 sheet_url + 4 张方向原图 URL）。
+        """
+
+    @abstractmethod
+    def generate_character_first_frame(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        project_id: int,
+        input: CharacterFirstFrameInput,
+    ) -> GenerationTask:
+        """提交锁定朝向的动作首帧。
+
+        参考图是该朝向已确认立绘；出参为 ``CharacterFirstFrameOutput``。
         """
 
     @abstractmethod
