@@ -62,6 +62,13 @@ def _expand_url(
     return routes
 
 
+def pool_routes(cfg: AIProviderSettings, *, route_group: str) -> tuple[GatewayRoute, ...]:
+    """凭证池物化路由；Admit 与 Gateway 统一读 :func:`get_pool_snapshot`。"""
+    from windup_framework.gateway.pool_registry import get_pool_snapshot
+
+    return get_pool_snapshot(route_group, cfg=cfg).gateway_routes(route_group)
+
+
 def routes_from_settings(cfg: AIProviderSettings, *, route_group: str) -> tuple[GatewayRoute, ...]:
     primary_name = cfg.route_primary_name.strip() or "primary"
     routes = _expand_url(

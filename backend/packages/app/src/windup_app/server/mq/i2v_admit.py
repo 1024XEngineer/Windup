@@ -1,4 +1,4 @@
-"""全站 i2v 建单闸：按 API key 分车道，每把 key 独立在途名额与 429 冷却。"""
+"""全站 i2v 建单闸：按 credential 分车道，每把 key 独立在途名额与 429 冷却。"""
 
 from __future__ import annotations
 
@@ -7,19 +7,26 @@ import os
 from windup_app.server.mq.catalog import MSG_TYPE_CHARACTER_ACTION, stream_for_msg_type
 from windup_app.server.mq.i2v_state import I2V_KEY_PREFIX, load_i2v_state
 from windup_framework.db.redis import get_redis
+from windup_framework.gateway.pool_registry import (
+    RoutableEdge,
+    get_pool_snapshot,
+    legacy_route_id_map,
+)
+from windup_framework.gateway.types import Scene
 from windup_framework.mq.delayed import schedule_delayed
 
-# 全站「已占名额」索引，不算容量。容量在每条车道的 SET 上。
 INFLIGHT_KEY = "windup:i2v:gate:inflight"
-LANE_INFLIGHT_PREFIX = "windup:i2v:gate:inflight:"
-LANE_COOLING_PREFIX = "windup:i2v:gate:cooling:"
-LANE_COOLDOWN_PREFIX = "windup:i2v:gate:cooldown:"
-LANE_SHOT_PREFIX = "windup:i2v:gate:shot:"
+# #842 遗留：windup:i2v:gate:inflight:{primary.key0}
+LEGACY_LANE_INFLIGHT_PREFIX = "windup:i2v:gate:inflight:"
+LEGACY_LANE_COOLING_PREFIX = "windup:i2v:gate:cooling:"
+LEGACY_LANE_COOLDOWN_PREFIX = "windup:i2v:gate:cooldown:"
+LEGACY_LANE_SHOT_PREFIX = "windup:i2v:gate:shot:"
 TASK_HASH_PREFIX = "windup:i2v:gate:task:"
 
 ADMIT_RETRY_S = 5.0
 _FALLBACK_RETRY_S = 1.0
 _TASK_HASH_TTL_S = 2 * 3600
+_ROUTE_GROUP = Scene.CHARACTER_ACTION.value
 
 _ACQUIRE_LUA = """
 local setkey = KEYS[1]
@@ -62,17 +69,14 @@ def inflight_max() -> int:
     return max(1, int(raw))
 
 
-def lane_ids() -> tuple[str, ...]:
-    """当前视频路由上的 key 车道。测试可替换。"""
-    from windup_framework.config.provider import settings as ai_settings
-    from windup_framework.gateway.routes import routes_from_settings
-    from windup_framework.gateway.types import Scene
+def _action_edges() -> tuple[RoutableEdge, ...]:
+    return get_pool_snapshot(_ROUTE_GROUP).edges_for(_ROUTE_GROUP)
 
-    routes = routes_from_settings(
-        ai_settings, route_group=Scene.CHARACTER_ACTION.value
-    )
-    ids = tuple(route.route_id for route in routes)
-    return ids or ("primary.key0",)
+
+def lane_ids() -> tuple[str, ...]:
+    """当前视频池 credential_id 列表。测试可 monkeypatch ``_action_edges``。"""
+    ids = tuple(edge.credential_id for edge in _action_edges())
+    return ids or ("primary:0000000000000000",)
 
 
 def _task_member(task_id: int) -> str:
@@ -83,20 +87,52 @@ def _task_hash(task_id: int) -> str:
     return f"{TASK_HASH_PREFIX}{task_id}"
 
 
-def _lane_inflight(lane: str) -> str:
-    return f"{LANE_INFLIGHT_PREFIX}{lane}"
+def _edge_for_credential(cred: str) -> RoutableEdge | None:
+    resolved = _normalize_route_id(cred)
+    for edge in _action_edges():
+        if edge.credential_id == resolved:
+            return edge
+    return None
 
 
-def _lane_cooling(lane: str) -> str:
-    return f"{LANE_COOLING_PREFIX}{lane}"
+def _legacy_inflight(lane: str) -> str:
+    return f"{LEGACY_LANE_INFLIGHT_PREFIX}{lane}"
 
 
-def _lane_cooldown(lane: str) -> str:
-    return f"{LANE_COOLDOWN_PREFIX}{lane}"
+def _legacy_cooling(lane: str) -> str:
+    return f"{LEGACY_LANE_COOLING_PREFIX}{lane}"
 
 
-def _lane_shot(lane: str) -> str:
-    return f"{LANE_SHOT_PREFIX}{lane}"
+def _legacy_cooldown(lane: str) -> str:
+    return f"{LEGACY_LANE_COOLDOWN_PREFIX}{lane}"
+
+
+def _legacy_shot(lane: str) -> str:
+    return f"{LEGACY_LANE_SHOT_PREFIX}{lane}"
+
+
+def _normalize_route_id(route_id: str) -> str:
+    if not route_id:
+        return route_id
+    for edge in _action_edges():
+        if edge.credential_id == route_id:
+            return route_id
+    from windup_framework.config.provider import settings as ai_settings
+
+    return legacy_route_id_map(ai_settings, route_group=_ROUTE_GROUP).get(route_id, route_id)
+
+
+def _migrate_legacy_inflight(task_id: int, raw_lane: str, cred: str) -> None:
+    """#842 车道键迁到 ``inflight:cred:{credential_id}``。"""
+    if raw_lane == cred:
+        return
+    redis_client = get_redis()
+    member = _task_member(task_id)
+    old_key = _legacy_inflight(raw_lane)
+    new_key = f"windup:i2v:gate:inflight:cred:{cred}"
+    if redis_client.sismember(old_key, member):
+        redis_client.sadd(new_key, member)
+        redis_client.srem(old_key, member)
 
 
 def _bound_lane(task_id: int) -> str | None:
@@ -105,77 +141,106 @@ def _bound_lane(task_id: int) -> str | None:
     return lane or None
 
 
-def _lane_index(lane: str) -> int:
-    lanes = lane_ids()
-    try:
-        return lanes.index(lane)
-    except ValueError:
-        return 0
+def _bound_credential(task_id: int) -> str | None:
+    lane = _bound_lane(task_id)
+    if not lane:
+        return None
+    return _normalize_route_id(lane)
 
 
-def _lane_cooling_wait_s(lane: str) -> float:
-    ttl = get_redis().ttl(_lane_cooldown(lane))
+def _lane_cooling_wait_s(edge: RoutableEdge) -> float:
+    redis_client = get_redis()
+    for key in (edge.redis_cooldown_key(), _legacy_cooldown(_bound_lane(0) or "")):
+        if not key.endswith(":"):
+            ttl = redis_client.ttl(key)
+            if ttl is not None and int(ttl) >= 0:
+                return float(ttl)
+    return 0.0
+
+
+def _lane_cooling_wait_s_for_cred(cred: str) -> float:
+    edge = _edge_for_credential(cred)
+    if edge is None:
+        return 0.0
+    ttl = get_redis().ttl(edge.redis_cooldown_key())
     if ttl is None or int(ttl) < 0:
+        bound = _bound_lane(0)
+        if bound and bound != cred:
+            ttl = get_redis().ttl(_legacy_cooldown(bound))
+            if ttl is not None and int(ttl) >= 0:
+                return float(ttl)
         return 0.0
     return float(ttl)
 
 
-def _lane_is_hot(lane: str) -> bool:
-    """冷却倒计时还没走完，新任务不该再挤这条车道。"""
-    return _lane_cooling_wait_s(lane) > 0
+def _lane_is_hot(edge: RoutableEdge) -> bool:
+    return _lane_cooling_wait_s_for_cred(edge.credential_id) > 0
 
 
-def _bind(task_id: int, lane: str) -> None:
+def _bind(task_id: int, edge: RoutableEdge) -> None:
     redis_client = get_redis()
     key = _task_hash(task_id)
     redis_client.hset(
         key,
         mapping={
-            "route_id": lane,
-            "route_skip": str(_lane_index(lane)),
+            "route_id": edge.credential_id,
+            "route_skip": str(edge.candidate_index),
         },
     )
     redis_client.expire(key, _TASK_HASH_TTL_S)
     redis_client.sadd(INFLIGHT_KEY, _task_member(task_id))
 
 
-def _unbind_lane(task_id: int, lane: str | None) -> None:
-    if not lane:
+def _unbind_edge(task_id: int, cred: str | None) -> None:
+    if not cred:
         return
-    get_redis().srem(_lane_inflight(lane), _task_member(task_id))
+    edge = _edge_for_credential(cred)
+    if edge is not None:
+        get_redis().srem(edge.redis_inflight_key(), _task_member(task_id))
+    raw = _bound_lane(task_id) or cred
+    if raw != cred:
+        get_redis().srem(_legacy_inflight(raw), _task_member(task_id))
 
 
-def _acquire_lane(lane: str, task_id: int) -> bool:
+def _acquire_edge(edge: RoutableEdge, task_id: int) -> bool:
     got = get_redis().eval(
         _ACQUIRE_LUA,
         1,
-        _lane_inflight(lane),
+        edge.redis_inflight_key(),
         _task_member(task_id),
         inflight_max(),
     )
     return int(got or 0) == 1
 
 
-def _lanes_by_load() -> list[str]:
+def _edges_by_load() -> list[RoutableEdge]:
     redis_client = get_redis()
     scored = [
-        (int(redis_client.scard(_lane_inflight(lane)) or 0), index, lane)
-        for index, lane in enumerate(lane_ids())
+        (
+            int(redis_client.scard(edge.redis_inflight_key()) or 0),
+            edge.candidate_index,
+            edge,
+        )
+        for edge in _action_edges()
     ]
     scored.sort()
-    return [lane for _load, _index, lane in scored]
+    return [edge for _load, _index, edge in scored]
 
 
 def try_acquire(task_id: int) -> bool:
-    """占一条 key 车道的在途坑。已占过则成功（延迟再入队幂等）。"""
-    bound = _bound_lane(task_id)
-    if bound and get_redis().sismember(_lane_inflight(bound), _task_member(task_id)):
-        return True
-    for lane in _lanes_by_load():
-        if _lane_is_hot(lane):
+    """占一条 credential 车道的在途坑。已占过则成功（延迟再入队幂等）。"""
+    bound_raw = _bound_lane(task_id)
+    if bound_raw:
+        cred = _normalize_route_id(bound_raw)
+        _migrate_legacy_inflight(task_id, bound_raw, cred)
+        edge = _edge_for_credential(cred)
+        if edge and get_redis().sismember(edge.redis_inflight_key(), _task_member(task_id)):
+            return True
+    for edge in _edges_by_load():
+        if _lane_is_hot(edge):
             continue
-        if _acquire_lane(lane, task_id):
-            _bind(task_id, lane)
+        if _acquire_edge(edge, task_id):
+            _bind(task_id, edge)
             return True
     return False
 
@@ -184,11 +249,16 @@ def release(task_id: int) -> None:
     redis_client = get_redis()
     member = _task_member(task_id)
     redis_client.srem(INFLIGHT_KEY, member)
-    for lane in lane_ids():
-        redis_client.srem(_lane_inflight(lane), member)
-    bound = _bound_lane(task_id)
-    if bound:
-        redis_client.srem(_lane_inflight(bound), member)
+    bound_raw = _bound_lane(task_id)
+    cred = _normalize_route_id(bound_raw) if bound_raw else None
+    for edge in _action_edges():
+        redis_client.srem(edge.redis_inflight_key(), member)
+    if bound_raw:
+        redis_client.srem(_legacy_inflight(bound_raw), member)
+    if cred:
+        edge = _edge_for_credential(cred)
+        if edge is not None:
+            redis_client.srem(edge.redis_inflight_key(), member)
     redis_client.delete(_task_hash(task_id))
 
 
@@ -197,14 +267,16 @@ def has_claim(task_id: int) -> bool:
 
 
 def can_submit(task_id: int) -> bool:
-    """该任务所在车道健康时可并行；冷却期内等到点且只能一枪。"""
-    lane = _bound_lane(task_id) or lane_ids()[0]
+    cred = _bound_credential(task_id) or lane_ids()[0]
+    edge = _edge_for_credential(cred)
+    if edge is None:
+        return True
     got = get_redis().eval(
         _SUBMIT_LUA,
         3,
-        _lane_cooling(lane),
-        _lane_cooldown(lane),
-        _lane_shot(lane),
+        edge.redis_cooling_key(),
+        edge.redis_cooldown_key(),
+        edge.redis_shot_key(),
         _task_member(task_id),
     )
     return int(got or 0) == 1
@@ -212,23 +284,29 @@ def can_submit(task_id: int) -> bool:
 
 def cooldown_remaining_s(task_id: int | None = None) -> float:
     if task_id is not None:
-        lane = _bound_lane(task_id)
-        if lane:
-            return _lane_cooling_wait_s(lane)
-    waits = [_lane_cooling_wait_s(lane) for lane in lane_ids()]
+        cred = _bound_credential(task_id)
+        if cred:
+            return _lane_cooling_wait_s_for_cred(cred)
+    waits = [_lane_cooling_wait_s_for_cred(cred) for cred in lane_ids()]
     return min(waits) if waits else 0.0
 
 
 def on_rate_limit(*, wait_s: float, fallback_key: bool, task_id: int) -> float:
-    """只冷却当前这条 key。换 key 时立刻改挂空闲车道，不必连坐其它 key。"""
     wait = max(1.0, float(wait_s))
     redis_client = get_redis()
-    lane = _bound_lane(task_id) or lane_ids()[0]
-    redis_client.set(_lane_cooling(lane), "1")
-    redis_client.set(_lane_cooldown(lane), "1", ex=int(wait))
-    redis_client.delete(_lane_shot(lane))
+    cred = _bound_credential(task_id) or lane_ids()[0]
+    edge = _edge_for_credential(cred)
+    if edge is not None:
+        redis_client.set(edge.redis_cooling_key(), "1")
+        redis_client.set(edge.redis_cooldown_key(), "1", ex=int(wait))
+        redis_client.delete(edge.redis_shot_key())
+    bound_raw = _bound_lane(task_id)
+    if bound_raw and bound_raw != cred:
+        redis_client.set(_legacy_cooling(bound_raw), "1")
+        redis_client.set(_legacy_cooldown(bound_raw), "1", ex=int(wait))
+        redis_client.delete(_legacy_shot(bound_raw))
     if fallback_key:
-        _unbind_lane(task_id, lane)
+        _unbind_edge(task_id, cred)
         skip, _retry = retry_state(task_id)
         redis_client.hset(
             _task_hash(task_id),
@@ -244,16 +322,27 @@ def on_rate_limit(*, wait_s: float, fallback_key: bool, task_id: int) -> float:
 
 def clear_cooling(task_id: int | None = None) -> None:
     redis_client = get_redis()
-    lanes = []
+    edges: list[RoutableEdge] = []
     if task_id is not None:
-        bound = _bound_lane(task_id)
-        if bound:
-            lanes = [bound]
-    if not lanes:
-        lanes = list(lane_ids())
-    for lane in lanes:
+        cred = _bound_credential(task_id)
+        if cred:
+            edge = _edge_for_credential(cred)
+            if edge is not None:
+                edges = [edge]
+            bound_raw = _bound_lane(task_id)
+            if bound_raw and bound_raw != cred:
+                redis_client.delete(
+                    _legacy_cooling(bound_raw),
+                    _legacy_cooldown(bound_raw),
+                    _legacy_shot(bound_raw),
+                )
+    if not edges:
+        edges = list(_action_edges())
+    for edge in edges:
         redis_client.delete(
-            _lane_cooling(lane), _lane_cooldown(lane), _lane_shot(lane)
+            edge.redis_cooling_key(),
+            edge.redis_cooldown_key(),
+            edge.redis_shot_key(),
         )
 
 
@@ -296,7 +385,8 @@ def schedule_retry(task_id: int, delay_s: float) -> None:
 def rebuild() -> None:
     """进程重启后按已建单的 i2v 状态把在途集合补回去。"""
     redis_client = get_redis()
-    fallback = lane_ids()[0]
+    edges = _action_edges()
+    fallback = edges[0].credential_id if edges else lane_ids()[0]
     for key in redis_client.scan_iter(match=f"{I2V_KEY_PREFIX}*"):
         name = key.decode() if isinstance(key, bytes) else str(key)
         suffix = name[len(I2V_KEY_PREFIX) :]
@@ -306,7 +396,23 @@ def rebuild() -> None:
         if not state or not state.get("job_id"):
             continue
         task_id = int(suffix)
-        lane = str(state.get("route_id") or "") or fallback
+        raw_lane = str(state.get("route_id") or "") or fallback
+        cred = _normalize_route_id(raw_lane)
+        edge = _edge_for_credential(cred)
+        lane_cred = edge.credential_id if edge else cred
         redis_client.sadd(INFLIGHT_KEY, suffix)
-        redis_client.sadd(_lane_inflight(lane), suffix)
-        _bind(task_id, lane)
+        inflight_key = (
+            edge.redis_inflight_key()
+            if edge
+            else f"windup:i2v:gate:inflight:cred:{lane_cred}"
+        )
+        redis_client.sadd(inflight_key, suffix)
+        _migrate_legacy_inflight(task_id, raw_lane, lane_cred)
+        if edge is not None:
+            _bind(task_id, edge)
+        else:
+            redis_client.hset(
+                _task_hash(task_id),
+                mapping={"route_id": lane_cred, "route_skip": "0"},
+            )
+            redis_client.expire(_task_hash(task_id), _TASK_HASH_TTL_S)

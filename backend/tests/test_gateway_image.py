@@ -7,6 +7,7 @@ from windup_framework.config.provider import AIProviderSettings
 from windup_framework.gateway.circuit import CircuitBreaker
 from windup_framework.gateway.image import ImageGateway
 from windup_framework.gateway.registry import ModelRegistry
+from windup_framework.gateway.pool_ids import credential_id
 from windup_framework.gateway.types import AdapterResult
 
 UNREACHED = AdapterResult(ok=False, error_type=ModelErrorType.UNREACHED, http_status=522)
@@ -166,7 +167,10 @@ def test_429_switches_key_on_same_base_url_before_model(monkeypatch, caplog):
         key_a,
         CircuitBreaker(),
         cfg,
-        route_adapters={"primary.key0": key_a, "primary.key1": key_b},
+        route_adapters={
+            credential_id("primary", "key-a"): key_a,
+            credential_id("primary", "key-b"): key_b,
+        },
     )
 
     assert gw.gen_image("p", []).startswith(b"\x89PNG")
@@ -182,7 +186,7 @@ def test_429_switches_key_on_same_base_url_before_model(monkeypatch, caplog):
     assert line["route_reason"] == "key_rate_limit"
     assert line["route_layer"] == "key"
     assert line["base_url_id"] == "primary"
-    assert line["api_key_id"].endswith("key1")
+    assert line["api_key_id"] == credential_id("primary", "key-b")
 
 
 def test_429_exhausted_keys_switches_backup_entry(monkeypatch, caplog):
@@ -206,7 +210,10 @@ def test_429_exhausted_keys_switches_backup_entry(monkeypatch, caplog):
         key_a,
         br,
         cfg,
-        route_adapters={"primary.key0": key_a, "backup.key0": backup},
+        route_adapters={
+            credential_id("primary", "key-a"): key_a,
+            credential_id("backup", "key-c"): backup,
+        },
     )
 
     assert gw.gen_image("p", []).startswith(b"\x89PNG")
@@ -244,7 +251,11 @@ def test_522_skips_remaining_keys_on_same_url(caplog):
         key_a,
         CircuitBreaker(),
         cfg,
-        route_adapters={"primary.key0": key_a, "primary.key1": key_b, "backup.key0": backup},
+        route_adapters={
+            credential_id("primary", "key-a"): key_a,
+            credential_id("primary", "key-b"): key_b,
+            credential_id("backup", "key-c"): backup,
+        },
     )
 
     assert gw.gen_image("p", []).startswith(b"\x89PNG")

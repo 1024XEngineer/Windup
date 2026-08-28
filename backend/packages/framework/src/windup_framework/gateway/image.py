@@ -17,7 +17,7 @@ from windup_framework.gateway.routes import (
     config_for_route,
     key_circuit_id,
     lookup_adapter,
-    routes_from_settings,
+    pool_routes,
 )
 from windup_framework.gateway.trace import (
     AttemptDetail,
@@ -43,8 +43,10 @@ class ImageGateway:
         self._adapter = adapter
         self._circuit = circuit
         self._settings = settings
-        self._routes = routes_from_settings(settings, route_group=Scene.CHARACTER_IMAGE.value)
         self._route_adapters = dict(route_adapters or {})
+
+    def _pool_routes(self) -> tuple[GatewayRoute, ...]:
+        return pool_routes(self._settings, route_group=Scene.CHARACTER_IMAGE.value)
 
     def _adapter_for(self, route: GatewayRoute):
         return lookup_adapter(self._route_adapters, route, self._adapter)
@@ -58,7 +60,7 @@ class ImageGateway:
         fallback_used = False
         fallback_reason: str | None = None
         route_reason_override: str | None = None
-        routes = self._routes
+        routes = self._pool_routes()
         seq = AttemptSequencer()
         budget = AttemptBudget()
 

@@ -40,6 +40,7 @@ def _load_models() -> None:
     import windup_app.server.sensitive_word.model  # noqa: F401
     import windup_app.server.user.model  # noqa: F401
     import windup_framework.gateway.models  # noqa: F401
+    import windup_framework.gateway.pool_models  # noqa: F401
 
     try:  # 有的模块随功能演进增删，缺了不该让整个巡检停摆
         import windup_app.server.orchestrator.model  # noqa: F401

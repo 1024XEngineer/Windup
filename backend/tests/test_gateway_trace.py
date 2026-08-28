@@ -3,6 +3,7 @@ import logging
 from dataclasses import fields
 
 from windup_framework.gateway.context import bind_call_context, current_call_context
+from windup_framework.gateway.pool_ids import credential_id
 from windup_framework.gateway.routes import GatewayRoute
 from windup_framework.gateway.trace import AttemptDetail, AttemptTrace, emit, estimate_cost
 from windup_framework.gateway.types import Scene
@@ -29,14 +30,15 @@ COLD_FIELDS = {
 
 
 def _route(**overrides) -> GatewayRoute:
+    cred = credential_id("primary", "k")
     fields_ = dict(
-        route_id="primary.key0",
+        route_id=cred,
         route_group="character_image",
         candidate_index=0,
         provider_name="openai-compatible",
         base_url_id="primary",
         base_url="https://api.qnaigc.com/v1",
-        api_key_id="primary.key0",
+        api_key_id=cred,
         api_key="k",
     )
     fields_.update(overrides)

@@ -14,12 +14,13 @@ from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.image import _CIRCUIT
 from windup_framework.gateway.policy import decide, rate_limit_wait_s
 from windup_framework.gateway.registry import ModelRegistry, RegistryError
+from windup_framework.gateway.pool_registry import resolve_credential_id
 from windup_framework.gateway.routes import (
     GatewayRoute,
     config_for_route,
     key_circuit_id,
     lookup_adapter,
-    routes_from_settings,
+    pool_routes,
 )
 from windup_framework.gateway.sequencer import AttemptSequencer
 from windup_framework.gateway.trace import (
@@ -52,8 +53,10 @@ class VideoGateway:
         self._adapter = adapter
         self._circuit = circuit
         self._settings = settings
-        self._routes = routes_from_settings(settings, route_group=Scene.CHARACTER_ACTION.value)
         self._route_adapters = dict(route_adapters or {})
+
+    def _pool_routes(self) -> tuple[GatewayRoute, ...]:
+        return pool_routes(self._settings, route_group=Scene.CHARACTER_ACTION.value)
 
     def _adapter_for(self, route: GatewayRoute):
         return lookup_adapter(self._route_adapters, route, self._adapter)
@@ -81,12 +84,19 @@ class VideoGateway:
         """
         adapter = self._adapter
         if route_id:
-            for route in self._routes:
-                if route.route_id == route_id:
+            resolved = resolve_credential_id(
+                route_id,
+                cfg=self._settings,
+                route_group=Scene.CHARACTER_ACTION.value,
+            )
+            for route in self._pool_routes():
+                if route.route_id in {route_id, resolved}:
                     adapter = self._adapter_for(route)
                     break
             else:
-                mapped = self._route_adapters.get(route_id)
+                mapped = self._route_adapters.get(route_id) or self._route_adapters.get(
+                    resolved
+                )
                 if mapped is not None:
                     adapter = mapped
         if hasattr(adapter, "inspect_job"):
@@ -118,7 +128,7 @@ class VideoGateway:
         fallback_used = False
         fallback_reason: str | None = None
         route_reason_override: str | None = None
-        routes = self._routes
+        routes = self._pool_routes()
         seq = AttemptSequencer()
         budget = AttemptBudget()
 

@@ -9,10 +9,30 @@ import pytest
 from windup_app.server.mq import i2v_admit as admit
 from windup_common.enums.model import ModelErrorType
 from windup_framework.gateway.context import bind_call_context
+from windup_framework.gateway.pool_ids import credential_id
 from windup_framework.gateway.errors import RateLimitBackoff
+from windup_framework.gateway.pool_registry import RoutableEdge
 from windup_framework.gateway.types import AdapterResult
 
 from test_gateway_video import FakeVideoAdapter, _video_gw
+
+
+def _test_edge(cred_id: str, *, index: int = 0) -> RoutableEdge:
+    return RoutableEdge(
+        route_id=cred_id,
+        credential_id=cred_id,
+        endpoint_id="primary",
+        account_id=cred_id,
+        quota_scope="credential",
+        route_group="character_action",
+        candidate_index=index,
+        provider_name="openai-compatible",
+        base_url="https://example.com/v1",
+        api_key="sk-test",
+        account_inflight_max=2,
+        credential_inflight_max=2,
+        selectable=True,
+    )
 
 
 class _MemRedis:
@@ -139,11 +159,12 @@ class _MemRedis:
 def _patch_redis(
     monkeypatch,
     mem: _MemRedis | None = None,
-    lanes: tuple[str, ...] = ("primary.key0",),
+    cred_ids: tuple[str, ...] = ("cred-a",),
 ) -> _MemRedis:
     mem = mem or _MemRedis()
+    edges = tuple(_test_edge(cred, index=i) for i, cred in enumerate(cred_ids))
     monkeypatch.setattr("windup_app.server.mq.i2v_admit.get_redis", lambda: mem)
-    monkeypatch.setattr("windup_app.server.mq.i2v_admit.lane_ids", lambda: lanes)
+    monkeypatch.setattr("windup_app.server.mq.i2v_admit._action_edges", lambda: edges)
     return mem
 
 
@@ -181,7 +202,7 @@ def test_fallback_key_advances_route_skip(monkeypatch):
 
 
 def test_two_keys_spread_load_and_cap_each(monkeypatch):
-    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    _patch_redis(monkeypatch, cred_ids=("cred-a", "cred-b"))
     assert admit.try_acquire(1)
     assert admit.try_acquire(2)
     skip1, _ = admit.retry_state(1)
@@ -193,7 +214,7 @@ def test_two_keys_spread_load_and_cap_each(monkeypatch):
 
 
 def test_429_on_one_key_does_not_cool_the_other(monkeypatch):
-    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    _patch_redis(monkeypatch, cred_ids=("cred-a", "cred-b"))
     assert admit.try_acquire(1)
     assert admit.try_acquire(2)
     wait = admit.on_rate_limit(wait_s=8, fallback_key=False, task_id=1)
@@ -203,7 +224,7 @@ def test_429_on_one_key_does_not_cool_the_other(monkeypatch):
 
 
 def test_fallback_moves_claim_to_idle_key(monkeypatch):
-    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    _patch_redis(monkeypatch, cred_ids=("cred-a", "cred-b"))
     assert admit.try_acquire(1)
     skip_before, _ = admit.retry_state(1)
     wait = admit.on_rate_limit(wait_s=16, fallback_key=True, task_id=1)
@@ -269,7 +290,10 @@ def test_start_i2v_second_429_asks_for_key_switch():
         adapter=key_a,
         circuit=CircuitBreaker(cooldown_s=60),
         settings=cfg,
-        route_adapters={"primary.key0": key_a, "primary.key1": key_b},
+        route_adapters={
+            credential_id("primary", "key-a"): key_a,
+            credential_id("primary", "key-b"): key_b,
+        },
     )
     reset = bind_call_context(i2v_retry_count=1)
     try:
@@ -314,7 +338,7 @@ def test_start_i2v_last_key_429_defers_with_cooldown():
         adapter=ad,
         circuit=CircuitBreaker(cooldown_s=60),
         settings=cfg,
-        route_adapters={"primary.key0": ad},
+        route_adapters={credential_id("primary", "key-only"): ad},
     )
     reset = bind_call_context(i2v_retry_count=1)
     try:

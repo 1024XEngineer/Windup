@@ -23,6 +23,7 @@ from windup_framework.gateway.routes import (
     config_for_route,
     key_circuit_id,
     lookup_adapter,
+    pool_routes,
     routes_from_settings,
 )
 from windup_framework.gateway.trace import AttemptDetail, AttemptTrace, emit
@@ -182,8 +183,10 @@ class ChatGateway:
         self._adapter = adapter
         self._circuit = circuit
         self._settings = settings
-        self._routes = routes_from_settings(settings, route_group=Scene.CHAT.value)
         self._route_adapters = dict(route_adapters or {})
+
+    def _pool_routes(self) -> tuple[GatewayRoute, ...]:
+        return pool_routes(self._settings, route_group=Scene.CHAT.value)
 
     def _adapter_for(self, route: GatewayRoute):
         return lookup_adapter(self._route_adapters, route, self._adapter)
@@ -252,7 +255,7 @@ class ChatGateway:
                     scene=Scene.CHAT,
                     model=models[0],
                     family=Family.CHAT_COMPLETIONS.value,
-                    route=self._routes[0],
+                    route=self._pool_routes()[0],
                     attempt_index=seq.next_index(),
                     retry_count=0,
                     route_reason="skip_circuit_open",
@@ -269,15 +272,15 @@ class ChatGateway:
             )
             fail(None)
 
-        for route_index, route in enumerate(self._routes):
+        for route_index, route in enumerate(self._pool_routes()):
             if self._circuit.is_open("base_url:" + route.base_url_id):
-                if route_index + 1 < len(self._routes):
+                if route_index + 1 < len(self._pool_routes()):
                     fallback_used = True
                     route_reason_override = "base_url_unreached"
                     continue
                 fail(last_http_status)
             if self._circuit.is_open(key_circuit_id(route)):
-                if route_index + 1 < len(self._routes):
+                if route_index + 1 < len(self._pool_routes()):
                     fallback_used = True
                     route_reason_override = "key_rate_limit"
                     continue
@@ -385,7 +388,7 @@ class ChatGateway:
                         retry_count=retry_count,
                         has_job_id=False,
                     )
-                    has_next_route = route_index + 1 < len(self._routes)
+                    has_next_route = route_index + 1 < len(self._pool_routes())
                     if step is NextStep.FAIL:
                         tier_step = budget.tier_b_escalation(
                             error_type,
@@ -453,7 +456,7 @@ class ChatGateway:
                         break
                     if step is NextStep.FALLBACK_KEY:
                         if has_next_route:
-                            nxt = self._routes[route_index + 1]
+                            nxt = self._pool_routes()[route_index + 1]
                             time.sleep(
                                 rate_limit_wait_s(
                                     retry_count=retry_count,
@@ -505,7 +508,7 @@ class ChatGateway:
                 f"chat gateway failed request_id={request_id} http_status=None"
             )
         last_http_status: int | None = None
-        for route_index, route in enumerate(self._routes):
+        for route_index, route in enumerate(self._pool_routes()):
             if self._circuit.is_open("base_url:" + route.base_url_id):
                 continue
             if self._circuit.is_open(key_circuit_id(route)):
@@ -534,7 +537,7 @@ class ChatGateway:
                 break
             else:
                 return
-            if route_index + 1 >= len(self._routes):
+            if route_index + 1 >= len(self._pool_routes()):
                 break
         raise RuntimeError(
             f"chat gateway failed request_id={request_id} http_status={last_http_status}"

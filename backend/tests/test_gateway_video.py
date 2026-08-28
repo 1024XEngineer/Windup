@@ -6,6 +6,7 @@ from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings
 from windup_framework.gateway.circuit import CircuitBreaker
 from windup_framework.gateway.registry import ModelRegistry
+from windup_framework.gateway.pool_ids import credential_id
 from windup_framework.gateway.types import AdapterResult
 from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.video import VideoGateway
@@ -132,7 +133,10 @@ def test_submit_429_switches_key_on_same_base_url(monkeypatch):
         adapter=key_a,
         circuit=CircuitBreaker(cooldown_s=60),
         settings=cfg,
-        route_adapters={"primary.key0": key_a, "primary.key1": key_b},
+        route_adapters={
+            credential_id("primary", "key-a"): key_a,
+            credential_id("primary", "key-b"): key_b,
+        },
     )
 
     assert gw.i2v(b"frame", "walk").startswith(b"\x00\x00\x00\x18ftyp")

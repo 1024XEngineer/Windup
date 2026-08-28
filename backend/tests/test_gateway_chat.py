@@ -15,7 +15,8 @@ from windup_framework.gateway.chat import (
     LangChainChatAdapter,
 )
 from windup_framework.gateway.circuit import CircuitBreaker
-from windup_framework.gateway.routes import key_circuit_id, routes_from_settings
+from windup_framework.gateway.pool_ids import credential_id
+from windup_framework.gateway.routes import key_circuit_id, pool_routes, routes_from_settings
 from windup_framework.gateway.types import Scene
 from windup_framework.providers.chat import create_chat_model
 
@@ -86,7 +87,10 @@ def test_chat_gateway_switches_key_after_429(monkeypatch, caplog):
         adapter=key_a,
         circuit=CircuitBreaker(),
         settings=cfg,
-        route_adapters={"primary.key0": key_a, "primary.key1": key_b},
+        route_adapters={
+            credential_id("primary", "primary-key"): key_a,
+            credential_id("primary", "key-b"): key_b,
+        },
     )
 
     assert gw.invoke([{"role": "user", "content": "ping"}]) == "pong"
@@ -194,14 +198,17 @@ def test_chat_skips_open_key_circuit_to_next_key():
     key_a = FakeChatAdapter({"gpt-4o-mini": [OK]})
     key_b = FakeChatAdapter({"gpt-4o-mini": [OK]})
     cfg = _primary_cfg(route_primary_api_keys="key-b")
-    routes = routes_from_settings(cfg, route_group=Scene.CHAT.value)
+    routes = pool_routes(cfg, route_group=Scene.CHAT.value)
     circuit = CircuitBreaker()
     circuit.open(key_circuit_id(routes[0]))
     gw = ChatGateway(
         adapter=key_a,
         circuit=circuit,
         settings=cfg,
-        route_adapters={"primary.key0": key_a, "primary.key1": key_b},
+        route_adapters={
+            credential_id("primary", "primary-key"): key_a,
+            credential_id("primary", "key-b"): key_b,
+        },
     )
     assert gw.invoke([{"role": "user", "content": "ping"}]) == "pong"
     assert key_a.calls == []
