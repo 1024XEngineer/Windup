@@ -158,6 +158,7 @@ export async function createRealWorkflowEditorSession(
   const confirmCharacterTemplate = createCharacterTemplateConfirmer({
     controller,
     characterApis: dependencies.characterApis,
+    referenceDirection: project.directionalMovement === 'single' ? 'east' : 'south',
     getCurrentCharacter: () => currentCharacter,
     setCurrentCharacter: (character) => {
       currentCharacter = character

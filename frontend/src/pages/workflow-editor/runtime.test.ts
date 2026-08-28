@@ -494,6 +494,46 @@ describe('createRealWorkflowEditorSession', () => {
     ).toMatchObject({ status: 'passed', phase: 'completed' })
   })
 
+  it('四向已有旧母版时确认新的南向定妆会覆盖角色身份锚', async () => {
+    const existing = {
+      ...characterWithOutfitFixture(),
+      referenceImageUrl: 'https://assets.windup.test/old-south.png',
+    }
+    const { session, update } = await createCharacterTemplateSession({
+      characters: [existing],
+      directionalMovement: 'four-way',
+    })
+
+    const character = await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/new-south.png',
+      'south',
+    )
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImageUrl: 'https://assets.windup.test/new-south.png',
+      }),
+    )
+    expect(character.referenceImageUrl).toBe('https://assets.windup.test/new-south.png')
+  })
+
+  it('单向已有旧母版时确认新的东向定妆会覆盖角色身份锚', async () => {
+    const existing = {
+      ...characterWithOutfitFixture(),
+      referenceImageUrl: 'https://assets.windup.test/old-east.png',
+    }
+    const { session } = await createCharacterTemplateSession({ characters: [existing] })
+
+    const character = await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/new-east.png',
+      'east',
+    )
+
+    expect(character.referenceImageUrl).toBe('https://assets.windup.test/new-east.png')
+  })
+
   it('已有 Character 新增造型后 Run 冲突时恢复修改前的角色资产', async () => {
     const existing = characterFixture()
     const updates: Character[] = []

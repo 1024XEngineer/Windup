@@ -2083,19 +2083,32 @@ function WorkflowCard({ data, selected }: NodeProps<WorkflowCardNode>) {
 function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInput }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const generationRole =
+  const viewSheetRole =
     node.type === 'character-template'
+      ? (node.generations.find(
+          (reference) =>
+            reference.role === 'character_four_view' || reference.role === 'character_eight_view',
+        )?.role ?? null)
+      : null
+  const generationRole =
+    viewSheetRole ??
+    (node.type === 'character-template'
       ? 'character_template'
       : node.type === 'action-first-frame'
         ? 'first_frame'
         : node.type === 'action-full-frame'
           ? 'complete_animation'
-          : null
+          : null)
   const failedDirections = generationRole
-    ? getDirectionProfile(input.project.directionalMovement).generationDirections.filter(
-        (direction) =>
-          input.generations[generationKey(node.id, generationRole, direction)]?.status === 'failed',
-      )
+    ? viewSheetRole
+      ? input.generations[generationKey(node.id, viewSheetRole, 'east')]?.status === 'failed'
+        ? (['east'] as const)
+        : []
+      : getDirectionProfile(input.project.directionalMovement).generationDirections.filter(
+          (direction) =>
+            input.generations[generationKey(node.id, generationRole, direction)]?.status ===
+            'failed',
+        )
     : []
   const resumeBlocked =
     input.resumeBlocked && node.status === 'active' && node.phase === 'generating'
@@ -2105,7 +2118,23 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
         <p className={CARD_SUMMARY}>
           {node.status === 'failed' ? (node.error ?? '生成失败') : '生成任务恢复失败'}
         </p>
-        {failedDirections.length > 0 ? (
+        {viewSheetRole && failedDirections.length > 0 ? (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, () =>
+                input.controller.retryGenerationDirection(node.id, 'east', {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                }),
+              )
+            }
+          >
+            重新生成整张方向立绘
+          </button>
+        ) : failedDirections.length > 0 ? (
           failedDirections.map((direction) => (
             <button
               type="button"
@@ -2141,8 +2170,15 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
     )
   }
   if (node.phase === 'generating') {
-    const feedback =
-      node.type === 'character-template'
+    const generatingViewSheet =
+      node.type === 'character-template' &&
+      node.generations.some(
+        (reference) =>
+          reference.role === 'character_four_view' || reference.role === 'character_eight_view',
+      )
+    const feedback = generatingViewSheet
+      ? (['character-view-sheet', '方向立绘生成进度', '方向立绘生成预览'] as const)
+      : node.type === 'character-template'
         ? (['character-template', '身份母版生成进度', '身份母版生成预览'] as const)
         : node.type === 'action-first-frame'
           ? (['action-first-frame', '动作首帧生成进度', '动作首帧生成预览'] as const)

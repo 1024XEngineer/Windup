@@ -765,6 +765,43 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.queryByRole('button', { name: /选择.*角色候选/ })).toBeNull()
   })
 
+  it('四向 sheet 生成中在母版节点渲染方向立绘进度而不是身份母版进度', async () => {
+    const workflow = selectingTemplateWorkflow(5, 'template-south')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      phase: 'generating',
+      selectedImageUrl: 'https://assets.windup.test/south.png',
+      selectedImages: { south: 'https://assets.windup.test/south.png' },
+      generations: [
+        { taskId: 'template-south', role: 'character_template', direction: 'south' },
+        { taskId: 'view-sheet', role: 'character_four_view' },
+      ],
+    }
+    const session = createSession(workflow, {
+      project: { ...projectFixture(), directionalMovement: 'four-way' },
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) =>
+          taskId === 'view-sheet'
+            ? {
+                id: taskId,
+                projectId: '1',
+                type: 'character_four_view' as const,
+                status: 'running' as const,
+                result: null,
+                error: null,
+              }
+            : directionalCharacterGeneration('south'),
+        ) as GenerationApis['get'],
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByLabelText('方向立绘生成进度')).toBeTruthy()
+    expect(screen.queryByLabelText('身份母版生成进度')).toBeNull()
+  })
+
   it('四向 sheet 的四张独立图片在一个方向集合中展示并一次确认', async () => {
     const workflow = selectingTemplateWorkflow(4, 'template-south')
     workflow.nodes[1] = {
@@ -932,6 +969,59 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.queryByRole('button', { name: '重试东方向' })).toBeNull()
     expect(screen.queryByRole('button', { name: '重试南方向' })).toBeNull()
     expect(retry).toHaveBeenCalledWith('character-template', 'north', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+  })
+
+  it.each([
+    ['four-way', 'character_four_view'],
+    ['eight-way', 'character_eight_view'],
+  ] as const)('%s 方向 sheet 失败时保留母版并提供整张 sheet 重试入口', async (movement, role) => {
+    const workflow = selectingTemplateWorkflow(5, 'template-south')
+    const template = workflow.nodes.find((node) => node.id === 'character-template')
+    if (!template || template.type !== 'character-template') throw new Error('missing template')
+    Object.assign(template, {
+      status: 'failed',
+      phase: 'generating',
+      error: 'sheet provider failed',
+      selectedImageUrl: 'https://assets.windup.test/south.png',
+      selectedImages: { south: 'https://assets.windup.test/south.png' },
+      generations: [
+        {
+          taskId: 'template-south',
+          role: 'character_template' as const,
+          direction: 'south' as const,
+        },
+        { taskId: 'view-sheet', role },
+      ],
+    })
+    const generationApis = generationApisFixture({
+      get: vi.fn(async (_projectId, taskId) =>
+        taskId === 'view-sheet'
+          ? {
+              id: taskId,
+              projectId: '1',
+              type: role,
+              status: 'failed' as const,
+              result: null,
+              error: 'sheet provider failed',
+            }
+          : directionalCharacterGeneration('south'),
+      ) as GenerationApis['get'],
+    })
+    const session = createSession(workflow, {
+      generationApis,
+      project: { ...projectFixture(), directionalMovement: movement },
+    })
+    const retry = vi.spyOn(session.controller, 'retryGenerationDirection').mockResolvedValue()
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '重新生成整张方向立绘' }))
+
+    expect(screen.queryByRole('button', { name: '从此节点重做' })).toBeNull()
+    expect(retry).toHaveBeenCalledWith('character-template', 'east', {
       spriteWidth: 64,
       spriteHeight: 64,
     })
