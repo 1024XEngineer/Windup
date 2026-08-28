@@ -56,6 +56,12 @@ class AIProviderSettings(BaseSettings):
     # 逗号分隔的用户 id,如 "1,7,12"。
     video_veo_user_ids: str = ""
 
+    # 不受 3D 资产额度限制的用户。用途与 ``video_veo_user_ids`` 一样是**组内做素材**,
+    # 但**单独一个字段** —— 两件事的开关合并的话,给某人开 veo 会连带解掉他的 3D 额度,
+    # 而那两笔钱的量级完全不同(veo 按秒计费,3D 是每资产 30 积分且可无限累积)。
+    # 空值 = 所有人都受额度限制(默认)。逗号分隔的用户 id,如 "1,2,3"。
+    render3d_unlimited_user_ids: str = ""
+
     chat_fallbacks: str = ""
     image_fallbacks: str = "gemini-3.1-flash-image-preview"
     video_fallbacks: str = ""
