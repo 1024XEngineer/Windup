@@ -75,6 +75,27 @@ def _precheck(request: Request):
 MAX_ASSETS_PER_USER = 2
 
 
+def _unlimited_3d_user_ids() -> frozenset[int]:
+    """不受 3D 额度限制的用户(组内做素材)。配置里写坏的条目跳过,不让它变成"对所有人开放"。
+
+    与 veo 白名单**分开一个字段**:两件事的开关合并的话,给某人开 veo 会连带解掉他的
+    3D 额度,而那两笔钱的量级完全不同(veo 按秒计费,3D 是每资产 30 积分且可无限累积)。
+    """
+    from windup_framework.config.provider import settings as _cfg
+
+    out = set()
+    for part in str(getattr(_cfg, "render3d_unlimited_user_ids", "") or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return frozenset(out)
+
+
+def is_unlimited_3d(user_id: int) -> bool:
+    """这个账号免 3D 额度吗。**空名单时对谁都不成立** —— 判据的默认方向是"受限"。"""
+    return user_id in _unlimited_3d_user_ids()
+
+
 def _owned_asset_count(session: Session, user_id: int) -> int:
     """该用户名下已经建成的 3D 资产数。
 
@@ -214,7 +235,7 @@ def build_outfit_asset(
     character = get_character_with_auth(session, character_id, user_id)
     outfit = _outfit_or_raise(character, outfit_id)
     owned = _owned_asset_count(session, user_id)
-    if owned >= MAX_ASSETS_PER_USER:
+    if owned >= MAX_ASSETS_PER_USER and not is_unlimited_3d(user_id):
         raise BizException(
             f"每个账号最多同时持有 {MAX_ASSETS_PER_USER} 个 3D 角色，你已经有 {owned} 个。"
             "弃掉其中一个就能再建。",

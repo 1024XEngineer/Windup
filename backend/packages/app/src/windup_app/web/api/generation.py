@@ -507,12 +507,21 @@ def _outfit_model_3d_url(character: Character, outfit_id: str | None) -> str | N
 MAX_ACTIONS_PER_3D_ASSET = 3
 
 
-def _require_3d_action_quota(character: Character, outfit_id: str | None) -> None:
+def _require_3d_action_quota(
+    character: Character, outfit_id: str | None, user_id: int | None = None,
+) -> None:
     """三渲二动作的条数上限。**只管三渲二** —— i2v 那条路线不受此限。
 
     在 HTTP 边界就拒:任务还没建、积分还没冻,拒起来干净;而超限这件事与用户输入无关,
     让它走到执行阶段才失败的话,用户看到的是通用的"生成失败",不知道是撞了限额。
+
+    ``user_id`` 在白名单里就免限(组内做素材)。``None`` 时照常限 —— 拿不到用户身份
+    时的默认方向是**受限**,不是放行。
     """
+    from windup_app.web.api.render3d import is_unlimited_3d
+
+    if user_id is not None and is_unlimited_3d(user_id):
+        return
     if not outfit_id:
         return
     try:
@@ -800,7 +809,7 @@ def submit_action_generation(
     _validate_project_direction(project, body.direction)
     character = _get_character_or_raise(session, body.character_id, body.project_id)
     model_3d_url = _outfit_model_3d_url(character, body.outfit_id)
-    _require_3d_action_quota(character, body.outfit_id)
+    _require_3d_action_quota(character, body.outfit_id, user_id)
     _require_master(model_3d_url, body.reference_image_urls)
     input_data = CharacterActionInput(
         character_id=body.character_id,
