@@ -42,6 +42,13 @@ class BuildAssetRequest(BaseModel):
     """
 
     stance: CharacterStance
+    # 多视图重建的附加参考图:视角名 → 自家对象存储 URL。正面走造型母版,不在这里传。
+    # 视角名的合法取值由编排层校验(web 层不 import render3d 常量,那会经它连到
+    # ai_engine,破坏「入口层不经 ai_engine 直连」那条 import 契约)。
+    #
+    # 硬前提:各视图必须是**同一个角色、同一姿势、同一尺度**。侧/背视要以正面母版
+    # 做参考图 i2i 出来,各自文生等于送了三个人进去。传多少个视角计费都是统一 +10。
+    extra_view_urls: dict[str, str] | None = None
 
 
 class MasterPrecheckRequest(BaseModel):
@@ -245,7 +252,8 @@ def build_outfit_asset(
     try:
         return Response.success(
             operations.build(_asset_key(character_id, outfit_id),
-                             _master_url_or_raise(outfit), body.stance),
+                             _master_url_or_raise(outfit), body.stance,
+                             body.extra_view_urls),
             message="已开始生成 3D 模型",
         )
     except ValueError as exc:

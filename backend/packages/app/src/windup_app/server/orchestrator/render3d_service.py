@@ -22,7 +22,7 @@ import logging
 import os
 import pathlib
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from windup_ai_engine.master_check import check_master
@@ -226,7 +226,8 @@ class Render3DAssetOperations:
         }
 
     # ── 三个动作 ─────────────────────────────────────────────────────────
-    def build(self, outfit_key: str, master_url: str, stance: CharacterStance) -> dict:
+    def build(self, outfit_key: str, master_url: str, stance: CharacterStance,
+              extra_view_urls: Mapping[str, str] | None = None) -> dict:
         """① 图生 3D。**这一步开始花钱**,所以只在三个前提都成立时才起:
         该造型确实还什么都没有、体型能绑骨、且母版过得了零成本预检。
 
@@ -258,8 +259,23 @@ class Render3DAssetOperations:
         if not report["accepted"]:
             raise MasterPrecheckFailed(report)
 
-        self._start(outfit_key, PHASE_BUILDING, master)
+        views = self._resolve_views(extra_view_urls)
+        self._start(outfit_key, PHASE_BUILDING, master, views)
         return self.view(outfit_key)
+
+    def _resolve_views(self, urls: Mapping[str, str] | None) -> dict[str, bytes] | None:
+        """多视图 URL → 字节。**认不出的视角名在花钱之前就拒**,不静默丢掉 ——
+        丢掉的后果是用户按多视图付了钱、拿到的却是单图重建的模型。"""
+        if not urls:
+            return None
+        from windup_framework.providers.render3d import VIEW_TYPES
+
+        bad = sorted(set(urls) - set(VIEW_TYPES))
+        if bad:
+            raise ValueError(
+                f"视角名只能取 {sorted(VIEW_TYPES)},收到 {bad}。正面走母版,不在这里传。"
+            )
+        return {k: self._fetch(v) for k, v in urls.items()}
 
     def approve(self, outfit_key: str, master_url: str) -> dict:
         """人点头 → ② 绑骨。**这道闸不会自己点头**,只有本方法能放行,而它只挂在
@@ -314,10 +330,11 @@ class Render3DAssetOperations:
         return self.view(outfit_key)
 
     # ── 内部 ─────────────────────────────────────────────────────────────
-    def _start(self, outfit_key: str, phase: str, master: bytes) -> None:
+    def _start(self, outfit_key: str, phase: str, master: bytes,
+               extra_views: Mapping[str, bytes] | None = None) -> None:
         with self._lock:
             self._jobs[outfit_key] = _Job(phase)
-        self._spawn(lambda: self._run(outfit_key, master))
+        self._spawn(lambda: self._run(outfit_key, master, extra_views))
 
     def _publish_for_review(self, outfit_key: str) -> None:
         """把待审模型也放到对象存储上。
@@ -336,14 +353,15 @@ class Render3DAssetOperations:
         except Exception:                              # noqa: BLE001 - 看不了不等于建失败
             logger.exception("[WINDUP] 待审模型上传失败 | outfit=%s", outfit_key)
 
-    def _run(self, outfit_key: str, master: bytes) -> None:
+    def _run(self, outfit_key: str, master: bytes,
+             extra_views: Mapping[str, bytes] | None = None) -> None:
         """两段付费调用共用这一条:``ensure`` 自己知道该走 ① 还是 ②。
 
         ``ModelAwaitingReview`` 不是失败,是 ① 干完了、停在闸上 —— 把它当失败会让
         用户看到一条红色报错,而实际上该看到的是"去看模型"。
         """
         try:
-            rigged = self._builder.ensure(outfit_key, master, _SilentProgress())
+            rigged = self._builder.ensure(outfit_key, master, _SilentProgress(), extra_views)
         except ModelAwaitingReview:
             self._publish_for_review(outfit_key)
             with self._lock:
@@ -389,12 +407,31 @@ class _LazyModel3D:
     def __init__(self, allow_spend: bool) -> None:
         self._allow_spend = allow_spend
 
-    def image_to_3d(self, master: bytes, *, want: str = "GLB") -> bytes:
+    def image_to_3d(self, master: bytes, *, want: str = "GLB",
+                    extra_views: Mapping[str, bytes] | None = None) -> bytes:
+        return self._provider().image_to_3d(master, want=want, extra_views=extra_views)
+
+    def image_to_3d_with_url(self, master: bytes, *, want: str = "GLB",
+                             extra_views: Mapping[str, bytes] | None = None):
+        """建资产实际走的是这一条(要顺带拿上游产物 URL 做云到云)。
+        多视图必须在这里也接上 —— 只接上面那条的话,生产路径上多视图会被悄悄丢掉。"""
+        return self._provider().image_to_3d_with_url(
+            master, want=want, extra_views=extra_views
+        )
+
+    def _provider(self):
+        """按配置构造。空值一律沿用 provider 的构造默认 —— 没配过的部署行为不变。"""
+        from windup_framework.config.provider import settings as cfg
         from windup_framework.providers.render3d import TencentModel3DProvider
 
-        return TencentModel3DProvider(allow_spend=self._allow_spend).image_to_3d(
-            master, want=want
-        )
+        kw: dict = {"allow_spend": self._allow_spend}
+        if getattr(cfg, "render3d_generate_type", ""):
+            kw["generate_type"] = cfg.render3d_generate_type
+        if int(getattr(cfg, "render3d_face_count", 0) or 0) > 0:
+            kw["face_count"] = int(cfg.render3d_face_count)
+        if getattr(cfg, "render3d_enable_pbr", False):
+            kw["enable_pbr"] = True
+        return TencentModel3DProvider(**kw)
 
 
 class _LazyAutoRig:
@@ -528,8 +565,9 @@ class _LazyOperations:
     def view(self, outfit_key: str) -> dict:
         return self._ops().view(outfit_key)
 
-    def build(self, outfit_key: str, master_url: str, stance: CharacterStance) -> dict:
-        return self._ops().build(outfit_key, master_url, stance)
+    def build(self, outfit_key: str, master_url: str, stance: CharacterStance,
+              extra_view_urls: Mapping[str, str] | None = None) -> dict:
+        return self._ops().build(outfit_key, master_url, stance, extra_view_urls)
 
     def approve(self, outfit_key: str, master_url: str) -> dict:
         return self._ops().approve(outfit_key, master_url)
