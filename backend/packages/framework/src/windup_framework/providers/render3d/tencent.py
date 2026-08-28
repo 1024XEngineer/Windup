@@ -421,17 +421,28 @@ class TencentModel3DProvider:
         return data, url
 
     def _submit(self, params: dict) -> str:
-        r = _raise_for_error(call("SubmitHunyuanTo3DProJob", params, service=SERVICE,
-                                  version=VERSION, creds=self._creds))
+        # 与绑骨提交同一条理由:上游那三种瞬时故障重发就过,而这里失败虽然还没扣钱,
+        # 却会让用户在"点了建资产、什么都没发生"之间反复试(#874 评审指出本处遗漏)。
+        r = _submit_with_backoff(lambda: _raise_for_error(
+            call("SubmitHunyuanTo3DProJob", params, service=SERVICE,
+                 version=VERSION, creds=self._creds)))
         if "JobId" not in r:
             raise JobFailedError(redact(f"提交图生 3D 没拿到 JobId: {r}"))
         return str(r["JobId"])
 
     def _wait(self, job_id: str) -> list:
         for _ in range(max(1, int(self._max_min * 60 // self._poll))):
-            r = _raise_for_error(call("QueryHunyuanTo3DProJob", {"JobId": job_id},
-                                      service=SERVICE, version=VERSION, creds=self._creds,
-                                      idempotent=True))
+            # 轮询撞上游瞬时故障时**继续下一轮**,不抛 —— 任务在云上还在跑,
+            # JobId 也还在,抛出去等于把一次已经付过钱的图生 3D作废
+            # (#874 评审指出本处遗漏)。真正的终态由下面的 Status 判定。
+            try:
+                r = _raise_for_error(call("QueryHunyuanTo3DProJob", {"JobId": job_id},
+                                          service=SERVICE, version=VERSION, creds=self._creds,
+                                          idempotent=True))
+            except UpstreamBusyError as exc:
+                logger.info("轮询撞上游瞬时故障,继续等 JobId=%s(%s)", job_id, exc)
+                time.sleep(self._poll)
+                continue
             status = str(r.get("Status") or "")
             if status == "DONE":
                 files = r.get("ResultFile3Ds") or r.get("ResultFile3D") or []
@@ -598,9 +609,17 @@ class TencentAutoRigProvider:
 
     def _wait(self, job_id: str) -> list:
         for _ in range(max(1, int(self._max_min * 60 // self._poll))):
-            r = _raise_for_error(call("DescribeAutoRiggingJob", {"JobId": job_id},
-                                      service=SERVICE, version=VERSION, creds=self._creds,
-                                      idempotent=True))
+            # 轮询撞上游瞬时故障时**继续下一轮**,不抛 —— 任务在云上还在跑,
+            # JobId 也还在,抛出去等于把一次已经付过钱的绑骨作废
+            # (#874 评审指出本处遗漏)。真正的终态由下面的 Status 判定。
+            try:
+                r = _raise_for_error(call("DescribeAutoRiggingJob", {"JobId": job_id},
+                                          service=SERVICE, version=VERSION, creds=self._creds,
+                                          idempotent=True))
+            except UpstreamBusyError as exc:
+                logger.info("轮询撞上游瞬时故障,继续等 JobId=%s(%s)", job_id, exc)
+                time.sleep(self._poll)
+                continue
             status = str(r.get("Status") or "")
             if status == "DONE":
                 files = r.get("ResultFile3Ds") or []

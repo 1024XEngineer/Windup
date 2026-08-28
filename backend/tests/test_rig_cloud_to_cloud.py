@@ -223,3 +223,89 @@ def test_a_parameter_error_is_still_permanent():
     with pytest.raises(TencentApiError) as e:
         _raise_for_error({"Error": {"Code": "InvalidParameter", "Message": "参数不合法"}})
     assert not isinstance(e.value, UpstreamBusyError)
+
+
+# ── 退避要接到**实际受影响的流程**上，不只是改异常类型（#874 评审）──────────
+#
+# `_raise_for_error` 被六处调用：图生 3D 的提交与轮询、绑骨的提交与轮询，以及取
+# AppId。只把异常类型改掉、而没有调用方捕获重发的话，用户侧的行为一个字都没变 ——
+# 仍然是「已扣 20 积分后立即失败」。
+
+
+def test_image_to_3d_submit_retries_transient_failures(monkeypatch):
+    """拦的坏例：只有绑骨提交接了退避，图生 3D 提交没接。
+
+    图生 3D 提交失败时还没扣钱，但用户会在「点了建资产、什么都没发生」之间反复试，
+    而每一次都是原样重发就能过。
+    """
+    from windup_framework.providers.render3d import tencent as t
+
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    calls = []
+
+    def _fake_call(action, params, **kw):
+        calls.append(action)
+        if action == "SubmitHunyuanTo3DProJob" and len(calls) < 3:
+            return {"Error": {"Code": "FailedOperation.ServerError", "Message": "算法服务异常"}}
+        return {"JobId": "job-3d"}
+
+    monkeypatch.setattr(t, "call", _fake_call)
+    prov = t.TencentModel3DProvider.__new__(t.TencentModel3DProvider)
+    prov._creds = object()
+    assert prov._submit({"x": 1}) == "job-3d"
+    assert calls.count("SubmitHunyuanTo3DProJob") == 3, (
+        f"只提交了 {calls.count('SubmitHunyuanTo3DProJob')} 次 —— 没接退避"
+    )
+
+
+@pytest.mark.parametrize(
+    "cls_name,api,attr",
+    [
+        ("TencentModel3DProvider", "QueryHunyuanTo3DProJob", "ResultFile3Ds"),
+        ("TencentAutoRigProvider", "DescribeAutoRiggingJob", "ResultFile3Ds"),
+    ],
+)
+def test_polling_survives_a_transient_failure(monkeypatch, cls_name, api, attr):
+    """拦的坏例：轮询撞上游瞬时故障就抛，把一次**已经付过钱**的任务作废。
+
+    任务在云上还在跑、JobId 也还在 —— 抛出去等于钱花了、产物取不回来。
+    """
+    from windup_framework.providers.render3d import tencent as t
+
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    seen = []
+
+    def _fake_call(action, params, **kw):
+        seen.append(action)
+        if len(seen) < 3:
+            return {"Error": {"Code": "FailedOperation.RequestTimeout", "Message": "后端服务超时。"}}
+        return {"Status": "DONE", attr: [{"Type": "FBX", "Url": "https://x/y.fbx"}]}
+
+    monkeypatch.setattr(t, "call", _fake_call)
+    prov = getattr(t, cls_name).__new__(getattr(t, cls_name))
+    prov._creds = object()
+    prov._poll = 1
+    prov._max_min = 1
+    files = prov._wait("job-1")
+    assert files and files[0]["Type"] == "FBX"
+    assert len(seen) == 3, f"轮询只调了 {len(seen)} 次 —— 瞬时故障把它打断了"
+
+
+def test_polling_still_reports_a_real_upstream_failure(monkeypatch):
+    """反向：上游明确说 FAIL 时要抛，不能一直等到超时。
+
+    没有这条的话，把「继续等」写成「什么都不管」也能让上面那条绿 ——
+    而那会把一次真失败拖满整个轮询预算。
+    """
+    from windup_framework.providers.render3d import tencent as t
+
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    monkeypatch.setattr(
+        t, "call",
+        lambda *a, **k: {"Status": "FAIL", "ErrorMessage": "模型不合规"})
+    prov = t.TencentAutoRigProvider.__new__(t.TencentAutoRigProvider)
+    prov._creds = object()
+    prov._poll = 1
+    prov._max_min = 1
+    with pytest.raises(t.JobFailedError, match="绑骨失败"):
+        prov._wait("job-2")
