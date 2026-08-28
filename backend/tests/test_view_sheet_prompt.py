@@ -71,16 +71,16 @@ def test_illegal_direction_or_view_raises():
         build_view_sheet_prompt(ActionDirection.EAST, view="topdown")
 
 
-def test_first_frame_reuses_camera_lock_and_replaces_idle_pose():
+def test_first_frame_reuses_heading_lock_and_replaces_idle_pose():
     text = build_oriented_first_frame_prompt(
         ActionDirection.EAST,
         action_prompt="walk cycle first frame, left foot forward",
     )
-    assert "FRONT-VIEW character master" in text
+    assert "already facing the requested compass heading" in text
+    assert "FRONT-VIEW character master" not in text
     assert "ninety-degree" in text
     assert "walk cycle first frame, left foot forward" in text
     assert "Neutral idle standing pose" not in text
-    assert text.index("FRONT-VIEW character master") < text.index("ninety-degree")
     assert text.endswith("walk cycle first frame, left foot forward")
 
 

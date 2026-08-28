@@ -1560,7 +1560,7 @@ describe('WorkflowController', () => {
         direction: 'east',
         prompt: '向右行走，保持侧面轮廓',
         characterId: 'character-1',
-        referenceMedia: [],
+        referenceMedia: ['https://img/east.png'],
       }),
     )
     expect(generation.apis.create).toHaveBeenNthCalledWith(
@@ -1569,7 +1569,7 @@ describe('WorkflowController', () => {
         direction: 'north',
         prompt: '背向镜头向上行走',
         characterId: 'character-1',
-        referenceMedia: [],
+        referenceMedia: ['https://img/north.png'],
       }),
     )
     expect(generation.apis.create).toHaveBeenNthCalledWith(
@@ -1578,7 +1578,7 @@ describe('WorkflowController', () => {
         direction: 'south',
         prompt: '面向镜头向下行走',
         characterId: 'character-1',
-        referenceMedia: [],
+        referenceMedia: ['https://img/south.png'],
       }),
     )
   })
@@ -2083,7 +2083,7 @@ describe('WorkflowController', () => {
     )
   })
 
-  it('动作首帧只重试失败方向并以正视母版锁定朝向', async () => {
+  it('动作首帧只重试失败方向并以该朝向立绘锁定朝向', async () => {
     const run = createRun([
       boundSetup(),
       templateNode({
@@ -2150,7 +2150,7 @@ describe('WorkflowController', () => {
       prompt: '背向镜头向上行走',
       spriteWidth: 64,
       spriteHeight: 64,
-      referenceMedia: [],
+      referenceMedia: ['north-template.png'],
       direction: 'north',
       characterId: 'character-1',
     })
@@ -4104,7 +4104,7 @@ describe('WorkflowController', () => {
     },
   )
 
-  it('四向动作首帧微调按方向写提示词，参考图改由正视母版锁定', async () => {
+  it('四向动作首帧微调按方向写提示词，参考该朝向已有首帧', async () => {
     const run = createRun([
       boundSetup(),
       templateNode({
@@ -4158,19 +4158,19 @@ describe('WorkflowController', () => {
       {
         direction: 'east',
         prompt: '向右行走\n增加轮廓光',
-        referenceMedia: [],
+        referenceMedia: ['east-frame.png'],
         characterId: 'character-1',
       },
       {
         direction: 'north',
         prompt: '背向镜头行走\n增加轮廓光',
-        referenceMedia: [],
+        referenceMedia: ['north-frame.png'],
         characterId: 'character-1',
       },
       {
         direction: 'south',
         prompt: '面向镜头行走\n增加轮廓光',
-        referenceMedia: [],
+        referenceMedia: ['south-frame.png'],
         characterId: 'character-1',
       },
     ])

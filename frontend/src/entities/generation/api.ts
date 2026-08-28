@@ -995,6 +995,10 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           input.candidateCount ?? IMAGE_CANDIDATE_COUNT,
           'candidateCount',
         )
+        const referenceImageUrl = input.referenceMedia[0] ? String(input.referenceMedia[0]) : null
+        if (!referenceImageUrl) {
+          throw new GenerationApiError('动作首帧生成必须提供该朝向已确认的立绘')
+        }
         const generation = await post(
           '/generation/first-frame',
           projectId,
@@ -1002,6 +1006,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           {
             project_id: projectId,
             character_id: inputPositiveInteger(input.characterId, 'characterId'),
+            reference_image_url: referenceImageUrl,
             prompt: input.prompt ?? '',
             negative_prompt: '',
             width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),

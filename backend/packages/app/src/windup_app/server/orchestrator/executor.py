@@ -1195,9 +1195,9 @@ class ImageTaskExecutor:
         # 2. 风格参考图(项目级,有 sprite_sample_url 时走图生图模式)
         style_url = (cons.sprite_sample_url or "").strip()
         want_char = _is_url(char_url)
-        # 锁定朝向只吃正视母版,不再叠项目风格图:第二张图会让
-        # "attached image is the FRONT-VIEW master" 对不上。
-        want_style = (not input.lock_from_south) and _is_url(style_url)
+        # 锁定朝向只吃该朝向立绘,不再叠项目风格图:第二张图会让
+        # "attached image is already facing this heading" 对不上。
+        want_style = (not input.lock_orientation) and _is_url(style_url)
 
         def _fetch_style(url: str) -> bytes | None:
             try:
@@ -1223,9 +1223,9 @@ class ImageTaskExecutor:
                     refs.append(style_bytes)
                     has_style_ref = True
 
-        if input.lock_from_south:
+        if input.lock_orientation:
             if not want_char:
-                raise ValueError("锁定朝向的动作首帧必须绑定正视母版")
+                raise ValueError("锁定朝向的动作首帧必须绑定该朝向立绘")
             prompt = build_oriented_first_frame_prompt(
                 input.direction,
                 view=view_for_perspective(cons.perspective),
