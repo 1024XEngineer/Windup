@@ -16,6 +16,7 @@ import {
   type WorkflowNode,
 } from '@/entities'
 import { ApiError, getApiAccessToken } from '@/shared/api'
+import { ProductSelect } from '@/shared/ui'
 import { ProjectCreatePixelMark } from './pixel-mark'
 
 /**
@@ -53,6 +54,7 @@ export function ProjectCreatePage() {
   const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
   const [spriteWidth, setSpriteWidth] = useState('256')
   const [spriteHeight, setSpriteHeight] = useState('256')
+  const [customSpriteSize, setCustomSpriteSize] = useState(false)
   const [gameStyle, setGameStyle] = useState<ArtStyle>('unspecified')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -171,40 +173,38 @@ export function ProjectCreatePage() {
               >
                 游戏视角
               </label>
-              <select
+              <ProductSelect
                 id="project-perspective"
                 value={perspective}
                 disabled={createdProject !== null}
-                onChange={(event) => setPerspective(event.target.value as CharacterPerspective)}
-                className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
-              >
-                {Object.entries(CHARACTER_PERSPECTIVE).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                options={Object.entries(CHARACTER_PERSPECTIVE).map(([value, label]) => ({
+                  value: value as CharacterPerspective,
+                  label,
+                }))}
+                onChange={(value) => {
+                  setPerspective(value)
+                  setError(null)
+                }}
+              />
             </div>
 
             <div className="grid gap-2">
               <label className="text-xs font-semibold text-app-ink-soft" htmlFor="project-movement">
                 朝向
               </label>
-              <select
+              <ProductSelect
                 id="project-movement"
                 value={directionalMovement}
                 disabled={createdProject !== null}
-                onChange={(event) =>
-                  setDirectionalMovement(event.target.value as DirectionalMovement)
-                }
-                className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
-              >
-                {Object.entries(DIRECTIONAL_MOVEMENT).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                options={Object.entries(DIRECTIONAL_MOVEMENT).map(([value, label]) => ({
+                  value: value as DirectionalMovement,
+                  label,
+                }))}
+                onChange={(value) => {
+                  setDirectionalMovement(value)
+                  setError(null)
+                }}
+              />
             </div>
           </div>
 
@@ -219,69 +219,85 @@ export function ProjectCreatePage() {
                   onClick={() => {
                     setSpriteWidth(String(preset))
                     setSpriteHeight(String(preset))
+                    setCustomSpriteSize(false)
                     // 按钮点击不是表单的 change 事件，收不到表单上那个清错误的处理，只能自己清。
                     setError(null)
                   }}
-                  aria-pressed={spriteWidth === String(preset) && spriteHeight === String(preset)}
+                  aria-pressed={
+                    !customSpriteSize &&
+                    spriteWidth === String(preset) &&
+                    spriteHeight === String(preset)
+                  }
                   className="rounded-full border border-app-line px-4 py-1.5 text-xs text-app-ink-soft aria-pressed:border-app-accent aria-pressed:bg-app-accent aria-pressed:text-app-on-accent"
                 >
                   {preset} × {preset}
                 </button>
               ))}
+              <button
+                type="button"
+                disabled={createdProject !== null}
+                aria-pressed={customSpriteSize}
+                onClick={() => {
+                  setCustomSpriteSize(true)
+                  setError(null)
+                }}
+                className="rounded-full border border-app-line px-4 py-1.5 text-xs text-app-ink-soft aria-pressed:border-app-accent aria-pressed:bg-app-accent aria-pressed:text-app-on-accent"
+              >
+                自定义
+              </button>
             </div>
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <label className="text-[10px] text-app-faint" htmlFor="project-sprite-width">
-                  宽度（像素）
-                </label>
-                <input
-                  id="project-sprite-width"
-                  type="number"
-                  inputMode="numeric"
-                  min={SPRITE_MIN}
-                  max={SPRITE_MAX}
-                  value={spriteWidth}
-                  disabled={createdProject !== null}
-                  onChange={(event) => setSpriteWidth(event.target.value)}
-                  className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
-                />
+            {customSpriteSize ? (
+              <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <label className="text-[10px] text-app-faint" htmlFor="project-sprite-width">
+                    宽度（像素）
+                  </label>
+                  <input
+                    id="project-sprite-width"
+                    type="number"
+                    inputMode="numeric"
+                    min={SPRITE_MIN}
+                    max={SPRITE_MAX}
+                    value={spriteWidth}
+                    disabled={createdProject !== null}
+                    onChange={(event) => setSpriteWidth(event.target.value)}
+                    className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-[10px] text-app-faint" htmlFor="project-sprite-height">
+                    高度（像素）
+                  </label>
+                  <input
+                    id="project-sprite-height"
+                    type="number"
+                    inputMode="numeric"
+                    min={SPRITE_MIN}
+                    max={SPRITE_MAX}
+                    value={spriteHeight}
+                    disabled={createdProject !== null}
+                    onChange={(event) => setSpriteHeight(event.target.value)}
+                    className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
+                  />
+                </div>
               </div>
-              <div className="grid gap-2">
-                <label className="text-[10px] text-app-faint" htmlFor="project-sprite-height">
-                  高度（像素）
-                </label>
-                <input
-                  id="project-sprite-height"
-                  type="number"
-                  inputMode="numeric"
-                  min={SPRITE_MIN}
-                  max={SPRITE_MAX}
-                  value={spriteHeight}
-                  disabled={createdProject !== null}
-                  onChange={(event) => setSpriteHeight(event.target.value)}
-                  className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
-                />
-              </div>
-            </div>
+            ) : null}
           </fieldset>
 
           <div className="grid gap-2">
             <label className="text-xs font-semibold text-app-ink-soft" htmlFor="project-style">
               画风
             </label>
-            <select
+            <ProductSelect
               id="project-style"
               value={gameStyle}
               disabled={createdProject !== null}
-              onChange={(event) => setGameStyle(event.target.value as ArtStyle)}
-              className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
-            >
-              {ART_STYLE_OPTIONS.map((value) => (
-                <option key={value} value={value}>
-                  {ART_STYLE[value]}
-                </option>
-              ))}
-            </select>
+              options={ART_STYLE_OPTIONS.map((value) => ({ value, label: ART_STYLE[value] }))}
+              onChange={(value) => {
+                setGameStyle(value)
+                setError(null)
+              }}
+            />
             <small className="text-[11px] leading-5 text-app-muted">
               {ART_STYLE_HINT[gameStyle]}
             </small>

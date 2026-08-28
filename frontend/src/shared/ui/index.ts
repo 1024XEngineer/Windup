@@ -26,3 +26,5 @@ export {
 } from './product-control'
 export type { ProductControlVariant, ProductPopoverMotionState } from './product-control'
 export { useProductPopoverMotion } from './product-popover-motion'
+export { ProductSelect } from './product-select'
+export type { ProductSelectOption, ProductSelectProps } from './product-select'
