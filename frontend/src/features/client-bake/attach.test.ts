@@ -13,6 +13,7 @@ vi.mock('./stage', async () => {
         setCamYaw: () => undefined,
         setup: (_clip: string, i: number) => i * 0.1,
         coverage: () => 0.01,
+        subjectLuma: () => 148,
         rigInfo: () => ({
           loader: 'gltf',
           rootBone: 'Hips',
