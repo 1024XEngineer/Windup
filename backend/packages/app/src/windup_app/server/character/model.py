@@ -290,6 +290,20 @@ class CharacterOutfit(BaseModel):
     rig_facts: OutfitRigFacts | None = Field(
         default=None, description="绑骨模型的骨架事实；None = 未建或建于本字段之前"
     )
+    # 这个造型**已经烘好的动作片段** —— 键是动作名(值域见 render3d_assets.ACTION_MOTIONS),
+    # 值是那一份绑骨产物的 URL。
+    #
+    # 为什么要一张表而不是一个 URL:绑骨接口**一次只吃一个 MotionType、产出一个带单条
+    # AnimationStack 的 FBX**(2026-08-03 实测归档:「MotionType 1–48 预设动作,一次一个」)。
+    # 想让一个造型既会走路又会跳,就得绑两次骨、存两份产物 —— 一个 URL 槽位装不下,
+    # 硬塞的话第二次会覆盖第一次,用户付了两次钱只剩一个动作。
+    #
+    # ``model_3d_url`` 保留为**主产物**(建资产那一次,当前是 walk),用来判"这个造型走不走
+    # 三渲二";渲哪个动作从本表按动作名取。两者不是第二真相源:主产物在本表里也有同样的
+    # 条目,``model_3d_url`` 只是那一条的别名,由 builder 同时写、用例钉住两者一致。
+    rigged_motions: dict[str, str] = Field(
+        default_factory=dict, description="动作名 → 该动作的绑骨产物 URL"
+    )
     actions: list[CharacterAction] = Field(
         default_factory=list, description="该造型下的动作列表"
     )

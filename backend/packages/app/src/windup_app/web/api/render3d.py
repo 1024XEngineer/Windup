@@ -128,19 +128,38 @@ def _master_url_or_raise(outfit: dict) -> str:
     return url
 
 
-def _sync_model_url(session: Session, character: Character, outfit_id: str, url: str | None) -> None:
+def _sync_model_url(
+    session: Session,
+    character: Character,
+    outfit_id: str,
+    url: str | None,
+    motion: str | None = None,
+) -> None:
     """把建好的模型 URL 回写到 ``character_data``。
 
     回写发生在**读状态**这一步而不是后台线程里:后台线程没有请求作用域的 session,
     而三渲二那条路线的判据(``Outfit.model_3d_url``)不回写就永远是 None —— 资产建好了
     却依旧显示"该造型暂无绑骨 3D 模型",钱白花。
+
+    ``motion`` 给出这一份产物烘的是哪个动作,写进 ``rigged_motions``。一份绑骨产物只带
+    一个动作片段(接口一次只吃一个 MotionType),所以多动作 = 多份产物 = 这张表多几条;
+    **不能覆盖** ``model_3d_url`` —— 覆盖了的话用户为第二个动作付的钱会把第一个顶掉。
+    ``model_3d_url`` 只在它还空着时写(即主产物那一次)。
     """
     if not url:
         return
     data = CharacterData.model_validate(character.character_data or {})
     changed = False
     for outfit in data.outfits:
-        if outfit.id == outfit_id and outfit.model_3d_url != url:
+        if outfit.id != outfit_id:
+            continue
+        # 只有说得出这一份烘的是哪个动作时才记进表。说不出就只写主产物别名 ——
+        # 猜一个动作名记进去,等于声称这个资产会一个它其实不会的动作。
+        if motion and outfit.rigged_motions.get(motion) != url:
+            outfit.rigged_motions[motion] = url
+            changed = True
+        # 主产物那一次(第一份)同时写别名槽,后续动作不再动它。
+        if not (outfit.model_3d_url or "").strip():
             outfit.model_3d_url = url
             changed = True
     if not changed:
@@ -177,7 +196,8 @@ def get_outfit_asset(
     character = get_character_with_auth(session, character_id, user_id)
     _outfit_or_raise(character, outfit_id)
     view = _operations(request).view(_asset_key(character_id, outfit_id))
-    _sync_model_url(session, character, outfit_id, view["model_3d_url"])
+    _sync_model_url(session, character, outfit_id, view["model_3d_url"],
+                    motion=view.get("primary_motion"))
     return Response.success(view)
 
 
@@ -229,6 +249,45 @@ def approve_outfit_asset(
     except ValueError as exc:
         raise BizException(user_message(exc), code=BizCode.BAD_REQUEST) from exc
     return Response.success(view, message="已放行,开始绑骨")
+
+
+class AddMotionRequest(BaseModel):
+    """给已建好的 3D 资产追加一个动作片段。
+
+    ``motion`` 取 ``render3d_assets.ACTION_MOTIONS`` 里有对应预设的那几个
+    (walk / idle / jump);attack 与 custom 没有对应预设,继续走 i2v。
+    """
+
+    motion: str = Field(..., min_length=1)
+
+
+@router.post("/characters/{character_id}/outfits/{outfit_id}/motions", response_model=Response[dict])
+def add_outfit_motion(
+    character_id: int,
+    outfit_id: str,
+    body: AddMotionRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[dict]:
+    """给已建好的造型再烘一个动作片段。**按次计费的触发点**,只认用户的显式请求。
+
+    只花绑骨那一笔:图生 3D 的产物一直留着,不重付。一份绑骨产物只带一个动作片段
+    (接口一次只吃一个 MotionType),所以"这个角色会走也会跳"= 两份产物。
+    """
+    user_id = request.state.current_user.id
+    character = get_character_with_auth(session, character_id, user_id)
+    _outfit_or_raise(character, outfit_id)
+    operations = _operations(request)
+    key = _asset_key(character_id, outfit_id)
+    try:
+        view = operations.add_motion(key, body.motion)
+    except ValueError as exc:
+        raise BizException(user_message(exc), code=BizCode.BAD_REQUEST) from exc
+    # 回写:这一份产物记在它自己那个动作名下,不覆盖主产物。
+    # 用**这一份**产物的 URL,不是 view 里那个主产物的 —— 记错了就是拿走路冒充跳跃。
+    _sync_model_url(session, character, outfit_id,
+                    view.get("motion_model_url"), motion=body.motion)
+    return Response.success(view, message=f"已为 {body.motion} 绑骨并烘入动作")
 
 
 @router.post("/characters/{character_id}/outfits/{outfit_id}/discard", response_model=Response[dict])

@@ -32,6 +32,7 @@ from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_med
 from windup_common.models import CharacterStance
 from windup_app.server.orchestrator.render3d_assets import (
     AUTORIG_CREDITS,
+    BUILD_MOTION,
     BUILD_CREDITS,
     MODEL3D_CREDITS,
     RAW_KEY_PREFIX,
@@ -182,6 +183,10 @@ class Render3DAssetOperations:
             "asset_key": outfit_key,
             "state": phase,
             "model_3d_url": rigged_url.decode() if rigged_url else None,
+            # 主产物烘的是哪个动作。**由本层报出**而不是让 web 层去读常量:
+            # web 层 import render3d_assets 会经它连到 ai_engine,破坏
+            # 「入口层不经 ai_engine 直连」那条 import 契约。
+            "primary_motion": BUILD_MOTION,
             "review_model_url": review_url.decode() if review_url else None,
             "error": error,
             "cost": {
@@ -238,6 +243,37 @@ class Render3DAssetOperations:
         self._builder.approve(outfit_key)
         self._start(outfit_key, PHASE_RIGGING, self._fetch(master_url))
         return self.view(outfit_key)
+
+    def add_motion(self, outfit_key: str, motion: str) -> dict:
+        """给已建好的造型再烘一个动作片段。**只花绑骨那一笔**(图生 3D 的产物还在)。
+
+        与 :meth:`build` 的分工:那个是从零建(图生 3D + 绑骨),这个是在已有模型上再绑
+        一次。分开而不是给 build 加个参数:build 的前提是"该造型还什么都没有",
+        而本方法的前提正相反 —— 合成一个方法的话那条前提断言就没法写了。
+        """
+        if not self._builder.may_build_assets:
+            raise SpendNotAuthorized(
+                f"本部署未开启建 3D 资产(需 WINDUP_RENDER3D_ALLOW_SPEND)。"
+                f"追加一个动作 {AUTORIG_CREDITS} 积分。"
+            )
+        state = self._builder.state(outfit_key)
+        if state is not Render3DAssetState.READY:
+            raise ValueError(
+                f"造型 {outfit_key!r} 的 3D 资产处于 {state.value},要先建好并确认才能加动作"
+            )
+        with self._lock:
+            data = self._builder.add_motion(outfit_key, motion, _SilentProgress())
+            # 这一份产物要有**自己的** URL。回 view() 里那个 model_3d_url 是**主产物**的,
+            # 把它记到新动作名下 = 拿走路片段冒充跳跃 —— 而两份都渲得满 32 帧,帧数、
+            # 时长、朝向、成色全部自洽,没有一道会红。
+            url = self._store.get(f"{_URL_PREFIX}{outfit_key}#{motion}")
+            if url is None:
+                url = _publish_model(data).encode()
+                self._store.put(f"{_URL_PREFIX}{outfit_key}#{motion}", url)
+        out = self.view(outfit_key)
+        out["motion"] = motion
+        out["motion_model_url"] = url.decode()
+        return out
 
     def discard(self, outfit_key: str) -> dict:
         """人否掉待审模型 → 回到 ``absent``,下次建会重新生成(再付一次图生 3D)。"""
@@ -463,6 +499,9 @@ class _LazyOperations:
 
     def approve(self, outfit_key: str, master_url: str) -> dict:
         return self._ops().approve(outfit_key, master_url)
+
+    def add_motion(self, outfit_key: str, motion: str) -> dict:
+        return self._ops().add_motion(outfit_key, motion)
 
     def discard(self, outfit_key: str) -> dict:
         return self._ops().discard(outfit_key)

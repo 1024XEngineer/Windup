@@ -186,6 +186,10 @@ class CharacterActionInput:
     # 传 URL 而不是让编排层自己去查:与 reference_image_urls 同一口径 —— 取数在上层
     # 做完,"这次选了哪条路线"在入参上就可见,不是埋在某个分支里的隐式判断。
     model_3d_url: str | None = None
+    # 这个造型已经烘好的动作片段(动作名 → 绑骨产物 URL)。由 web 层从 character_data
+    # 读出来写进入参 —— 与 model_3d_url 同一个模式:这次按什么资产渲的,在任务入参上
+    # 就是可见的,排查时不用猜当时 DB 是什么状态。
+    rigged_motions: dict[str, str] = field(default_factory=dict)
     # 角色体型。``None`` 原样往下传,由编排层兜成双足 —— 本层替调用方填默认值的话,
     # "没给"与"明确给了 biped"从这里起就分不开了。判据见 prompt.adapter 的体型门禁。
     stance: CharacterStance | None = None
