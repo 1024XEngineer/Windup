@@ -2397,6 +2397,7 @@
           "reference-image",
           "outfit-preview",
           "action-frame",
+          "model-3d",
           "general"
         ],
         "title": "MediaCategory",

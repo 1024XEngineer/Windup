@@ -149,6 +149,26 @@ describe('浏览器出帧驱动', () => {
     expect(failed).toContain('idle')
   })
 
+  it('片段名是绑骨任务哈希、对不上动作名时,用模型里唯一那一个', async () => {
+    // 拦的坏例:片段名由绑骨接口的动作库自己起(实测两次任务拿到的都是
+    // `Armature|32795ddb244644eac67ccfd8b84060c3_remap`),永远等不上产品动作名 'walk'。
+    // 按名字硬匹配的话**每一份真实绑骨产物**都会被判成"模型里没有片段 walk",
+    // 三渲二一帧都出不来 —— 而这条报错听上去像模型坏了。
+    const HASHED = 'Armature|32795ddb244644eac67ccfd8b84060c3_remap'
+    stage.clips = { [HASHED]: 1.0667 }
+    let completed: { clip: string; sampleTimes: number[] } | null = null
+    const apis = stubRender3DApis({
+      completeBake: async (_taskId, completion) => {
+        completed = completion
+      },
+    })
+    await runClientBake({ job: bakeJob({ frames: 2 }), apis })
+
+    expect(stage.setups.map(([clip]) => clip)).toEqual([HASHED, HASHED])
+    // 交回的仍是**登记的那个名字** —— 后端按它对账,换成真实片段名会被判成交错了片段。
+    expect(completed).toEqual({ clip: 'walk', sampleTimes: [0, 0.1] })
+  })
+
   it('一个片段都没有时说清是绑骨没带动作', async () => {
     stage.clips = {}
     await expect(runClientBake({ job: bakeJob(), apis: stubRender3DApis() })).rejects.toThrow(
