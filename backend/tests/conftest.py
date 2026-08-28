@@ -24,7 +24,6 @@ from sqlalchemy.pool import StaticPool
 from windup_app.bootstrap.app import create_app
 from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
-from windup_app.server.quick_start_conversation.model import QuickStartAgentConversation
 from windup_app.server.quota.model import (
     CreditAccount,
     CreditRedemptionCode,
@@ -128,7 +127,6 @@ def engine():
             User.__table__,
             Character.__table__,
             WorkflowRun.__table__,
-            QuickStartAgentConversation.__table__,
             CreditAccount.__table__,
             CreditRedemptionCode.__table__,
             CreditTransaction.__table__,

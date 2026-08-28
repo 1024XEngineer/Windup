@@ -22,8 +22,6 @@ import {
   type CharacterSummaryApis,
   type Project,
   type ProjectApis,
-  type QuickStartConversation,
-  type QuickStartConversationApis,
   type WorkflowRun,
 } from '@/entities'
 import { ApiError } from '@/shared/api'
@@ -47,40 +45,6 @@ afterEach(() => {
 
 function workflow(nodes: WorkflowRun['nodes'], id = 'run-1'): WorkflowRun {
   return { id, projectId: 'project-1', version: 1, storageStatus: 'active', nodes }
-}
-
-function conversationStore(
-  initial: readonly QuickStartConversation[] = [],
-): QuickStartConversationApis & {
-  get: ReturnType<typeof vi.fn<QuickStartConversationApis['get']>>
-  save: ReturnType<typeof vi.fn<QuickStartConversationApis['save']>>
-} {
-  const conversations = new Map(initial.map((conversation) => [conversation.runId, conversation]))
-  const get = vi.fn<QuickStartConversationApis['get']>(async (runId) =>
-    structuredClone(
-      conversations.get(runId) ?? {
-        runId,
-        turns: [],
-        schemaVersion: 2,
-        version: 0,
-        updatedAt: null,
-      },
-    ),
-  )
-  const save = vi.fn<QuickStartConversationApis['save']>(async (runId, input) => {
-    const current = conversations.get(runId)
-    if (current && current.version !== input.version) throw new Error('Agent 对话版本冲突')
-    const saved: QuickStartConversation = {
-      runId,
-      turns: structuredClone(input.turns),
-      schemaVersion: 2,
-      version: input.version + 1,
-      updatedAt: '2026-08-27T10:00:00Z',
-    }
-    conversations.set(runId, saved)
-    return structuredClone(saved)
-  })
-  return { get, save }
 }
 
 function setupAndTemplate(
@@ -255,15 +219,7 @@ describe('Quick Start workflow Agent', () => {
         ],
       })),
     })
-    const conversations = conversationStore()
-    renderAt(
-      `/quick-start/${run.id}`,
-      service,
-      agentFor({ planner }),
-      projectReader(),
-      characterReader(),
-      conversations,
-    )
+    renderAt(`/quick-start/${run.id}`, service, agentFor({ planner }))
 
     await screen.findAllByRole('button', { name: /选择角色方案/u })
     const composer = screen.getByRole('textbox', { name: '继续描述你的想法' })
@@ -279,76 +235,6 @@ describe('Quick Start workflow Agent', () => {
       ),
     )
     expect(service.confirmCandidate).not.toHaveBeenCalled()
-    await waitFor(() =>
-      expect(conversations.save).toHaveBeenCalledWith(
-        run.id,
-        expect.objectContaining({
-          turns: expect.arrayContaining([
-            expect.objectContaining({ role: 'user', content: '把第二张的牛角缩短' }),
-          ]),
-        }),
-      ),
-    )
-  })
-
-  it('reconciles a committed save whose response was lost before saving later turns', async () => {
-    const run = workflow(setupAndTemplate())
-    const planner = vi.fn(async () => ({
-      text: '',
-      finishReason: 'tool-calls',
-      toolCalls: [
-        {
-          toolName: 'refine_character_template',
-          input: { adjustmentPrompt: '把披风改成深蓝色' },
-        },
-      ],
-    }))
-    const service = serviceFor(run, {
-      getTemplateCandidates: vi.fn(async () =>
-        eastCandidates(
-          'https://example.test/character-1.png',
-          'https://example.test/character-2.png',
-          'https://example.test/character-3.png',
-        ),
-      ),
-      getWorkflowAgentContext: vi.fn(() => ({
-        availableTools: ['regenerate_character_template', 'refine_character_template'] as const,
-      })),
-    })
-    const conversations = conversationStore()
-    const saveSnapshot = conversations.save.getMockImplementation()!
-    let loseResponse = true
-    conversations.save.mockImplementation(async (runId, input) => {
-      const saved = await saveSnapshot(runId, input)
-      if (loseResponse) {
-        loseResponse = false
-        throw new DOMException('response lost', 'TimeoutError')
-      }
-      return saved
-    })
-    renderAt(
-      `/quick-start/${run.id}`,
-      service,
-      agentFor({ planner }),
-      projectReader(),
-      characterReader(),
-      conversations,
-    )
-
-    const composer = await screen.findByRole('textbox', { name: '继续描述你的想法' })
-    fireEvent.change(composer, { target: { value: '把披风改成深蓝色' } })
-    fireEvent.click(screen.getByRole('button', { name: '发送' }))
-
-    expect(await screen.findByText('已提交角色母版微调。')).toBeTruthy()
-    await waitFor(async () => {
-      const saved = await conversations.get(run.id)
-      expect(saved.turns).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ role: 'user', content: '把披风改成深蓝色' }),
-          expect.objectContaining({ role: 'assistant', content: '已提交角色母版微调。' }),
-        ]),
-      )
-    })
   })
 
   it('continues character regeneration below the Agent acknowledgement', async () => {
@@ -470,130 +356,6 @@ describe('Quick Start workflow Agent', () => {
       workflowPrompt.compareDocumentPosition(refinementTurn) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(screen.getByText('已提交角色母版微调。')).toBeTruthy()
-  })
-
-  it('uses the server Agent conversation when it differs from the local cache', async () => {
-    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
-    const localKey = `windup.quick-start.agent-chat.v2:run:7:${run.id}`
-    window.localStorage.setItem(
-      localKey,
-      JSON.stringify({ turns: [{ role: 'user', content: '本地旧对话' }] }),
-    )
-    const conversations = conversationStore([
-      {
-        runId: run.id,
-        turns: [{ role: 'user', content: '服务端历史对话' }],
-        schemaVersion: 2,
-        version: 3,
-        updatedAt: '2026-08-27T10:00:00Z',
-      },
-    ])
-
-    renderAt(
-      `/quick-start/${run.id}`,
-      serviceFor(run),
-      agentFor(),
-      projectReader(),
-      characterReader(),
-      conversations,
-    )
-
-    expect(await screen.findByText('服务端历史对话')).toBeTruthy()
-    expect(screen.queryByText('本地旧对话')).toBeNull()
-    expect(window.localStorage.getItem(localKey)).toContain('服务端历史对话')
-  })
-
-  it('migrates a matching local Agent conversation when the server has no snapshot', async () => {
-    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
-    window.localStorage.setItem(
-      `windup.quick-start.agent-chat.v2:run:7:${run.id}`,
-      JSON.stringify({ turns: [{ role: 'user', content: '待迁移的本地对话' }] }),
-    )
-    const conversations = conversationStore()
-
-    renderAt(
-      `/quick-start/${run.id}`,
-      serviceFor(run),
-      agentFor(),
-      projectReader(),
-      characterReader(),
-      conversations,
-    )
-
-    expect(await screen.findByText('待迁移的本地对话')).toBeTruthy()
-    await waitFor(() =>
-      expect(conversations.save).toHaveBeenCalledWith(run.id, {
-        turns: [{ role: 'user', content: '待迁移的本地对话' }],
-        version: 0,
-      }),
-    )
-  })
-
-  it('falls back to the local Agent conversation when the server read fails', async () => {
-    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
-    window.localStorage.setItem(
-      `windup.quick-start.agent-chat.v2:run:7:${run.id}`,
-      JSON.stringify({ turns: [{ role: 'user', content: '离线可恢复对话' }] }),
-    )
-    const conversations = conversationStore()
-    conversations.get.mockRejectedValueOnce(new Error('network unavailable'))
-
-    renderAt(
-      `/quick-start/${run.id}`,
-      serviceFor(run),
-      agentFor(),
-      projectReader(),
-      characterReader(),
-      conversations,
-    )
-
-    expect(await screen.findByText('离线可恢复对话')).toBeTruthy()
-    expect(await screen.findByRole('textbox', { name: '继续描述你的想法' })).toBeTruthy()
-  })
-
-  it('merges a dirty local snapshot with newer server turns instead of dropping either side', async () => {
-    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
-    window.localStorage.setItem(
-      `windup.quick-start.agent-chat.v2:run:7:${run.id}`,
-      JSON.stringify({
-        turns: [{ role: 'user', content: '本地待同步消息' }],
-        serverVersion: 0,
-        dirty: true,
-      }),
-    )
-    const conversations = conversationStore([
-      {
-        runId: run.id,
-        turns: [{ role: 'assistant', content: '另一个标签页的消息', kind: 'reply' }],
-        schemaVersion: 2,
-        version: 1,
-        updatedAt: '2026-08-27T10:00:00Z',
-      },
-    ])
-
-    renderAt(
-      `/quick-start/${run.id}`,
-      serviceFor(run),
-      agentFor(),
-      projectReader(),
-      characterReader(),
-      conversations,
-    )
-
-    expect(await screen.findByText('另一个标签页的消息')).toBeTruthy()
-    expect(screen.getByText('本地待同步消息')).toBeTruthy()
-    await waitFor(() =>
-      expect(conversations.save).toHaveBeenCalledWith(
-        run.id,
-        expect.objectContaining({
-          version: 1,
-          turns: expect.arrayContaining([
-            expect.objectContaining({ content: '另一个标签页的消息' }),
-            expect.objectContaining({ content: '本地待同步消息' }),
-          ]),
-        }),
-      ),
-    )
   })
 })
 
@@ -803,7 +565,6 @@ function renderAt(
     CharacterApis & CharacterSummaryApis,
     'get' | 'listSummariesByProject'
   > = characterReader(),
-  conversations: QuickStartConversationApis = conversationStore(),
 ) {
   function PlaytestLocation() {
     const location = useLocation()
@@ -826,7 +587,6 @@ function renderAt(
               agent={agent}
               projectApis={projects}
               characterApis={characters}
-              conversationApis={conversations}
             />
           }
         />
@@ -839,7 +599,6 @@ function renderAt(
               agent={agent}
               projectApis={projects}
               characterApis={characters}
-              conversationApis={conversations}
             />
           }
         />
@@ -853,21 +612,13 @@ function renderAt(
 function renderInBrowserHistory(
   service: QuickStartEntryService,
   agent: CreateQuickStartAgentOptions = agentFor(),
-  conversations: QuickStartConversationApis = conversationStore(),
 ) {
   return render(
     <BrowserRouter>
       <Routes>
         <Route
           path="/quick-start"
-          element={
-            <QuickStartPage
-              service={service}
-              activeRunUserId="7"
-              agent={agent}
-              conversationApis={conversations}
-            />
-          }
+          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
         />
       </Routes>
     </BrowserRouter>,
@@ -888,7 +639,6 @@ function renderWithRunSwitcher(
   nextRunId: string,
 ) {
   const agent = agentFor()
-  const conversations = conversationStore()
   function Controls() {
     const navigate = useNavigate()
     const location = useLocation()
@@ -908,14 +658,7 @@ function renderWithRunSwitcher(
       <Routes>
         <Route
           path="/quick-start/:runId"
-          element={
-            <QuickStartPage
-              service={service}
-              activeRunUserId="7"
-              agent={agent}
-              conversationApis={conversations}
-            />
-          }
+          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
         />
       </Routes>
     </MemoryRouter>,
@@ -1683,7 +1426,7 @@ describe('QuickStartPage', () => {
     const runLayout = await screen.findByTestId('quick-start-run')
     expect(runLayout.getAttribute('data-layout')).toBe('agent-shell')
     expect(runLayout.querySelector('[data-layout="quick-start-scroll-region"]')).toBeTruthy()
-    expect((await screen.findByTestId('quick-start-composer')).getAttribute('data-position')).toBe(
+    expect(screen.getByTestId('quick-start-composer').getAttribute('data-position')).toBe(
       'floating',
     )
     expect(runLayout.querySelector('aside')).toBeNull()
@@ -1972,16 +1715,12 @@ describe('QuickStartPage', () => {
       getWorkflow: vi.fn(() => createdRun),
       resume: vi.fn(async () => createdRun),
     })
-    const conversations = conversationStore()
     renderAt(
       '/quick-start',
       service,
       agentFor({
         startCharacterGeneration: vi.fn(async () => ({ runId: 'run-created' })),
       }),
-      projectReader(),
-      characterReader(),
-      conversations,
     )
 
     fireEvent.change(screen.getByLabelText('创作指令'), {
@@ -2012,10 +1751,6 @@ describe('QuickStartPage', () => {
     expect(
       window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
     ).toBeNull()
-    expect(conversations.save).toHaveBeenCalledWith(
-      'run-created',
-      expect.objectContaining({ version: 0 }),
-    )
   })
 
   it('loads Agent turns only from the matching run sidecar', async () => {

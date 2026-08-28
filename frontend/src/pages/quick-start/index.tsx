@@ -2762,7 +2762,7 @@ function RestoringConversation({ turns }: { turns: readonly AgentConversationTur
     <section className="relative min-h-screen overflow-hidden bg-app-canvas pt-14 text-app-ink">
       <div
         aria-busy="true"
-        data-testid="quick-start-run"
+        data-testid={turns.length > 0 ? 'quick-start-run' : undefined}
         data-layout="agent-shell"
         className="relative h-[calc(100dvh-3.5rem)] overflow-hidden"
       >
