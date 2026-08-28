@@ -231,6 +231,40 @@ def test_put_agent_conversation_persists_full_snapshot(auth_client):
     assert loaded.json()["data"]["version"] == 1
 
 
+def test_put_agent_conversation_appends_after_reopening_history(auth_client):
+    project = _create_project(auth_client)
+    run = auth_client.post(
+        "/workflow-runs",
+        json=_payload(project["id"]),
+    ).json()["data"]
+    url = f"/workflow-runs/{run['id']}/agent-conversation"
+    original_turns = _conversation_turns()
+    created = auth_client.put(
+        url,
+        json={"turns": original_turns, "schema_version": 2, "version": 0},
+    )
+    assert created.status_code == 200
+
+    reopened = auth_client.get(url).json()["data"]
+    appended_turn = {"role": "user", "content": "几天后继续完善披风细节"}
+    appended_turns = [*reopened["turns"], appended_turn]
+    saved = auth_client.put(
+        url,
+        json={
+            "turns": appended_turns,
+            "schema_version": reopened["schema_version"],
+            "version": reopened["version"],
+        },
+    )
+    loaded = auth_client.get(url).json()["data"]
+
+    assert saved.status_code == 200
+    assert saved.json()["data"]["run_id"] == run["id"]
+    assert saved.json()["data"]["version"] == 2
+    assert loaded["turns"] == [*original_turns, appended_turn]
+    assert loaded["version"] == 2
+
+
 def test_put_agent_conversation_replays_the_same_snapshot_idempotently(auth_client):
     project = _create_project(auth_client)
     run = auth_client.post(
