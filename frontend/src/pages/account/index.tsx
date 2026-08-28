@@ -641,7 +641,6 @@ export function AccountPage() {
 
   const hasPassword = currentUser.hasPassword
   const displayName = currentUser.nickname || currentUser.email.split('@')[0]
-  const initial = Array.from(displayName)[0]?.toUpperCase() ?? 'W'
   const cooldownSeconds = securityCooldownSeconds()
 
   return (
@@ -688,7 +687,7 @@ export function AccountPage() {
           data-account-layout="settings"
           className="grid gap-6 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-[clamp(2rem,4vw,4.5rem)]"
         >
-          <aside className="flex flex-col">
+          <aside className="flex flex-col md:sticky md:top-24 md:self-start">
             <nav aria-label="账号设置" className="grid gap-1 border-t border-app-line pt-4">
               {(
                 [
@@ -734,8 +733,14 @@ export function AccountPage() {
                 </header>
 
                 <div className="mt-5 flex items-center gap-4 border-b border-app-line pb-5">
-                  <span className="grid size-14 shrink-0 place-items-center rounded-full bg-app-accent-soft font-serif text-2xl text-app-accent">
-                    {initial}
+                  <span className="grid size-14 shrink-0 place-items-center rounded-full bg-app-accent-soft">
+                    <img
+                      data-testid="account-profile-default-avatar"
+                      src="/windup-mark.svg"
+                      alt=""
+                      aria-hidden="true"
+                      className="size-9 object-contain"
+                    />
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-base font-semibold text-app-ink-soft">
@@ -758,6 +763,7 @@ export function AccountPage() {
                       type="text"
                       autoComplete="nickname"
                       value={profile.nickname}
+                      placeholder="输入昵称"
                       maxLength={MAX_NICKNAME_LENGTH + 1}
                       disabled={profile.isLoading || profile.isSaving}
                       onChange={(event) =>
@@ -869,6 +875,7 @@ export function AccountPage() {
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       maxLength={6}
+                      placeholder="6 位验证码"
                       value={security.code}
                       disabled={security.isChanging || security.isSendingCode}
                       onChange={(event) =>
@@ -886,6 +893,7 @@ export function AccountPage() {
                       id={newPasswordId}
                       type="password"
                       autoComplete="new-password"
+                      placeholder={hasPassword ? '8–128 位新密码' : '8–128 位密码'}
                       value={security.newPassword}
                       disabled={security.isChanging || security.isSendingCode}
                       onChange={(event) =>
@@ -913,6 +921,7 @@ export function AccountPage() {
                       id={confirmPasswordId}
                       type="password"
                       autoComplete="new-password"
+                      placeholder={hasPassword ? '再次输入新密码' : '再次输入密码'}
                       value={security.confirmPassword}
                       disabled={security.isChanging || security.isSendingCode}
                       onChange={(event) =>
