@@ -148,7 +148,7 @@ function WorkflowCanvasScene() {
   )
 }
 
-function StaticCapabilityStory() {
+export function StaticCapabilityStory() {
   return (
     <div className="relative isolate min-h-[46rem] overflow-hidden bg-paper-sunken px-4 py-20 sm:min-h-[50rem] sm:px-8 lg:min-h-[46rem] lg:px-12">
       <header className="relative z-10 mx-auto flex min-h-[34rem] max-w-[64rem] flex-col items-center justify-center text-center">
@@ -183,8 +183,6 @@ function StaticCapabilityStory() {
 }
 
 export function CapabilityStory() {
-  return <StaticCapabilityStory />
-
   const storyRef = useRef<HTMLDivElement>(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const reduceMotion = usePrefersReducedMotion()
