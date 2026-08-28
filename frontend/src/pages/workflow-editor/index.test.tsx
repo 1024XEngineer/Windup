@@ -154,6 +154,18 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('上传过参考图时，它本身就是一个可选母版', async () => {
+    // 用户手上已经有成品角色图时，再生成一遍只会更差。此前「直接用我这张」是个
+    // 不存在的选项——只能眼看着系统拿它去重画，然后从重画的结果里挑。
+    const session = createSession(selectingMasterWithReferenceWorkflow())
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    const own = await screen.findByRole('button', { name: '选择我上传的参考图' })
+    fireEvent.click(own)
+    expect(own.getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('角色母版微调失败时保留输入草稿以便重试', async () => {
     const session = createSession(completedTemplateWorkflow('42'))
     vi.spyOn(session.controller, 'regenerateCharacterTemplate').mockRejectedValueOnce(
@@ -2419,6 +2431,41 @@ function workflowFixture(): WorkflowRun {
         type: 'character-template',
         status: 'locked',
         phase: 'ready',
+        dependsOnNodeIds: ['character-setup'],
+        generations: [],
+        error: null,
+        selectedImageUrl: null,
+      },
+    ],
+  }
+}
+
+/** 母版节点正在选候选，且用户上传过参考图——「直接用我上传那张」的判定发生在这一步。 */
+function selectingMasterWithReferenceWorkflow(): WorkflowRun {
+  return {
+    id: '42',
+    projectId: '1',
+    version: 3,
+    storageStatus: 'active',
+    nodes: [
+      {
+        id: 'character-setup',
+        type: 'character-setup',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: [],
+        generations: [],
+        error: null,
+        input: {
+          prompt: '一头橙色卡通小牛',
+          referenceMedia: ['https://cdn.test/my-cow.png' as unknown as MediaReference],
+        },
+      },
+      {
+        id: 'character-template',
+        type: 'character-template',
+        status: 'active',
+        phase: 'selecting',
         dependsOnNodeIds: ['character-setup'],
         generations: [],
         error: null,
