@@ -1589,3 +1589,44 @@ def test_consumer_trims_heap_after_image_not_email(engine, worker_session, monke
         "payload": {"task_id": 1, "task_type": "character_image"},
     })})
     assert trimmed == [1]
+
+
+def test_handle_generation_keeps_rigged_motions_through_the_queue(db_session, engine, monkeypatch):
+    """已烘动作表必须原样送到执行器。
+
+    丢了它的后果不是报错,是**除走路以外每个动作都出不来**:执行器读到空表会退回
+    ``{walk: 主产物}``,然后以"这个造型只烘了 walk"为由拒掉 idle / jump ——
+    而库里三个都在、界面上三个也都显示已就绪,报错与事实直接矛盾。
+    """
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    motions = {
+        "walk": "https://cdn.test/walk.fbx",
+        "idle": "https://cdn.test/idle.fbx",
+        "jump": "https://cdn.test/jump.fbx",
+    }
+    service = AiGenerationService()
+    task = service.generate_character_action(
+        db_session,
+        user_id=1,
+        input=CharacterActionInput(
+            character_id=1,
+            action_type=ActionType.IDLE,
+            num_frames=8,
+            outfit_id="outfit-default",
+            model_3d_url="https://cdn.test/walk.fbx",
+            rigged_motions=motions,
+        ),
+    )
+    db_session.commit()
+
+    run_action = MagicMock()
+    handle_generation(
+        {"task_id": task.id, "task_type": GenerationType.CHARACTER_ACTION.value},
+        run_image_task=MagicMock(),
+        run_action_task=run_action,
+    )
+    run_action.assert_called_once()
+    assert run_action.call_args.args[1].rigged_motions == motions

@@ -110,6 +110,10 @@ def _action_input(payload: dict) -> CharacterActionInput:
         video_model=payload.get("video_model"),
         outfit_id=payload.get("outfit_id"),
         model_3d_url=payload.get("model_3d_url"),
+        # 漏了它的后果:执行器读到空表,退回 {walk: 主产物},于是**除了走路以外的
+        # 每一个动作都出不来** —— 报错说"这个造型只烘了 walk",而库里明明三个都在,
+        # 界面上三个也都显示已就绪。落库的入参与执行时的入参必须逐字段对上。
+        rigged_motions=dict(payload.get("rigged_motions") or {}),
         stance=CharacterStance(payload["stance"]) if payload.get("stance") else None,
         direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
     )
