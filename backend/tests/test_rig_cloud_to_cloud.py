@@ -78,13 +78,18 @@ def test_only_busy_errors_are_retried(monkeypatch):
 
 
 def test_giving_up_says_what_actually_happened(monkeypatch):
-    """排不上时的错误信息要说清是上游并发限制,不是原样抛上游错误码。"""
+    """放弃时的错误信息要带上**上游的真实 code**,而不是预设一个原因。
+
+    原先这条断言的是「说清是上游并发限制」,而那正是 2026-08-28 把我带偏的东西:
+    三种可重试故障被写死成同一句「只能跑一个绑骨任务」,于是 RequestTimeout
+    也长成了并发问题的样子。判据改成「带上真实 code」。
+    """
     monkeypatch.setattr("time.sleep", lambda _s: None)
 
     def _busy():
         raise UpstreamBusyError("RequestLimitExceeded.JobNumExceed", "满了")
 
-    with pytest.raises(RuntimeError, match="同时只能跑一个绑骨任务"):
+    with pytest.raises(RuntimeError, match="JobNumExceed"):
         _submit_with_backoff(_busy, attempts=2, base=0.01)
 
 
@@ -309,3 +314,59 @@ def test_polling_still_reports_a_real_upstream_failure(monkeypatch):
     prov._max_min = 1
     with pytest.raises(t.JobFailedError, match="绑骨失败"):
         prov._wait("job-2")
+
+
+def test_the_backoff_window_covers_the_measured_upstream_hold():
+    """拦的坏例：退避窗口比上游实际的占位窗口短，等于没重试。
+
+    2026-08-28 生产实测：连着退了 20/40/60/80 秒共 **200 秒仍然排不上**，
+    而占位的那个绑骨任务此时早已 `DONE` —— 上游限的是时间窗，不是「在跑的任务数」。
+
+    首版参数（5 轮 × 20 秒基数 ≈ 5 分钟）是照「单发等约 30 秒即过」定的，那次测量
+    没有覆盖连续提交的场合。这条把**实测下限**钉住：总等待必须显著超过 200 秒。
+    """
+    import inspect
+
+    from windup_framework.providers.render3d.tencent import _submit_with_backoff
+
+    sig = inspect.signature(_submit_with_backoff)
+    attempts = sig.parameters["attempts"].default
+    base = sig.parameters["base"].default
+    total = sum(base * (i + 1) for i in range(attempts - 1))
+    assert total >= 600, (
+        f"总退避 {total:.0f}s 不够 —— 实测 200s 都排不上，而这一步发生在"
+        f"图生 3D 已付 20 积分之后，等不起就是那笔钱白花"
+    )
+
+
+def test_the_retry_log_names_the_real_upstream_code(caplog):
+    """拦的坏例：退避日志写死一句「并发已满」，把所有可重试故障说成同一件事。
+
+    2026-08-28 实测：五轮退避的日志全是「上游绑骨并发已满」，而最后一次的真实错误是
+    `RequestTimeout`（上游持续超时）—— 完全是另一回事。照着那句日志排查「位子被谁
+    占了」，方向从一开始就是错的，而真相就在被丢掉的那个 code 里。
+
+    三种可重试故障的下一步动作并不相同：
+      JobNumExceed    等一等（别人在用）
+      RequestTimeout  上游在抖，换个时间
+      ServerError     上游算法服务异常
+    """
+    import logging
+
+    from windup_framework.providers.render3d.tencent import (
+        UpstreamBusyError, _submit_with_backoff,
+    )
+
+    def _busy():
+        raise UpstreamBusyError("FailedOperation.RequestTimeout", "后端服务超时。")
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(RuntimeError) as err:
+            _submit_with_backoff(_busy, attempts=2, base=0.01)
+
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "RequestTimeout" in logged, f"日志里没有真实 code：{logged}"
+    assert "并发已满" not in logged, "又把超时说成了并发已满"
+    # 最终错误也不该预设原因
+    assert "只能跑一个" not in str(err.value), f"结论里预设了原因：{err.value}"
+    assert "RequestTimeout" in str(err.value)

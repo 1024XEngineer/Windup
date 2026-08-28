@@ -81,10 +81,20 @@ MOTION_TYPE_RANGE = range(1, 49)
 _MAGIC = {"GLB": b"glTF", "FBX": b"Kaydara FBX Binary"}
 
 
-def _submit_with_backoff(submit, *, attempts: int = 5, base: float = 20.0):
+def _submit_with_backoff(submit, *, attempts: int = 8, base: float = 30.0):
     """撞上游并发上限时退避重试。**只重试 UpstreamBusyError** —— 别的错重试等于重复扣费。
 
-    绑骨接口同时只允许 1 个任务,而且上一个 DONE 之后位子也不立刻释放(实测约 30 秒)。
+    绑骨接口同时只允许 1 个任务,而且上一个 DONE 之后位子也不立刻释放。
+
+    **窗口比一开始记的长得多。** 首次实测是"单发等约 30 秒即过",据此把参数定成
+    5 轮 × 20 秒基数(总计约 5 分钟)。2026-08-28 生产端到端里连着退了 20/40/60/80 秒
+    共 200 秒仍然排不上,而占位的那个任务此时**早已 DONE** —— 印证了限的是时间窗、
+    不是"在跑的任务数",而那个窗口远超 30 秒。
+
+    改成 8 轮 × 30 秒基数(30+60+90+…+240,总计约 18 分钟)。为什么敢等这么久:
+    这一步发生在图生 3D **已经付过 20 积分之后**,等 18 分钟换一次成功,
+    比当场失败、让那 20 积分白花划算得多;而它是后台线程,不占用户的等待。
+
     不重试的话,两个用户同时建资产,第二个直接失败 —— 而他的图生 3D 已经付过钱了。
 
     提交本身不计费(计费在上游受理之后),所以重试不会重复扣钱;真正危险的是**成功之后**
@@ -101,11 +111,19 @@ def _submit_with_backoff(submit, *, attempts: int = 5, base: float = 20.0):
             if i + 1 >= attempts:
                 break
             wait = base * (i + 1)
-            logger.info("上游绑骨并发已满,%ds 后重试(%d/%d)", int(wait), i + 1, attempts)
+            # **把上游的原始 code 打出来。** 写死一句"并发已满"会让所有可重试的故障
+            # 长成同一个样子 —— 2026-08-28 实测:五轮退避的日志全是"并发已满",
+            # 而最后一次的真实错误是 RequestTimeout(上游持续超时),完全是另一回事。
+            # 我照着那句日志排查了整整五轮"位子被谁占了",方向从一开始就是错的。
+            logger.info(
+                "上游暂时不可用(%s),%ds 后重试(%d/%d)",
+                getattr(exc, "code", "?"), int(wait), i + 1, attempts,
+            )
             time.sleep(wait)
     raise RuntimeError(
-        f"上游同时只能跑一个绑骨任务,等了 {attempts} 轮仍然排不上。稍后再试。"
-        f"(最后一次:{last})"
+        # 同理:结论里不预设原因。它可能是并发上限,也可能是上游超时或算法服务异常,
+        # 而这三种的下一步动作不同(等一等 vs 查上游状态 vs 换个时间再来)。
+        f"上游连续 {attempts} 轮不可用,最后一次:{last}"
     ) from last
 
 
