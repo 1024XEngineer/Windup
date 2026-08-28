@@ -155,12 +155,16 @@ class Render3DAssetOperations:
         *,
         fetch: Callable[[str], bytes] = fetch_own_media,
         spawn: Callable[[Callable[[], None]], None] = _spawn_thread,
+        image=None,
     ) -> None:
         self._builder = builder
         self._store = store
         self._publish = publish
         self._fetch = fetch
         self._spawn = spawn
+        # 生图网关**懒装配**:没配生图凭证的部署不该因为多了这一步就起不来,
+        # 而绑骨母版转不出来时本来就会退回定妆母版。
+        self._image = image
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.Lock()
 
@@ -260,7 +264,11 @@ class Render3DAssetOperations:
             raise MasterPrecheckFailed(report)
 
         views = self._resolve_views(extra_view_urls)
-        self._start(outfit_key, PHASE_BUILDING, master, views)
+        # 送进图生 3D 的不是定妆母版本身,而是从它转出的 T-Pose 绑骨母版。
+        # 定妆母版对姿势没有任何约束(它的提示词里一个字没提姿势),而自动绑骨要求
+        # 四肢与躯干分得开 —— 让用户自己去写「T-pose」是把绑骨的实现细节漏给用户。
+        rig_master = self._rig_master(master)
+        self._start(outfit_key, PHASE_BUILDING, rig_master, views)
         return self.view(outfit_key)
 
     def _resolve_views(self, urls: Mapping[str, str] | None) -> dict[str, bytes] | None:
@@ -276,6 +284,44 @@ class Render3DAssetOperations:
                 f"视角名只能取 {sorted(VIEW_TYPES)},收到 {bad}。正面走母版,不在这里传。"
             )
         return {k: self._fetch(v) for k, v in urls.items()}
+    #: 绑骨母版相对定妆母版,主体宽高比至少要涨这么多。
+    #:
+    #: 张开手臂必然让主体变宽,所以这是个**能证伪的**判据:比值没涨说明那一版根本
+    #: 没照做,而没照做的后果只有渲出动作才看得见(手臂被焊在躯干上、一摆手躯干跟着变形)。
+    #: 取 1.15 而不是更高:定妆母版本身可能已经半张开,留出余量,只拦"完全没动"。
+    RIG_MASTER_MIN_WIDEN = 1.15
+
+    def _rig_master(self, master: bytes) -> bytes:
+        """定妆母版 → T-Pose 绑骨母版。转不出来就用原图,不让整条建资产失败。
+
+        **失败要能退回**:绑骨母版是为了把姿势做对,不是必要条件 —— 转不出来时
+        用定妆母版仍然可能绑成(线上实测 0.523 就是这么过的),而在这里硬拒等于
+        把一条本来能走的路堵死。
+        """
+        from windup_ai_engine.prompt import build_rig_master_prompt
+
+        try:
+            posed = self._image_gateway().gen_image(build_rig_master_prompt(), [master])
+            before = precheck_master_bytes(master)["facts"]["subject_ratio"]
+            after = precheck_master_bytes(posed)["facts"]["subject_ratio"]
+            if after < before * self.RIG_MASTER_MIN_WIDEN:
+                logger.info(
+                    "绑骨母版没把手臂张开(主体宽高比 %.3f → %.3f,不足 %.2f 倍),改用定妆母版",
+                    before, after, self.RIG_MASTER_MIN_WIDEN,
+                )
+                return master
+            logger.info("绑骨母版已转出(主体宽高比 %.3f → %.3f)", before, after)
+            return posed
+        except Exception:                              # noqa: BLE001 —— 尽力而为
+            logger.exception("转绑骨母版失败,改用定妆母版")
+            return master
+
+    def _image_gateway(self):
+        if self._image is None:
+            from windup_framework.gateway import build_image_gateway
+
+            self._image = build_image_gateway()
+        return self._image
 
     def approve(self, outfit_key: str, master_url: str) -> dict:
         """人点头 → ② 绑骨。**这道闸不会自己点头**,只有本方法能放行,而它只挂在
