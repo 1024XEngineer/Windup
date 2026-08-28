@@ -1,0 +1,38 @@
+{
+  "package_version": 2,
+  "name": "windup-cocos-importer",
+  "version": "0.1.0",
+  "description": "从 Windup 网页一键导入 2D 角色资产到当前 Cocos Creator 工程。",
+  "author": "xyh202131",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/main.js",
+  "editor": ">=3.8.8 <3.9.0",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build": "node scripts/build.mjs",
+    "verify-package": "node scripts/verify-package.mjs ../dist/windup-cocos-importer.zip"
+  },
+  "contributions": {
+    "menu": [
+      {
+        "path": "Windup",
+        "label": "显示连接码",
+        "message": "show-pairing-code"
+      },
+      {
+        "path": "Windup",
+        "label": "连接状态",
+        "message": "show-connection-status"
+      }
+    ],
+    "messages": {
+      "show-pairing-code": {
+        "methods": ["showPairingCode"]
+      },
+      "show-connection-status": {
+        "methods": ["showConnectionStatus"]
+      }
+    }
+  }
+}
