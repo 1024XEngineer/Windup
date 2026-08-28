@@ -124,6 +124,44 @@ function actionRunFixture(base: WorkflowRun): WorkflowRun {
 }
 
 describe('createProgressiveExportModel', () => {
+  it('导出与预览共用密集动作的规范化逐帧时长', () => {
+    const denseWalk: Character = {
+      ...character,
+      outfits: [
+        {
+          ...character.outfits[0]!,
+          actions: [
+            {
+              id: 'walk-dense',
+              outfitId: 'outfit-1',
+              name: '行走',
+              type: 'walk',
+              loop: true,
+              fps: 8,
+              frameCount: 32,
+              frames: Array.from({ length: 32 }, (_, index) => ({
+                index,
+                imageUrl: `/walk-${index}.png`,
+                durationMs: 125,
+              })),
+            },
+          ],
+        },
+      ],
+    }
+
+    const model = createProgressiveExportModel({
+      project,
+      character: denseWalk,
+      outfitId: 'outfit-1',
+    })
+    const frames = model.actions[0]!.sequences[0]!.frames
+
+    expect(frames).toHaveLength(32)
+    expect(frames.map((frame) => frame.durationMs)).toEqual(Array.from({ length: 32 }, () => 31.25))
+    expect(frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(1000)
+  })
+
   it('拒绝把其它 WorkflowRun 的完成度拼到当前角色', () => {
     expect(() =>
       createProgressiveExportModel({
@@ -435,7 +473,11 @@ describe('createProgressiveExportModel', () => {
       error: null,
       result: {
         type: 'complete_animation',
-        frames: [{ index: 0, url: '/walk-0.png', durationMs: 100 }],
+        frames: Array.from({ length: 32 }, (_, index) => ({
+          index,
+          url: `/walk-${index}.png`,
+          durationMs: 125,
+        })),
       },
     } satisfies Generation<'complete_animation'>
 
@@ -451,8 +493,18 @@ describe('createProgressiveExportModel', () => {
     expect(model.actions[0]).toMatchObject({ id: 'walk-full', name: '行走' })
     expect(model.actions[0]?.sequences[0]).toMatchObject({
       qualityStatus: 'pending',
-      frames: [{ index: 0, imageUrl: '/walk-0.png', durationMs: 100 }],
+      frames: Array.from({ length: 32 }, (_, index) => ({
+        index,
+        imageUrl: `/walk-${index}.png`,
+        durationMs: 31.25,
+      })),
     })
+    expect(
+      model.actions[0]?.sequences[0]?.frames.reduce(
+        (total, currentFrame) => total + currentFrame.durationMs,
+        0,
+      ),
+    ).toBe(1000)
   })
 
   it('落位几何取后端报的那份，而不是前端自己按 0.92 算', () => {

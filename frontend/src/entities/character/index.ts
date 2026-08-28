@@ -26,6 +26,8 @@ export {
   validateDirectionalAsset,
 }
 export type { DirectionalAssetValidation }
+export { resolveAnimationFrameDurations } from './frame-timing'
+export type { AnimationTimingAction, AnimationTimingFrame } from './frame-timing'
 
 /** PR #75 将动作类型定义为字符串；已知类型之外的后端扩展也应原样保留。 */
 export type ActionType = string

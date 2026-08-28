@@ -2,17 +2,19 @@ import exportSchemaText from './export-package.schema.json?raw'
 import { EXPORT_STAGES } from './model'
 import type { ExportPackageModel } from './model'
 
-export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.2.0'
+export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.3.0'
 export const EXPORT_PACKAGE_JSON_SCHEMA_TEXT = exportSchemaText
 
 export interface GenericExportFrame {
   index: number
   file: string
+  duration_ms: number
 }
 
 export interface GenericExportAction {
   id: string
   name: string
+  direction: string
   fps: number
   loop: boolean
   quality_status: ExportPackageModel['actions'][number]['sequences'][number]['qualityStatus']
@@ -59,6 +61,10 @@ function requireText(field: string, value: string): void {
 
 function requirePositiveInteger(field: string, value: number): void {
   if (!Number.isInteger(value) || value < 1) fail(field, '必须是大于 0 的整数')
+}
+
+function requirePositiveNumber(field: string, value: number): void {
+  if (!Number.isFinite(value) || value <= 0) fail(field, '必须是大于 0 的数值')
 }
 
 function requireUnitNumber(field: string, value: number): void {
@@ -145,10 +151,7 @@ export function validateExportPackageModel(model: ExportPackageModel): void {
           fail(`${sequenceField}.frames[${frameIndex}].index`, `必须连续且等于 ${frameIndex}`)
         }
         requireText(`${sequenceField}.frames[${frameIndex}].imageUrl`, frame.imageUrl)
-        requirePositiveInteger(
-          `${sequenceField}.frames[${frameIndex}].durationMs`,
-          frame.durationMs,
-        )
+        requirePositiveNumber(`${sequenceField}.frames[${frameIndex}].durationMs`, frame.durationMs)
       })
     })
   })

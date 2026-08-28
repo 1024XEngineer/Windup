@@ -81,8 +81,10 @@ export {
   characterTemplateImages,
   characterTemplatesFromImages,
   characterTemplatesFromViewSheetCells,
+  resolveAnimationFrameDurations,
   validateDirectionalAsset,
 } from './character'
+export type { AnimationTimingAction, AnimationTimingFrame } from './character'
 export {
   ACTION_DIRECTIONS,
   getDirectionGridLayout,

@@ -5,10 +5,11 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createAssetExportPlan,
   exportGameAssets,
+  palettizeGifFrame,
   type AssetExportRuntime,
   type AssetExportTarget,
 } from './asset-export'
-import { COCOS_TARGET_READINESS, toCocosAnchor } from './cocos-target'
+import { COCOS_CREATOR_TARGET, COCOS_TARGET_READINESS, toCocosAnchor } from './cocos-target'
 import { EXPORT_PACKAGE_JSON_SCHEMA_TEXT, validateExportPackageModel } from './contract'
 import type { ExportAction, ExportFrame, ExportPackageModel } from './model'
 
@@ -190,7 +191,7 @@ describe('asset export', () => {
       new TextDecoder().decode(playtestEntries.get(`${root}/playtest.json`)),
     )
     expect(playtest).toEqual({
-      schema_version: '1.2.0',
+      schema_version: '1.3.0',
       initial_action_id: 'walk-abcdef12',
       action_ids: ['walk-abcdef12'],
     })
@@ -204,11 +205,56 @@ describe('asset export', () => {
     })
   })
 
-  it('明确 Cocos 尚未就绪，并只落地已确认的锚点坐标转换', () => {
-    expect(COCOS_TARGET_READINESS.ready).toBe(false)
+  it('声明 Cocos PNG + plist 目标已就绪，并转换锚点坐标', () => {
+    expect(COCOS_TARGET_READINESS.ready).toBe(true)
     const anchor = toCocosAnchor({ x: 0.5, y: 0.9 })
     expect(anchor.x).toBe(0.5)
     expect(anchor.y).toBeCloseTo(0.1)
+  })
+
+  it('Cocos target 输出同名 PNG/plist 和保留逐帧时长的动画清单', async () => {
+    const entries = await readStoredZip(
+      (
+        await exportGameAssets(model, {
+          runtime: runtime(),
+          targets: [COCOS_CREATOR_TARGET],
+        })
+      ).blob,
+    )
+    const root = 'Aster-character-1-Explorer-outfit-1'
+    const targetRoot = `${root}/targets/cocos-creator-3x`
+    const atlas = entries.get(`${root}/atlas/Walk-Forward-south.png`)
+    const cocosAtlas = entries.get(`${targetRoot}/atlases/Walk-Forward-south.png`)
+    const plist = new TextDecoder().decode(
+      entries.get(`${targetRoot}/atlases/Walk-Forward-south.plist`),
+    )
+    const manifest = JSON.parse(
+      new TextDecoder().decode(entries.get(`${targetRoot}/windup-animation.json`)),
+    )
+
+    expect(cocosAtlas).toEqual(atlas)
+    expect(plist).toContain('<key>Walk-Forward-south_000.png</key>')
+    expect(plist).toContain('<string>{{0,0},{32,40}}</string>')
+    expect(plist).toContain('<key>Walk-Forward-south_008.png</key>')
+    expect(plist).toContain('<string>{{0,40},{32,40}}</string>')
+    expect(plist).toContain('<key>textureFileName</key>')
+    expect(plist).toContain('<string>Walk-Forward-south.png</string>')
+    expect(manifest).toMatchObject({
+      engine: 'cocos-creator-3.x',
+      animations: [
+        {
+          id: 'walk-abcdef12',
+          direction: 'south',
+          loop: true,
+          anchor: { x: 0.5, y: 0.1 },
+        },
+      ],
+    })
+    expect(manifest.animations[0].frames[0]).toEqual({
+      sprite_frame: 'Walk-Forward-south_000.png',
+      duration_ms: 100,
+    })
+    expect(manifest.animations[0].frames).toHaveLength(9)
   })
 
   it('按动作名和方向生成连续三位帧名，并按八列排列图集', () => {
@@ -222,11 +268,55 @@ describe('asset export', () => {
       columns: 8,
       rows: 2,
     })
+    expect(plan[0]).not.toHaveProperty('previewWebpFile')
+    expect(plan[0]).not.toHaveProperty('previewApngFile')
     expect(plan[0]?.frames[0]?.filename).toBe('Walk-Forward-south_000.png')
     expect(plan[0]?.frames[8]?.filename).toBe('Walk-Forward-south_008.png')
   })
 
-  it('为每个动作方向生成可识别的 GIF 预览，并在 meta.json 中声明路径', async () => {
+  it('GIF 为透明像素预留索引，并把多色帧平均通道误差控制在 5 以内', () => {
+    const width = 64
+    const height = 64
+    const rgba = new Uint8ClampedArray(width * height * 4)
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const pixel = y * width + x
+        rgba[pixel * 4] = Math.round((x / (width - 1)) * 255)
+        rgba[pixel * 4 + 1] = Math.round((y / (height - 1)) * 255)
+        rgba[pixel * 4 + 2] = Math.round((((x + y) % width) / (width - 1)) * 255)
+        rgba[pixel * 4 + 3] = x < 4 ? 0 : 255
+      }
+    }
+
+    const result = palettizeGifFrame(rgba)
+    let absoluteError = 0
+    let opaqueChannels = 0
+    for (let pixel = 0; pixel < width * height; pixel += 1) {
+      if (rgba[pixel * 4 + 3] === 0) {
+        expect(result.indexed[pixel]).toBe(result.transparentIndex)
+        continue
+      }
+      expect(result.indexed[pixel]).not.toBe(result.transparentIndex)
+      const color = result.palette[result.indexed[pixel]!]
+      for (let channel = 0; channel < 3; channel += 1) {
+        absoluteError += Math.abs(rgba[pixel * 4 + channel]! - color![channel]!)
+        opaqueChannels += 1
+      }
+    }
+
+    expect(result.palette.length).toBeLessThanOrEqual(256)
+    expect(absoluteError / opaqueChannels).toBeLessThan(5)
+  })
+
+  it('GIF 全透明帧仍生成有效的单色透明调色板', () => {
+    const result = palettizeGifFrame(new Uint8ClampedArray(4 * 4 * 4))
+
+    expect(result.palette).toEqual([[0, 0, 0]])
+    expect(result.indexed).toEqual(new Uint8Array(16))
+    expect(result.transparentIndex).toBe(0)
+  })
+
+  it('保留原始 PNG、图集和 GIF 预览，并在 meta.json 中声明方向与逐帧时长', async () => {
     const phases: string[] = []
     const result = await exportGameAssets(model, {
       runtime: runtime(),
@@ -243,6 +333,8 @@ describe('asset export', () => {
     expect(names).toContain(`${root}/README.md`)
     expect(names).toContain(`${root}/atlas/Walk-Forward-south.png`)
     expect(names).toContain(`${root}/preview/Walk-Forward-south.gif`)
+    expect(names).not.toContain(`${root}/preview/Walk-Forward-south.webp`)
+    expect(names).not.toContain(`${root}/preview/Walk-Forward-south.apng`)
     expect(names.filter((name) => name.includes('/frames/'))).toHaveLength(9)
 
     const gif = entries.get(`${root}/preview/Walk-Forward-south.gif`)
@@ -253,13 +345,14 @@ describe('asset export', () => {
     const validate = new Ajv2020().compile(schema)
     expect(validate(meta), JSON.stringify(validate.errors)).toBe(true)
     expect(meta).toMatchObject({
-      schema_version: '1.2.0',
+      schema_version: '1.3.0',
       character: { id: 'character-1', name: 'Aster' },
       canvas: { w: 32, h: 40 },
       source: { workflow_run_id: 'run-1', generation_ids: ['generation-1'] },
     })
     expect(meta.actions[0]).toMatchObject({
       name: 'Walk / Forward',
+      direction: 'south',
       fps: 10,
       loop: true,
       anchor: { x: 0.5, y: 0.9 },
@@ -267,6 +360,38 @@ describe('asset export', () => {
       preview_gif: 'preview/Walk-Forward-south.gif',
       atlas: { cols: 8, rows: 2, cell: { w: 32, h: 40 } },
     })
+    expect(meta.actions[0].frames.slice(0, 2)).toEqual([
+      { index: 0, file: 'Walk-Forward-south_000.png', duration_ms: 100 },
+      { index: 1, file: 'Walk-Forward-south_001.png', duration_ms: 100 },
+    ])
+    expect(meta.actions[0]).not.toHaveProperty('preview_webp')
+    expect(meta.actions[0]).not.toHaveProperty('preview_apng')
+  })
+
+  it('接受与预览一致的亚毫秒精度规范化帧时长', async () => {
+    const denseTimingModel: ExportPackageModel = {
+      ...model,
+      actions: [
+        {
+          ...model.actions[0]!,
+          sequences: [
+            {
+              ...model.actions[0]!.sequences[0]!,
+              frames: model.actions[0]!.sequences[0]!.frames.map((currentFrame) => ({
+                ...currentFrame,
+                durationMs: 31.25,
+              })),
+            },
+          ],
+        },
+      ],
+    }
+
+    await expect(exportGameAssets(denseTimingModel, { runtime: runtime() })).resolves.toMatchObject(
+      {
+        filename: 'windup-Aster-character-1-Explorer-outfit-1.zip',
+      },
+    )
   })
 
   it('把 Outfit 标识写入包名，避免同一 Character 的不同造型互相覆盖', async () => {

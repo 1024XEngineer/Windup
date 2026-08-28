@@ -1,4 +1,10 @@
-import type { ActionDirection, ActionType, Character, Frame } from '@/entities'
+import {
+  resolveAnimationFrameDurations,
+  type ActionDirection,
+  type ActionType,
+  type Character,
+  type Frame,
+} from '@/entities'
 
 export interface PlaytestFrame {
   readonly imageUrl: string
@@ -46,48 +52,6 @@ export type PlaytestModelResult =
   | { readonly ok: true; readonly model: PlaytestModel }
   | { readonly ok: false; readonly reason: 'outfit_not_found' }
 
-const DEFAULT_FRAME_DURATION_MS = 100
-const DENSE_GENERATED_TIMING = {
-  idle: {
-    frameCount: 12,
-    sourceFrameDurationsMs: [125, 450],
-    cycleDurationMs: 1000,
-    loopOnly: true,
-  },
-  walk: {
-    frameCount: 32,
-    sourceFrameDurationsMs: [125],
-    cycleDurationMs: 1000,
-    loopOnly: true,
-  },
-  run: {
-    frameCount: 32,
-    sourceFrameDurationsMs: [90],
-    cycleDurationMs: 720,
-    loopOnly: true,
-  },
-  jump: {
-    frameCount: 32,
-    sourceFrameDurationsMs: [110],
-    cycleDurationMs: 1000,
-    loopOnly: false,
-  },
-  attack: {
-    frameCount: 32,
-    sourceFrameDurationsMs: [90],
-    cycleDurationMs: 1000,
-    loopOnly: false,
-  },
-} as const
-
-function frameDuration(durationMs: number | null, fps: number): number {
-  if (durationMs !== null && Number.isFinite(durationMs) && durationMs > 0) {
-    return Math.max(1, durationMs)
-  }
-  if (Number.isFinite(fps) && fps > 0) return Math.max(1, Math.round(1000 / fps))
-  return DEFAULT_FRAME_DURATION_MS
-}
-
 /**
  * 播放顺序由 Frame.index 决定，不是数组下标。
  * 后端整棵下发资产树，数组顺序没有被契约保证；照数组播的话，顺序一变动画就乱，
@@ -102,39 +66,10 @@ function playtestFrames(
   frames: readonly Frame[],
 ): readonly PlaytestFrame[] {
   const ordered = orderedFrames(frames)
-  const playbackFrames = ordered.map((frame) => ({
+  const durations = resolveAnimationFrameDurations(action, ordered)
+  return ordered.map((frame, index) => ({
     imageUrl: frame.imageUrl,
-    durationMs: frameDuration(frame.durationMs, action.fps),
-  }))
-  const denseTiming =
-    action.type === 'idle' ||
-    action.type === 'walk' ||
-    action.type === 'run' ||
-    action.type === 'jump' ||
-    action.type === 'attack'
-      ? DENSE_GENERATED_TIMING[action.type]
-      : undefined
-  const sourceFrameDurationMs = ordered[0]?.durationMs
-  // 只兼容生成器已知的密集帧形状。默认非走动动作与 walk 共用 1 秒播放周期；
-  // 帧数、循环性或任一原始时值不完全匹配时仍尊重资产合同，避免误改用户编排。
-  if (
-    denseTiming === undefined ||
-    (denseTiming.loopOnly && !action.loop) ||
-    ordered.length !== denseTiming.frameCount ||
-    !denseTiming.sourceFrameDurationsMs.some(
-      (sourceDurationMs) => sourceFrameDurationMs === sourceDurationMs,
-    ) ||
-    ordered.some((frame) => frame.durationMs !== sourceFrameDurationMs)
-  ) {
-    return playbackFrames
-  }
-
-  const timingScale =
-    denseTiming.cycleDurationMs /
-    playbackFrames.reduce((total, frame) => total + frame.durationMs, 0)
-  return playbackFrames.map((frame) => ({
-    ...frame,
-    durationMs: frame.durationMs * timingScale,
+    durationMs: durations[index]!,
   }))
 }
 

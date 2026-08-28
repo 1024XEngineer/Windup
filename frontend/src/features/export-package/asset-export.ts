@@ -1,4 +1,4 @@
-import { applyPalette, GIFEncoder, quantize } from 'gifenc'
+import { applyPalette, GIFEncoder, quantize, type GifPalette } from 'gifenc'
 
 import {
   EXPORT_PACKAGE_JSON_SCHEMA_TEXT,
@@ -57,6 +57,8 @@ export interface AssetExportTargetContext {
   model: ExportPackageModel
   metadata: GenericExportMetadata
   plan: readonly PlannedSequence[]
+  /** 读取通用包根目录下已经生成的文件，供 target 复用无损图集而不重复渲染。 */
+  readFile(relativePath: string): Uint8Array | null
 }
 
 /** 新引擎只实现 target，不应修改通用 meta.json、frames 与 atlas。 */
@@ -90,6 +92,61 @@ interface LoadedStaticAsset {
 interface ZipEntry {
   name: string
   data: Uint8Array
+}
+
+export interface PalettizedGifFrame {
+  palette: GifPalette
+  indexed: Uint8Array
+  transparentIndex: number
+}
+
+const GIF_ALPHA_THRESHOLD = 127
+
+export function palettizeGifFrame(rgba: Uint8Array | Uint8ClampedArray): PalettizedGifFrame {
+  const pixelCount = rgba.length / 4
+  let opaqueCount = 0
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    if (rgba[pixel * 4 + 3]! > GIF_ALPHA_THRESHOLD) opaqueCount += 1
+  }
+
+  if (opaqueCount === 0) {
+    return {
+      palette: [[0, 0, 0]],
+      indexed: new Uint8Array(pixelCount),
+      transparentIndex: 0,
+    }
+  }
+
+  const hasTransparency = opaqueCount !== pixelCount
+  const opaqueRgba = new Uint8ClampedArray(opaqueCount * 4)
+  let target = 0
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const source = pixel * 4
+    if (rgba[source + 3]! <= GIF_ALPHA_THRESHOLD) continue
+    opaqueRgba[target] = rgba[source]!
+    opaqueRgba[target + 1] = rgba[source + 1]!
+    opaqueRgba[target + 2] = rgba[source + 2]!
+    opaqueRgba[target + 3] = 255
+    target += 4
+  }
+
+  const opaquePalette = quantize(opaqueRgba, hasTransparency ? 255 : 256, {
+    format: 'rgb565',
+  })
+  const opaqueIndexed = applyPalette(rgba, opaquePalette, 'rgb565')
+  if (!hasTransparency) {
+    return { palette: opaquePalette, indexed: opaqueIndexed, transparentIndex: -1 }
+  }
+
+  const indexed = new Uint8Array(pixelCount)
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    indexed[pixel] = rgba[pixel * 4 + 3]! <= GIF_ALPHA_THRESHOLD ? 0 : opaqueIndexed[pixel]! + 1
+  }
+  return {
+    palette: [[0, 0, 0], ...opaquePalette],
+    indexed,
+    transparentIndex: 0,
+  }
 }
 
 function safeSegment(value: string, fallback: string): string {
@@ -378,9 +435,7 @@ function renderGif(
       context.clearRect(0, 0, canvas.width, canvas.height)
       context.drawImage(frame.decoded.source, 0, 0)
       const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data
-      const palette = quantize(rgba, 256, { format: 'rgba4444', oneBitAlpha: true })
-      const indexed = applyPalette(rgba, palette, 'rgba4444')
-      const transparentIndex = palette.findIndex((color) => color[3] === 0)
+      const { palette, indexed, transparentIndex } = palettizeGifFrame(rgba)
       gif.writeFrame(indexed, canvas.width, canvas.height, {
         palette,
         delay: frame.frame.durationMs,
@@ -425,7 +480,12 @@ function createMetadata(
       fps: item.action.fps,
       loop: item.sequence.loop,
       quality_status: item.sequence.qualityStatus,
-      frames: item.frames.map((frame) => ({ index: frame.index, file: frame.filename })),
+      direction: item.sequence.direction,
+      frames: item.frames.map((frame) => ({
+        index: frame.index,
+        file: frame.filename,
+        duration_ms: frame.frame.durationMs,
+      })),
       anchor: { ...item.sequence.anchor },
       foot_y: item.sequence.footY,
       preview_gif: item.previewGifFile,
@@ -458,7 +518,7 @@ function createReadme(model: ExportPackageModel): string {
 - \`meta.json\`: 动作、帧率、循环、画布、锚点、脚底线、图集与生成记录。
 - \`frames/<action>/\`: 连续编号的透明 PNG 原始帧。
 - \`atlas/<action>.png\`: 按 \`meta.json\` 中 cols、rows 和 cell 切分的图集。
-- \`preview/<action>.gif\`: 按逐帧时长生成的 GIF 快速预览；PNG 原始帧仍是无损源。
+- \`preview/<action>.gif\`: 兼容旧平台的 GIF 预览，颜色可能因格式限制产生损失。
 - \`schema.json\`: 校验 \`meta.json\` 的 JSON Schema。
 - \`targets/<target>/\`: 可选引擎适配器产生的原生文件。
 
@@ -469,8 +529,9 @@ function createReadme(model: ExportPackageModel): string {
 
 ## Cocos Creator 状态
 
-本包没有伪造 .anim 或 .meta。Issue #94 要求先在真实 Creator 3.x 中确认图集切分、UUID 和版本格式；
-验证完成前只能使用通用 frames、atlas 和 meta.json，不能声称“拖入即播放”。
+默认下载会在 targets/cocos-creator-3x/ 中附带同名 PNG + TexturePacker plist，二者一起导入
+Cocos Creator 3.x 后可识别为 SpriteAtlas。windup-animation.json 保存逐帧时长、方向、锚点和循环信息。
+本包不会伪造依赖实际项目 UUID 与 Creator 小版本的 .meta 或 .anim。
 `
 }
 
@@ -645,9 +706,13 @@ export async function exportGameAssets(
     })
   }
 
+  const readFile = (relativePath: string): Uint8Array | null => {
+    const normalized = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+    return entries.find((entry) => entry.name === `${root}/${normalized}`)?.data ?? null
+  }
   for (const target of options.targets ?? []) {
     const targetId = safeSegment(target.id, 'target')
-    const files = await target.createFiles({ model, metadata, plan })
+    const files = await target.createFiles({ model, metadata, plan, readFile })
     for (const [index, file] of files.entries()) {
       entries.push({
         name: `${root}/${safeTargetPath(targetId, file.path, index)}`,

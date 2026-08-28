@@ -22,7 +22,7 @@ export {
   validateExportPackageModel,
   type GenericExportMetadata,
 } from './contract'
-export { COCOS_TARGET_READINESS, toCocosAnchor } from './cocos-target'
+export { COCOS_CREATOR_TARGET, COCOS_TARGET_READINESS, toCocosAnchor } from './cocos-target'
 export {
   createAssetExportPlan,
   exportGameAssets,

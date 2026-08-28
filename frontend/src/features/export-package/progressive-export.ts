@@ -8,7 +8,7 @@ import type {
   WorkflowActionInput,
   WorkflowRun,
 } from '@/entities'
-import { getDirectionProfile } from '@/entities'
+import { getDirectionProfile, resolveAnimationFrameDurations } from '@/entities'
 
 import type {
   ExportAction,
@@ -56,21 +56,33 @@ function orderedFrames(action: Action): readonly Frame[] {
   return frames
 }
 
-function durationMs(frame: Frame, action: Action): number {
-  if (frame.durationMs !== null && Number.isFinite(frame.durationMs) && frame.durationMs > 0) {
-    return Math.round(frame.durationMs)
+function requireExportTiming(
+  actionName: string,
+  fps: number,
+  frames: readonly { durationMs: number | null }[],
+): void {
+  const needsFps = frames.some(
+    (frame) =>
+      frame.durationMs === null || !Number.isFinite(frame.durationMs) || frame.durationMs <= 0,
+  )
+  if (needsFps && (!Number.isFinite(fps) || fps <= 0)) {
+    throw new Error(`${actionName}缺少有效的帧时长和 FPS`)
   }
-  if (!Number.isFinite(action.fps) || action.fps <= 0) {
-    throw new Error(`${action.name}缺少有效的帧时长和 FPS`)
-  }
-  return Math.max(1, Math.round(1000 / action.fps))
 }
 
-function exportFrames(action: Action): readonly ExportFrame[] {
-  return orderedFrames(action).map((frame) => ({
+function exportFrames(
+  action: Action,
+  sourceFrames: readonly Frame[] = orderedFrames(action),
+): readonly ExportFrame[] {
+  const frames = [...sourceFrames].sort((left, right) => left.index - right.index)
+  const invalid = frames.find((frame, index) => frame.index !== index)
+  if (invalid !== undefined) throw new Error(`${action.name}的帧序号必须从 0 连续排列`)
+  requireExportTiming(action.name, action.fps, frames)
+  const durations = resolveAnimationFrameDurations(action, frames)
+  return frames.map((frame, index) => ({
     index: frame.index,
     imageUrl: frame.imageUrl,
-    durationMs: durationMs(frame, action),
+    durationMs: durations[index]!,
   }))
 }
 
@@ -102,18 +114,7 @@ function exportAction(action: Action, project: Project): ExportAction {
           loop: action.loop,
           ...sequenceGeometry(undefined, project.spriteSize.height),
           qualityStatus: 'passed' as const,
-          frames: [...sequence.frames]
-            .sort((left, right) => left.index - right.index)
-            .map((frame, index) => {
-              if (frame.index !== index) {
-                throw new Error(`${action.name}的${sequence.direction}方向帧序号必须从 0 连续排列`)
-              }
-              return {
-                index: frame.index,
-                imageUrl: frame.imageUrl,
-                durationMs: durationMs(frame, action),
-              }
-            }),
+          frames: exportFrames(action, sequence.frames),
         }))
       : [
           {
@@ -232,20 +233,24 @@ function generatedActions(
         ) {
           throw new Error(`${first.input.name}缺少${direction}方向完整动画`)
         }
-        const frames = [...generation.result.frames]
-          .sort((left, right) => left.index - right.index)
-          .map((frame, index) => {
-            if (frame.index !== index) {
-              const directionLabel =
-                project.directionalMovement === 'single' ? '' : `${direction}方向`
-              throw new Error(`${first.input.name}的${directionLabel}帧序号必须从 0 连续排列`)
-            }
-            const durationMs =
-              frame.durationMs !== null && frame.durationMs > 0
-                ? Math.round(frame.durationMs)
-                : Math.max(1, Math.round(1000 / first.input.fps))
-            return { index: frame.index, imageUrl: frame.url, durationMs }
-          })
+        const sourceFrames = [...generation.result.frames].sort(
+          (left, right) => left.index - right.index,
+        )
+        const invalidFrame = sourceFrames.find((frame, index) => frame.index !== index)
+        if (invalidFrame !== undefined) {
+          const directionLabel = project.directionalMovement === 'single' ? '' : `${direction}方向`
+          throw new Error(`${first.input.name}的${directionLabel}帧序号必须从 0 连续排列`)
+        }
+        requireExportTiming(first.input.name, first.input.fps, sourceFrames)
+        const durations = resolveAnimationFrameDurations(
+          { type: first.input.type, loop: true, fps: first.input.fps },
+          sourceFrames,
+        )
+        const frames = sourceFrames.map((frame, index) => ({
+          index: frame.index,
+          imageUrl: frame.url,
+          durationMs: durations[index]!,
+        }))
         return {
           direction: project.directionalMovement === 'single' ? 'default' : direction,
           expectedFrameCount: frames.length,

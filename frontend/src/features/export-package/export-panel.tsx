@@ -8,6 +8,7 @@ import {
   useProductPopoverMotion,
 } from '@/shared/ui'
 import type { ExportPackageModel } from './model'
+import { COCOS_CREATOR_TARGET } from './cocos-target'
 import {
   createAssetExportPlan,
   exportGameAssets,
@@ -56,7 +57,8 @@ const STAGE_LABELS: Readonly<Record<ExportPackageModel['stage'], string>> = {
   playtest: 'Playtest 运行包',
 }
 
-const defaultExporter: AssetExporter = (model, onPhase) => exportGameAssets(model, { onPhase })
+const defaultExporter: AssetExporter = (model, onPhase) =>
+  exportGameAssets(model, { onPhase, targets: [COCOS_CREATOR_TARGET] })
 
 interface ExportRequest {
   model: ExportPackageModel

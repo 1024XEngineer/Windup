@@ -172,7 +172,7 @@ export const guideChapters: readonly GuideChapter[] = [
       {
         title: '根据游戏接入方式选择文件',
         description:
-          '资源包会按角色当前的完成情况整理母版、首帧、透明 PNG、Sprite Sheet、逐动作方向 GIF 预览和动画说明文件。你可以把 PNG 或 Sprite Sheet 接进游戏，也可以先用 GIF 快速和队友确认动作方向与节奏。',
+          '资源包会按角色当前的完成情况整理母版、首帧、透明 PNG、Sprite Sheet 和兼容 GIF 预览。正式接入游戏请使用无损 PNG 帧或 Sprite Sheet；动作方向、逐帧时长、锚点与切分信息都写在元数据中。',
       },
       {
         title: '缺失帧不会被静默忽略',
