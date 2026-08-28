@@ -70,6 +70,7 @@ def _direction_set_payload(project_id: int, character_id: int, **overrides) -> d
 
 
 _MASTER_URL = "https://cdn.example.com/masters/hero.png"
+_EAST_TEMPLATE_URL = "https://cdn.example.com/masters/hero-east.png"
 
 
 def _action_payload(project_id: int, character_id: int, **overrides) -> dict:
@@ -460,6 +461,103 @@ def test_view_sheet_rejects_client_supplied_reference_url(auth_client):
     body = response.json()
     assert body["code"] == 400
     assert "reference_image_url" in body["message"] or "Extra" in body["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def _first_frame_payload(project_id: int, character_id: int, **overrides) -> dict:
+    payload = {
+        "project_id": project_id,
+        "character_id": character_id,
+        "reference_image_url": _EAST_TEMPLATE_URL,
+        "prompt": "walk first frame, left foot forward",
+        "width": 64,
+        "height": 64,
+        "direction": "east",
+        "action_type": "walk",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_first_frame_uses_heading_template_not_south_master(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client,
+        project["id"],
+        reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    body = auth_client.post(
+        "/generation/first-frame",
+        json=_first_frame_payload(project["id"], character["id"]),
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["task_type"] == "character_first_frame"
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["reference_image_url"] == _EAST_TEMPLATE_URL
+    assert body["data"]["input_payload"]["direction"] == "east"
+    assert body["data"]["input_payload"]["action_type"] == "walk"
+    assert "lock_orientation" not in body["data"]["input_payload"]
+    assert body["data"]["input_payload"]["prompt"] == "walk first frame, left foot forward"
+    assert publisher.enqueue.call_args.kwargs["msg_type"] == "character_image"
+    assert publisher.enqueue.call_args.kwargs["payload"]["task_type"] == "character_first_frame"
+    assert publisher.enqueue.call_args.kwargs["stream"] == "windup:stream:generation-image"
+
+
+def test_first_frame_without_heading_template_is_rejected_before_queueing(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    response = auth_client.post(
+        "/generation/first-frame",
+        json=_first_frame_payload(project["id"], character["id"], reference_image_url=""),
+    )
+
+    assert response.json()["code"] == 400
+    assert "该朝向已确认的立绘" in response.json()["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def test_first_frame_rejects_unidirectional_project(auth_client):
+    project = _create_project(auth_client, name="单向", directional_movement=1)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    response = auth_client.post(
+        "/generation/first-frame",
+        json=_first_frame_payload(project["id"], character["id"]),
+    )
+
+    assert response.json()["code"] == 400
+    assert "只用于四向或八向" in response.json()["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def test_first_frame_rejects_west_for_four_way_project(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    body = auth_client.post(
+        "/generation/first-frame",
+        json=_first_frame_payload(project["id"], character["id"], direction="west"),
+    ).json()
+
+    assert body["code"] == 400
+    assert "west" in body["message"]
     publisher.enqueue.assert_not_called()
 
 

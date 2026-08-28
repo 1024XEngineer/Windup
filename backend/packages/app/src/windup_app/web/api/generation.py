@@ -8,6 +8,7 @@
 POST /generation/image                     提交角色图片生成任务
 POST /generation/four-view                 提交四向立绘 sheet
 POST /generation/eight-view                提交八向立绘 sheet
+POST /generation/first-frame               提交锁定朝向的动作首帧
 POST /generation/action                    提交角色动作生成任务
 GET  /generation/tasks/{task_id}           查询任务状态
 GET  /generation/tasks/{task_id}/stream    SSE 订阅任务进度
@@ -52,6 +53,7 @@ from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterDirectionSetInput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     CharacterViewSheetInput,
     GenerationTask,
@@ -329,6 +331,34 @@ class CharacterViewSheetGenerateRequest(BaseModel):
     height: int = Field(default=1024, ge=64, le=2048)
     # sheet 比单张立绘贵,默认 1,不沿用 image 的 3。
     num_images: int = Field(default=1, ge=1, le=4)
+
+
+class CharacterFirstFrameGenerateRequest(BaseModel):
+    """四向 / 八向动作首帧:以该朝向立绘为参考,锁住朝向后出动作起手姿态。"""
+
+    model_config = ConfigDict(extra="forbid")
+    project_id: int = Field(gt=0)
+    character_id: int = Field(gt=0)
+    reference_image_url: str
+    prompt: str
+    negative_prompt: str = ""
+    width: int = Field(default=1024, ge=64, le=2048)
+    height: int = Field(default=1024, ge=64, le=2048)
+    num_images: int = Field(default=3, ge=1, le=4)
+    direction: ActionDirection
+    action_type: ActionType
+
+    @model_validator(mode="after")
+    def require_prompt_and_heading_template(self):
+        prompt = (self.prompt or "").strip()
+        if not prompt:
+            raise ValueError("动作首帧必须提供动作描述")
+        self.prompt = prompt
+        url = (self.reference_image_url or "").strip()
+        if not url:
+            raise ValueError("动作首帧必须提供该朝向已确认的立绘")
+        self.reference_image_url = url
+        return self
 
 
 class CharacterActionGenerateRequest(BaseModel):
@@ -794,6 +824,49 @@ def submit_eight_view_generation(
         label="八向",
         submit=generation_service.generate_character_eight_view,
     )
+
+
+@router.post("/first-frame", response_model=Response[GenerationTaskOut])
+def submit_first_frame_generation(
+    body: CharacterFirstFrameGenerateRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[GenerationTaskOut]:
+    """提交锁定朝向的动作首帧:以该朝向立绘为参考,锁住朝向后换成动作起手姿态。"""
+    user_id = request.state.current_user.id
+    project = _get_project_or_raise(session, body.project_id, user_id)
+    if project.directional_movement not in (2, 3):
+        raise BizException(
+            "锁定朝向的动作首帧只用于四向或八向项目",
+            code=BizCode.BAD_REQUEST,
+        )
+    _validate_project_size(project, body.width, body.height)
+    _validate_project_direction(project, body.direction)
+    _get_character_or_raise(session, body.character_id, body.project_id)
+    input_data = CharacterFirstFrameInput(
+        character_id=body.character_id,
+        reference_image_url=body.reference_image_url,
+        prompt=body.prompt,
+        negative_prompt=body.negative_prompt,
+        width=body.width,
+        height=body.height,
+        num_images=body.num_images,
+        direction=body.direction,
+        action_type=body.action_type,
+    )
+    task = generation_service.generate_character_first_frame(
+        session,
+        user_id=user_id,
+        project_id=body.project_id,
+        input=input_data,
+    )
+    _publish_generation_after_commit(
+        session,
+        request.app.state.mq_publisher,
+        task_id=task.id,
+        task_type=task.task_type.value,
+    )
+    return Response.success(_task_to_out(session, task), message="任务已提交")
 
 
 @router.post("/action", response_model=Response[GenerationTaskOut])

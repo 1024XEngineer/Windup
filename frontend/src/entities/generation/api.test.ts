@@ -511,6 +511,111 @@ describe('createGenerationApis', () => {
     })
   })
 
+  it('四向动作首帧走锁定朝向端点，参考该朝向立绘', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
+      success(
+        taskData({
+          task_type: 'character_first_frame',
+          input_payload: { num_images: 3, direction: 'east', action_type: 'walk' },
+          result: {
+            type: 'character_first_frame',
+            direction: 'east',
+            image_urls: candidateUrls(),
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      baseUrl: '',
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.create({
+      type: 'first_frame',
+      projectId: '42',
+      characterId: '9',
+      actionType: 'walk',
+      prompt: 'left foot forward',
+      referenceMedia: [reference('https://cdn.test/east.png')],
+      spriteWidth: 64,
+      spriteHeight: 96,
+      direction: 'east',
+    })
+
+    expect(request.mock.calls[0]?.[0]).toBe('/generation/first-frame')
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
+      project_id: 42,
+      character_id: 9,
+      reference_image_url: 'https://cdn.test/east.png',
+      prompt: 'left foot forward',
+      negative_prompt: '',
+      width: 64,
+      height: 96,
+      num_images: 3,
+      direction: 'east',
+      action_type: 'walk',
+    })
+    expect(generation.result).toEqual({
+      type: 'first_frame',
+      direction: 'east',
+      images: candidates(),
+    })
+  })
+
+  it('查询无期望时按 character_first_frame 恢复为首帧阶段', async () => {
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(async () =>
+          success(
+            taskData({
+              task_type: 'character_first_frame',
+              input_payload: {
+                num_images: 3,
+                direction: 'east',
+                action_type: 'walk',
+              },
+              result: {
+                type: 'character_first_frame',
+                direction: 'east',
+                image_urls: candidateUrls(),
+              },
+            }),
+          ),
+        ),
+        stream: vi.fn(() => vi.fn()),
+      },
+    })
+
+    const generation = await apis.get('42', '91')
+
+    expect(generation.type).toBe('first_frame')
+    expect(generation.result).toEqual({
+      type: 'first_frame',
+      direction: 'east',
+      images: candidates(),
+    })
+  })
+
+  it('四向动作首帧缺少该朝向立绘时拒绝提交', async () => {
+    const apis = createGenerationApis({
+      transport: { request: vi.fn(), stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(
+      apis.create({
+        type: 'first_frame',
+        projectId: '42',
+        characterId: '9',
+        actionType: 'walk',
+        prompt: 'left foot forward',
+        referenceMedia: [],
+        spriteWidth: 64,
+        spriteHeight: 96,
+        direction: 'east',
+      }),
+    ).rejects.toThrow('动作首帧生成必须提供该朝向已确认的立绘')
+  })
+
   it('没有角色母版时拒绝创建动作首帧任务', async () => {
     const apis = createGenerationApis({
       transport: { request: vi.fn(), stream: vi.fn(() => vi.fn()) },

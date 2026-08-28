@@ -990,6 +990,14 @@ export function createWorkflowController({
         throw new Error(`角色母版尚未确认方向 ${direction}`)
       }
     }
+    const lockCharacterId =
+      currentDirectionalMovement === 'single'
+        ? undefined
+        : nonEmpty(
+            findSingleDependencyNode(before, targetTemplate, 'character-setup').input.characterId ??
+              '',
+            'characterId',
+          )
     return submitDirectionalGenerations(
       nodeId,
       'first_frame',
@@ -1022,6 +1030,7 @@ export function createWorkflowController({
           spriteHeight: options.spriteHeight,
           referenceMedia: [sourceImage ?? (characterTemplateReference as MediaReference)],
           direction,
+          ...(lockCharacterId === undefined ? {} : { characterId: lockCharacterId }),
           ...(options.candidateCount === undefined
             ? {}
             : { candidateCount: options.candidateCount }),
@@ -1398,6 +1407,14 @@ export function createWorkflowController({
               retryDirection,
             )
             if (!templateUrl) throw new Error(`角色母版尚未确认方向 ${retryDirection}`)
+            const characterId =
+              currentDirectionalMovement === 'single'
+                ? undefined
+                : nonEmpty(
+                    findSingleDependencyNode(run, templateNode, 'character-setup').input
+                      .characterId ?? '',
+                    'characterId',
+                  )
             const input: FirstFrameGenerationInput = {
               type: 'first_frame',
               projectId: run.projectId,
@@ -1410,6 +1427,7 @@ export function createWorkflowController({
               spriteHeight: options.spriteHeight,
               referenceMedia: [templateUrl as MediaReference],
               direction: retryDirection,
+              ...(characterId === undefined ? {} : { characterId }),
             }
             return input
           }

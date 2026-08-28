@@ -1562,3 +1562,6 @@ def bind_matte(matte: MatteProvider) -> None:
     from windup_app.server.orchestrator.view_sheet_executor import view_sheet_executor
 
     view_sheet_executor._matte = matte
+    from windup_app.server.orchestrator.first_frame_executor import first_frame_executor
+
+    first_frame_executor._matte = matte

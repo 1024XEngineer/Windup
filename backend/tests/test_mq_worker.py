@@ -163,6 +163,45 @@ def test_handle_generation_dispatches_image_task(db_session, engine, monkeypatch
     assert run_image.call_args.args[1].direction is ActionDirection.NORTH
 
 
+def test_handle_generation_dispatches_first_frame_task(db_session, engine, monkeypatch):
+    from windup_app.server.orchestrator.model import CharacterFirstFrameInput
+
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_first_frame(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterFirstFrameInput(
+            character_id=7,
+            reference_image_url="https://cdn.example.com/east.png",
+            prompt="walk first frame",
+            width=64,
+            height=64,
+            direction=ActionDirection.EAST,
+            action_type=ActionType.WALK,
+        ),
+    )
+    db_session.commit()
+
+    run_first_frame = MagicMock()
+    handle_generation(
+        {"task_id": task.id, "task_type": GenerationType.CHARACTER_FIRST_FRAME.value},
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        run_first_frame_task=run_first_frame,
+    )
+    run_first_frame.assert_called_once()
+    assert run_first_frame.call_args.args[0] == task.id
+    rebuilt = run_first_frame.call_args.args[1]
+    assert rebuilt.direction is ActionDirection.EAST
+    assert rebuilt.reference_image_url == "https://cdn.example.com/east.png"
+    assert rebuilt.action_type is ActionType.WALK
+
+
 def test_dispatch_handler_unknown_type_raises():
     with pytest.raises(ValueError, match="未知消息类型"):
         dispatch_handler(
@@ -1450,6 +1489,24 @@ def test_image_input_keeps_explicit_zero_num_images():
     rebuilt = _image_input({"prompt": "hero", "num_images": 0})
 
     assert rebuilt.num_images == 0
+
+
+def test_first_frame_input_restores_heading_template():
+    from windup_app.worker.handlers import _first_frame_input
+
+    rebuilt = _first_frame_input(
+        {
+            "character_id": 7,
+            "prompt": "walk first frame",
+            "reference_image_url": "https://cdn.example.com/east.png",
+            "direction": "east",
+            "action_type": "walk",
+        }
+    )
+
+    assert rebuilt.direction is ActionDirection.EAST
+    assert rebuilt.action_type is ActionType.WALK
+    assert rebuilt.reference_image_url == "https://cdn.example.com/east.png"
 
 
 def test_warmup_injects_one_matte_into_both_executors(monkeypatch):

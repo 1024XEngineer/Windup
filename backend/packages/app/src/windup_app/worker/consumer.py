@@ -62,6 +62,7 @@ class StreamConsumer:
         resume_action_client_bake: Callable[..., Any] | None = None,
         run_direction_set_task: Callable[..., Any] | None = None,
         run_view_sheet_task: Callable[..., Any] | None = None,
+        run_first_frame_task: Callable[..., Any] | None = None,
     ) -> None:
         self._config = config
         self._run_image_task = run_image_task
@@ -70,6 +71,7 @@ class StreamConsumer:
         self._resume_action_client_bake = resume_action_client_bake
         self._run_direction_set_task = run_direction_set_task
         self._run_view_sheet_task = run_view_sheet_task
+        self._run_first_frame_task = run_first_frame_task
         self._stop = stop_event
         self._consumer_name = f"{socket.gethostname()}-{threading.get_ident()}"
         self._executors: dict[str, ThreadPoolExecutor] = {}
@@ -293,6 +295,7 @@ class StreamConsumer:
                 resume_action_client_bake=self._resume_action_client_bake,
                 run_direction_set_task=self._run_direction_set_task,
                 run_view_sheet_task=self._run_view_sheet_task,
+                run_first_frame_task=self._run_first_frame_task,
             )
 
             session = SessionLocal()

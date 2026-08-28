@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from windup_app.server.orchestrator.model import (
     CharacterActionOutput,
     CharacterDirectionSetOutput,
+    CharacterFirstFrameOutput,
     CharacterImageOutput,
     CharacterViewSheetCandidate,
     CharacterViewSheetCell,
@@ -370,6 +371,7 @@ def _deserialize_result(
     raw: dict | None,
 ) -> (
     CharacterImageOutput
+    | CharacterFirstFrameOutput
     | CharacterDirectionSetOutput
     | CharacterViewSheetOutput
     | CharacterActionOutput
@@ -381,6 +383,13 @@ def _deserialize_result(
     if result_type == "character_image":
         return CharacterImageOutput(
             type=raw.get("type", "character_image"),
+            image_urls=raw.get("image_urls", []),
+            direction=ActionDirection(raw.get("direction", ActionDirection.EAST.value)),
+            quality=raw.get("quality"),
+        )
+    if result_type == GenerationType.CHARACTER_FIRST_FRAME.value:
+        return CharacterFirstFrameOutput(
+            type=raw.get("type", GenerationType.CHARACTER_FIRST_FRAME.value),
             image_urls=raw.get("image_urls", []),
             direction=ActionDirection(raw.get("direction", ActionDirection.EAST.value)),
             quality=raw.get("quality"),

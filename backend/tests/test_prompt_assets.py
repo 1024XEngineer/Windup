@@ -38,6 +38,8 @@ SECTIONS = {
     "attack.md": [f"{a.value}.{f}" for a in AttackArchetype for f in ("side", "front")],
     "view_sheet.md": [
         "identity",
+        "identity.first_frame",
+        "first_frame.pose_lock",
         "pose",
         "framing",
         "elevation.side",
