@@ -107,6 +107,20 @@ export interface BakeJob {
 export interface BakeCompletion {
   clip: string
   sampleTimes: number[]
+  /**
+   * 出帧台从模型里读到的骨架事实。服务端渲那条会把它带上来，浏览器这条此前算完即丢
+   * （#774）。两条路必须交回同样的东西，否则同一造型走哪条路存下来的资产不一样。
+   */
+  rig?: {
+    bones: number
+    rootBone: string | null
+    boneNames: string[]
+    skinnedMeshes: number
+    vertices: number
+    availableClips: Record<string, number>
+  }
+  /** 本片段的逐帧 (dx, dz)，单位「1.0 = 角色总高」，来源为根骨动画轨。 */
+  rootMotion?: Array<[number, number]>
 }
 
 /** 角色体型。决定这条路线能不能给它绑骨；与后端 `CharacterStance` 同一取值域。 */

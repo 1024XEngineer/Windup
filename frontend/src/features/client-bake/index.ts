@@ -82,7 +82,22 @@ export async function runClientBake(options: RunClientBakeOptions): Promise<void
       onProgress?.({ done: i + 1, total: job.frames })
     }
     throwIfAborted()
-    await apis.completeBake(job.taskId, { clip: job.clip, sampleTimes })
+    // 骨架事实与根骨位移轨随交齐一起回传（#774）。服务端渲那条会把它们带上来，
+    // 这条此前算完即随页面销毁 —— 两条路必须交回同样的东西。
+    const rig = stage.rigInfo()
+    await apis.completeBake(job.taskId, {
+      clip: job.clip,
+      sampleTimes,
+      rig: {
+        bones: rig.bones,
+        rootBone: rig.rootBone,
+        boneNames: rig.boneNames,
+        skinnedMeshes: rig.skinned,
+        vertices: rig.verts,
+        availableClips: clips,
+      },
+      rootMotion: stage.rootMotionOf(job.clip),
+    })
   } catch (error) {
     if (error instanceof BakeAborted) throw error
     await apis

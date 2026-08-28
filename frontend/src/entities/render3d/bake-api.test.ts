@@ -96,7 +96,14 @@ describe('出帧任务的网络边界', () => {
     const { api, calls } = client(() => ({}))
     await createRender3DApis(api).completeBake(41, { clip: 'walk', sampleTimes: [0, 0.5] })
     expect(calls[0].path).toBe('/render3d/bake/41/complete')
-    expect(calls[0].json).toEqual({ clip: 'walk', sample_times: [0, 0.5] })
+    // rig / root_motion 缺省时显式发 null，而不是省略字段 —— 后端据此区分
+    // 「这条路没有骨架」与「字段忘了传」。
+    expect(calls[0].json).toEqual({
+      clip: 'walk',
+      sample_times: [0, 0.5],
+      rig: null,
+      root_motion: null,
+    })
   })
 
   it('报失败带上原因', async () => {

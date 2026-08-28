@@ -260,6 +260,26 @@ def _resolve_video_model(name: str | None, user_id: int | None = None) -> str | 
     return name
 
 
+def _rig_facts_of(raw: dict | None):
+    """浏览器交回的骨架事实 dict → ai_engine 的 ``RigFacts``。
+
+    在函数内 import:本模块被 web 层间接牵到,而分层门禁禁止入口层直连 ai_engine;
+    顶层 import 会把整条依赖链拉进来。
+    """
+    if not raw:
+        return None
+    from windup_ai_engine.ports import RigFacts
+
+    return RigFacts(
+        bones=int(raw.get("bones") or 0),
+        root_bone=raw.get("root_bone"),
+        bone_names=tuple(raw.get("bone_names") or ()),
+        skinned_meshes=int(raw.get("skinned_meshes") or 0),
+        vertices=int(raw.get("vertices") or 0),
+        available_clips=dict(raw.get("available_clips") or {}),
+    )
+
+
 def _judged_action(input: CharacterActionInput) -> str:
     """判官要判的是"这帧是不是这个动作",而 custom 的动作内容在 ``custom_prompt`` 里。
 
@@ -749,6 +769,15 @@ class ActionTaskExecutor:
             generated = self._get_generator(
                 _resolve_video_model(input.video_model, task_user_id), cons.directions
             ).finish_rendered(frames, card, action, progress, canvas=canvas)
+            # 骨架事实与根骨位移轨由浏览器在交齐那一刻带回(#774)。服务端渲那条是
+            # strategy 在 derive 里留下的,这条 strategy 没渲过,只能从登记里取。
+            rig, root_motion = client_bake.load_derived(task_id)
+            if rig or root_motion:
+                generated = dataclasses.replace(
+                    generated,
+                    rig=_rig_facts_of(rig),
+                    root_motion=[(float(x), float(z)) for x, z in (root_motion or [])] or None,
+                )
             result = self._deliver_generated(generated, input, cons, None)
             client_bake.clear(task_id)
 
@@ -847,6 +876,20 @@ class ActionTaskExecutor:
                 "anchor": {"x": g.anchor_x, "y": g.anchor_y},
                 "foot_y": g.foot_y,
             }
+        # 出帧台读到的骨架事实与根骨位移轨(#774)。三渲二独有,i2v 路线恒为 None。
+        # 此前这两样每渲一段都算一遍、算完即丢。骨架事实是**每造型一次性**的,
+        # 随第一个动作带上来即可;位移轨是每动作一份。
+        if generated.rig is not None:
+            result["rig_facts"] = {
+                "bones": generated.rig.bones,
+                "root_bone": generated.rig.root_bone,
+                "bone_names": list(generated.rig.bone_names),
+                "skinned_meshes": generated.rig.skinned_meshes,
+                "vertices": generated.rig.vertices,
+                "available_clips": dict(generated.rig.available_clips),
+            }
+        if generated.root_motion is not None:
+            result["root_motion"] = [list(pair) for pair in generated.root_motion]
         if decision is not None:
             result["judge"] = decision.as_payload()
             if decision.blocked:

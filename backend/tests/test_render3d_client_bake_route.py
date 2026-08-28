@@ -165,3 +165,82 @@ def test_derive_without_a_stage_says_so_instead_of_crashing_obscurely():
         RenderFrameStrategy(None, directions=4).derive(
             CharacterCard(name="c", desc=""), _spec(4), b"GLB", _NullProgress()
         )
+
+
+# ── 骨架事实与位移轨的落点（#774）────────────────────────────────────────
+
+
+def test_server_render_carries_rig_facts_and_root_motion():
+    """服务端渲那条要把出帧台读到的两样带进出参 —— 此前算完即丢。"""
+    from windup_framework.providers.render3d import RigInfo, SpriteSequence, SpriteSheet
+
+    class _Renderer:
+        def render(self, model, **kwargs):
+            return SpriteSheet(
+                clip="walk",
+                duration_s=1.0,
+                sample_times=[0.0, 0.5],
+                sequences=[SpriteSequence(direction="e", camera_yaw=0.0, frames=[_png()] * 4)],
+                rig=RigInfo(bones=28, skinned_meshes=1, vertices=51388,
+                            root_bone="Hips", loader="gltf"),
+                available_clips={"walk": 1.07, "idle": 10.03},
+                # **不要按片段名再包一层。** ``bake_driver.mjs`` 交回 meta 时已经拆过
+                # (``root_motion: rootMotion[clip] ?? null``),``sprite.py`` 原样透传 ——
+                # 所以 ``SpriteSheet.root_motion`` 就是这一段本身。桩多包一层的话,
+                # 生产里"多取一层导致恒为 None"这个真 bug 在测试里永远看不见(它就是这么合进来的)。
+                root_motion={"unit": "1.0 = 角色总高",
+                             "disp": [[0.0, 0.0], [0.05, 0.0], [0.1, 0.0], [0.15, 0.0]],
+                             "total_span": 0.15},
+            )
+
+    from windup_ai_engine.impl import CharacterGenerator
+    generator = CharacterGenerator(
+        {GenRoute.RENDER_3D: RenderFrameStrategy(_Renderer(), directions=4)}
+    )
+    out = generator.generate_rendered(
+        CharacterCard(name="c", desc=""), _spec(4), b"GLB", _NullProgress(), canvas=(64, 64)
+    )
+    assert out.rig is not None, "骨架事实又被丢掉了"
+    assert out.rig.bones == 28
+    assert out.rig.available_clips == {"walk": 1.07, "idle": 10.03}
+    assert out.root_motion == [(0.0, 0.0), (0.05, 0.0), (0.1, 0.0), (0.15, 0.0)]
+
+
+def test_i2v_route_has_no_rig_facts():
+    """i2v 没有骨架，这两样必须是 None —— 不能拿上一次三渲二的残留冒充。"""
+    generated = _generator().finish_rendered(
+        [_png()] * 4, CharacterCard(name="c", desc=""), _spec(4), _NullProgress(), canvas=(64, 64)
+    )
+    assert generated.rig is None
+    assert generated.root_motion is None
+
+
+def test_delivered_payload_carries_both(monkeypatch, opened):
+    """落库出参里要有 rig_facts 与 root_motion 两个键。"""
+    from windup_ai_engine.ports import RigFacts
+
+    executor = ActionTaskExecutor(
+        generator=_generator(),
+        upload=lambda _png: "https://cdn.test/f.png",
+        fetch_constraints=lambda *_: ProjectConstraints(sprite_w=64, sprite_h=64),
+    )
+    generated = _generator().finish_rendered(
+        [_png()] * 4, CharacterCard(name="c", desc=""), _spec(4), _NullProgress(), canvas=(64, 64)
+    )
+    import dataclasses as _dc
+    generated = _dc.replace(
+        generated,
+        rig=RigFacts(bones=27, root_bone=None, bone_names=("a", "b"),
+                     skinned_meshes=1, vertices=10, available_clips={}),
+        root_motion=[(0.0, 0.0), (0.2, 0.0)],
+    )
+    result = executor._deliver_generated(
+        generated,
+        CharacterActionInput(character_id=1, action_type=InputActionType.WALK,
+                             num_frames=4, outfit_id=OUTFIT, model_3d_url=MODEL_URL),
+        ProjectConstraints(sprite_w=64, sprite_h=64),
+        None,
+    )
+    assert result["rig_facts"]["bones"] == 27
+    assert result["rig_facts"]["bone_names"] == ["a", "b"]
+    assert result["root_motion"] == [[0.0, 0.0], [0.2, 0.0]]

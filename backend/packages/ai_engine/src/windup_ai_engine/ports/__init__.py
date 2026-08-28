@@ -249,6 +249,23 @@ class SequenceGeometry:
     foot_y: int
 
 
+@dataclass(frozen=True)
+class RigFacts:
+    """出帧时从绑骨模型里读到的骨架事实。**记录用,不是判据。**
+
+    以「28 骨 · humanoid 命名 · 无 mixamorig 前缀」当硬校验的写法已被实测推翻
+    (2026-08-26,量全部归档产物:24 / 27 / 28 / 43 / 49,其中 24 与 27 是自家绑的四足)。
+    这几个数只往上带,不参与放行判断。
+    """
+
+    bones: int
+    root_bone: str | None
+    bone_names: tuple[str, ...]
+    skinned_meshes: int
+    vertices: int
+    available_clips: dict[str, float]
+
+
 @dataclass
 class GeneratedAction:
     """一个动作的生成产物:对齐后的原地序列帧 + 逐帧时长 + 成色 + 提示词版本。
@@ -274,6 +291,13 @@ class GeneratedAction:
     # 同一条理由:不给缺省,逼调用方显式带出当下的 ``windup_ai_engine.prompt.PROMPT_VERSION``。
     # 改了提示词模板而没带上新版本号,这批产出与改动前的产出在账本里就再也分不清。
     prompt_version: str = field(kw_only=True)
+    # 三渲二独有:出帧台从模型里读到的骨架事实与根骨位移轨。i2v 路线没有骨架,恒为 None。
+    #
+    # 此前这两样每渲一段都算一遍、算完即丢(#774)。位移轨这一份来自**根骨动画轨**,是
+    # 作者意图的精确值;``postprocess.rootmotion`` 那份是从交付帧像素反推的,精度更低,
+    # 两者不混装在同一字段里。
+    rig: RigFacts | None = field(default=None, kw_only=True)
+    root_motion: list[tuple[float, float]] | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)

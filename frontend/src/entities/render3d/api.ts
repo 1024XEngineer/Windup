@@ -254,7 +254,21 @@ export function createRender3DApis(client: ApiClient = defaultClient()): Render3
     async completeBake(taskId, completion) {
       await client.request<unknown>(`/render3d/bake/${taskId}/complete`, {
         method: 'POST',
-        json: { clip: completion.clip, sample_times: completion.sampleTimes },
+        json: {
+          clip: completion.clip,
+          sample_times: completion.sampleTimes,
+          rig: completion.rig
+            ? {
+                bones: completion.rig.bones,
+                root_bone: completion.rig.rootBone,
+                bone_names: completion.rig.boneNames,
+                skinned_meshes: completion.rig.skinnedMeshes,
+                vertices: completion.rig.vertices,
+                available_clips: completion.rig.availableClips,
+              }
+            : null,
+          root_motion: completion.rootMotion ?? null,
+        },
       })
     },
 

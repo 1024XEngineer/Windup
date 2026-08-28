@@ -192,7 +192,6 @@ class CharacterGenerator(CharacterGeneratorPort):
         progress: ProgressPort,
         canvas: tuple[int, int] | None = None,
     ) -> GeneratedAction:
-        """成片到位后走抽帧 / 抠图 / 最后一公里。"""
         # 异步提交与收口可能落在不同进程,不能依赖 start_video 当时的内存事实。
         # 母版仍是这次交付尺度的唯一来源,在此重新量一次再进入最后一公里。
         facts = check_master(master, canvas)
@@ -282,6 +281,11 @@ class CharacterGenerator(CharacterGeneratorPort):
         两个入口共用同一份,不是为了少写几行:这几道闸是**对所有路线**的约束,
         复制一份就会有一天只在一条路线上被改。
         """
+        # 取走本次调用算出的派生事实。**必须在这里取一次**:ContextVar 取完即清,
+        # 留到下面用局部量,免得中间任何一步再触发 derive 把它覆盖。
+        from windup_ai_engine.strategy.concrete import take_derived
+
+        derived_rig, derived_root_motion = take_derived()
         # 帧数必须与契约相符。A2 把 n_frames 从 len(poses) 的推导值改成调用方直接声明的
         # 承诺,而抽帧那两个函数都会**静默少给**:slicing.pick_cycle / pick_oneshot 在
         # `len(dense) <= n`(或动作区间比 n 短)时 return frames/span,长度不足且不报错
@@ -316,6 +320,13 @@ class CharacterGenerator(CharacterGeneratorPort):
             ),
             quality=quality,
             prompt_version=PROMPT_VERSION,
+            # 只有三渲二那条 strategy 会留下这两样;i2v / 逐帧路线上恒为 None。
+            # getattr 而不是 isinstance:两个入口共用 _finish,而 strategy 的具体类型
+            # 由 bootstrap 装配决定,在这里按类型分支等于把装配表复制一份进来。
+            # 从 ContextVar 取,不从 strategy 实例读 —— strategy 是进程级共用的,
+            # 并发下 getattr 读到的可能是**另一个任务**刚写进去的(见 concrete._DERIVED)。
+            rig=derived_rig,
+            root_motion=derived_root_motion,
         )
 
     def _assess(self, frames: list[Image.Image], action: ActionSpec) -> ActionQuality:

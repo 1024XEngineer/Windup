@@ -65,6 +65,12 @@ class _MemRedis:
     def hlen(self, name):
         return len(self.hashes.get(name, {}))
 
+    def expire(self, name, ttl):
+        return 1
+
+    def hget(self, name, key):
+        return self.hashes.get(name, {}).get(str(key))
+
     def hgetall(self, name):
         return dict(self.hashes.get(name, {}))
 
@@ -202,3 +208,39 @@ def test_clear_removes_both_keys(redis_mem):
     client_bake.put_frame(7, 0, _png())
     client_bake.clear(7)
     assert client_bake.load_spec(7) is None
+
+
+# ── 浏览器交回的派生资产（#774）──────────────────────────────────────────
+
+
+def test_derived_roundtrips(redis_mem):
+    client_bake.open_job(7, SPEC)
+    client_bake.save_derived(
+        7,
+        rig={"bones": 28, "root_bone": "Hips", "bone_names": ["Hips", "Spine"],
+             "skinned_meshes": 1, "vertices": 51388, "available_clips": {"walk": 1.07}},
+        root_motion=[[0.0, 0.0], [0.1, 0.0]],
+    )
+    rig, motion = client_bake.load_derived(7)
+    assert rig["bones"] == 28
+    assert rig["bone_names"] == ["Hips", "Spine"]
+    assert motion == [[0.0, 0.0], [0.1, 0.0]]
+
+
+def test_derived_absent_is_none_not_error(redis_mem):
+    client_bake.open_job(7, SPEC)
+    assert client_bake.load_derived(7) == (None, None)
+
+
+def test_saving_nothing_writes_nothing(redis_mem):
+    """两样都空就别写 —— 模型没有根骨位置轨是正常情况，不是故障。"""
+    client_bake.open_job(7, SPEC)
+    client_bake.save_derived(7)
+    assert client_bake.load_derived(7) == (None, None)
+
+
+def test_corrupt_derived_reads_as_absent(redis_mem):
+    """存坏了当没有，不要让一段坏 JSON 把整条交付打断。"""
+    client_bake.open_job(7, SPEC)
+    redis_mem.hset(client_bake._key(7), "derived", "{不是 json")
+    assert client_bake.load_derived(7) == (None, None)
