@@ -8,19 +8,23 @@ from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
 from windup_common.result import Response
 
-from windup_app.server.media.model import MediaCategory, MediaUploadInput, MediaUploadResult
+from windup_app.server.media.model import (
+    MediaCategory,
+    MediaUploadInput,
+    MediaUploadResult,
+)
 from windup_app.server.media.service import service
 from windup_app.server.media.service import InvalidThumbnailSourceError
+from windup_app.server.media.validation import (
+    ALLOWED_IMAGE_TYPES as _ALLOWED_IMAGE_TYPES,
+)
+from windup_app.server.media.validation import (
+    validate_image_magic as _validate_image_magic,
+)
 
 router = APIRouter(prefix="/media", tags=["media"])
 
 # 允许的 MIME 类型白名单（精确匹配，不接受通配符子类型）
-_ALLOWED_IMAGE_TYPES: set[str] = {
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-}
 _ALLOWED_MODEL_TYPES: set[str] = {
     "model/gltf-binary",
     "model/gltf+json",
@@ -28,18 +32,8 @@ _ALLOWED_MODEL_TYPES: set[str] = {
 _ALLOWED_TYPES = _ALLOWED_IMAGE_TYPES | _ALLOWED_MODEL_TYPES
 
 # 大小限制（按类型分组）
-_IMAGE_SIZE_LIMIT = 10 * 1024 * 1024    # 10 MB
-_MODEL_SIZE_LIMIT = 80 * 1024 * 1024    # 80 MB
-
-# 图片 magic bytes 校验表
-# WebP 需要额外检查 bytes 8-11 为 "WEBP"，单独处理
-_IMAGE_SIGNATURES: dict[str, bytes] = {
-    "image/png": b"\x89PNG\r\n\x1a\n",
-    "image/jpeg": b"\xff\xd8\xff",
-    "image/gif": b"GIF8",    # GIF87a 和 GIF89a 都以 GIF8 开头
-}
-_WEBP_RIFF_PREFIX = b"RIFF"
-_WEBP_MARKER = b"WEBP"  # bytes 8-11
+_IMAGE_SIZE_LIMIT = 10 * 1024 * 1024  # 10 MB
+_MODEL_SIZE_LIMIT = 80 * 1024 * 1024  # 80 MB
 
 
 def _get_size_limit(content_type: str) -> int:
@@ -47,24 +41,6 @@ def _get_size_limit(content_type: str) -> int:
     if content_type in _ALLOWED_MODEL_TYPES:
         return _MODEL_SIZE_LIMIT
     return _IMAGE_SIZE_LIMIT
-
-
-def _validate_image_magic(data: bytes, content_type: str) -> bool:
-    """校验文件头 magic bytes 是否与声明的 content_type 匹配。
-
-    仅允许 _ALLOWED_IMAGE_TYPES 中的类型，未知类型直接拒绝。
-    """
-    # WebP 需要同时检查 RIFF 前缀和 WEBP 标记（bytes 8-11）
-    if content_type == "image/webp":
-        return (
-            len(data) >= 12
-            and data[:4] == _WEBP_RIFF_PREFIX
-            and data[8:12] == _WEBP_MARKER
-        )
-    expected = _IMAGE_SIGNATURES.get(content_type)
-    if expected is None:
-        return False
-    return data[: len(expected)] == expected
 
 
 @router.post("/upload", response_model=Response[MediaUploadResult])

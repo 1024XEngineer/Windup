@@ -394,7 +394,16 @@ export function AppHeader({
                     accountMenu.expanded ? 'scale-110' : 'scale-100'
                   }`}
                 >
-                  {(session.state.user.nickname || session.state.user.email).slice(0, 1)}
+                  <img
+                    src={session.state.user.avatarUrl || '/windup-mark.svg'}
+                    alt=""
+                    aria-hidden="true"
+                    className={`rounded-full ${
+                      session.state.user.avatarUrl
+                        ? 'size-7 object-cover'
+                        : 'h-5 w-5 object-contain'
+                    }`}
+                  />
                 </span>
                 <span className="hidden truncate sm:inline">
                   {session.state.user.nickname || session.state.user.email}

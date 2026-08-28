@@ -9,6 +9,8 @@ from conftest import seed_invite_code
 from windup_app.server.user.model import User
 from windup_app.server.user.service import _hash_password, service
 from windup_app.server.user.service import _verify_password
+from windup_app.server.media.model import MediaUploadResult
+from windup_app.web.api import auth as auth_api
 
 
 @pytest.fixture()
@@ -36,6 +38,37 @@ def mock_user_redis():
     service._redis = redis_mock
     yield redis_mock
     service._redis = previous
+
+
+def test_upload_avatar_persists_url_and_returns_updated_profile(
+    auth_client, seeded_user, monkeypatch
+):
+    upload = MagicMock(
+        return_value=MediaUploadResult(
+            url="https://cdn.windup.test/media/avatar/avatar.png",
+            object_key="media/avatar/avatar.png",
+            filename="avatar.png",
+            content_type="image/png",
+            size=12,
+        )
+    )
+    monkeypatch.setattr(
+        auth_api, "media_service", MagicMock(upload=upload), raising=False
+    )
+
+    response = auth_client.post(
+        "/auth/profile/avatar",
+        files={"file": ("avatar.png", b"\x89PNG\r\n\x1a\nbody", "image/png")},
+    )
+
+    assert response.json()["code"] == 200
+    assert response.json()["data"]["avatar_url"] == (
+        "https://cdn.windup.test/media/avatar/avatar.png"
+    )
+    assert auth_client.get("/auth/me").json()["data"]["avatar_url"] == (
+        "https://cdn.windup.test/media/avatar/avatar.png"
+    )
+    assert upload.call_args.args[1].category.value == "avatar"
 
 
 @pytest.fixture()

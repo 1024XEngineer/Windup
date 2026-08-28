@@ -41,6 +41,7 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => user),
     updateNickname: vi.fn(async (nickname: string) => ({ ...user, nickname })),
+    updateAvatar: vi.fn(async () => user),
     setPassword: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
     resetPassword: vi.fn(async () => undefined),
@@ -471,6 +472,26 @@ describe('AccountPage', () => {
     await waitFor(() => expect(apis.updateNickname).toHaveBeenCalledWith('New Reader'))
     expect(await screen.findByText('昵称已更新。')).toBeTruthy()
     expect(screen.getByRole('button', { name: '打开账号菜单' }).textContent).toContain('New Reader')
+  })
+
+  it('uploads an avatar and immediately uses the persisted URL in the account and Header', async () => {
+    const apis = createApis()
+    apis.updateAvatar.mockResolvedValue({
+      ...user,
+      avatarUrl: 'https://cdn.windup.test/avatar.png',
+    })
+    const { container } = renderAccount(apis)
+    await screen.findByRole('heading', { name: '个人资料' })
+    const file = new File(['avatar'], 'avatar.png', { type: 'image/png' })
+
+    fireEvent.change(screen.getByLabelText('更换头像'), { target: { files: [file] } })
+
+    await waitFor(() => expect(apis.updateAvatar).toHaveBeenCalledWith(file))
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll('img[src="https://cdn.windup.test/avatar.png"]').length,
+      ).toBe(2),
+    )
   })
 
   it('preserves the edited nickname when the backend rejects it', async () => {

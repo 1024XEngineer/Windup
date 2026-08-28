@@ -112,6 +112,7 @@ def _to_view(user: User) -> UserView:
         id=user.id,
         email=user.email,
         nickname=user.nickname,
+        avatar_url=user.avatar_url,
         email_verified_at=user.email_verified_at,
         status=UserStatus(user.status),
         last_login_at=user.last_login_at,

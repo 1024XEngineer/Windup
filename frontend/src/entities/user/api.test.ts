@@ -34,6 +34,24 @@ describe('createUserApis', () => {
     }
   })
 
+  it('uploads an avatar as multipart data and maps the persisted URL', async () => {
+    request.mockResolvedValue({
+      ...tokenResponse.user,
+      avatar_url: 'https://cdn.windup.test/avatar.png',
+    })
+    const apis = createUserApis({ client })
+    const file = new File(['avatar'], 'avatar.png', { type: 'image/png' })
+
+    const profile = await apis.updateAvatar(file)
+
+    const [path, options] = request.mock.calls[0]
+    expect(path).toBe('/auth/profile/avatar')
+    expect(options.method).toBe('POST')
+    expect(options.body).toBeInstanceOf(FormData)
+    expect((options.body as FormData).get('file')).toBe(file)
+    expect(profile.avatarUrl).toBe('https://cdn.windup.test/avatar.png')
+  })
+
   it('maps every authentication command to its exact backend path and request body', async () => {
     request
       .mockResolvedValueOnce(null)
@@ -171,6 +189,7 @@ describe('createUserApis', () => {
       id: '7',
       email: 'reader@example.com',
       nickname: 'New Reader',
+      avatarUrl: null,
       emailVerifiedAt: '2026-08-07T01:02:03Z',
       statusCode: 37,
       hasPassword: true,
@@ -197,6 +216,7 @@ describe('createUserApis', () => {
         id: '7',
         email: 'reader@example.com',
         nickname: 'Reader',
+        avatarUrl: null,
         emailVerifiedAt: '2026-08-07T01:02:03Z',
         statusCode: 37,
         hasPassword: true,
@@ -206,6 +226,7 @@ describe('createUserApis', () => {
       id: '7',
       email: 'reader@example.com',
       nickname: null,
+      avatarUrl: null,
       emailVerifiedAt: null,
       statusCode: 37,
       hasPassword: false,

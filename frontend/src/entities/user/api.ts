@@ -7,6 +7,7 @@ interface UserDto {
   id: number | null
   email: string | null
   nickname: string | null
+  avatar_url?: string | null
   email_verified_at: string | null
   status: number
   has_password?: boolean
@@ -39,6 +40,9 @@ function toUser(value: unknown): User {
     (value.id as number) <= 0 ||
     typeof value.email !== 'string' ||
     (typeof value.nickname !== 'string' && value.nickname !== null) ||
+    (value.avatar_url !== undefined &&
+      typeof value.avatar_url !== 'string' &&
+      value.avatar_url !== null) ||
     (typeof value.email_verified_at !== 'string' && value.email_verified_at !== null) ||
     !Number.isInteger(value.status)
   ) {
@@ -50,6 +54,7 @@ function toUser(value: unknown): User {
     id: String(dto.id),
     email: dto.email as string,
     nickname: dto.nickname,
+    avatarUrl: dto.avatar_url ?? null,
     emailVerifiedAt: dto.email_verified_at,
     statusCode: dto.status,
     hasPassword: dto.has_password === true,
@@ -150,6 +155,17 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
       )
     },
 
+    async updateAvatar(file) {
+      const body = new FormData()
+      body.append('file', file)
+      return toUser(
+        await protectedClient.request<UserDto>('/auth/profile/avatar', {
+          method: 'POST',
+          body,
+        }),
+      )
+    },
+
     async setPassword(input) {
       await protectedClient.request<null>('/auth/set-password', {
         method: 'POST',
@@ -207,6 +223,7 @@ export const userApis: UserApis = {
   logout: (refreshToken) => getDefaultApis().logout(refreshToken),
   me: () => getDefaultApis().me(),
   updateNickname: (nickname) => getDefaultApis().updateNickname(nickname),
+  updateAvatar: (file) => getDefaultApis().updateAvatar(file),
   setPassword: (input) => getDefaultApis().setPassword(input),
   changePassword: (input) => getDefaultApis().changePassword(input),
   resetPassword: (input) => getDefaultApis().resetPassword(input),

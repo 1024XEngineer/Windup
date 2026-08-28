@@ -3,13 +3,17 @@
 提供注册、登录、发码、刷新、登出、当前用户、修改密码等端点。
 """
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
 from sqlalchemy.orm import Session
 
 from windup_common.result import Response
+from windup_common.enums.biz_code import BizCode
+from windup_common.exceptions import BizException
+from windup_common.enums.media import MediaCategory
 
 from windup_framework.db import get_session
 
@@ -23,6 +27,9 @@ from windup_app.server.user.model import (
     UserView,
 )
 from windup_app.server.user.service import _has_password, service
+from windup_app.server.media.model import MediaUploadInput
+from windup_app.server.media.service import service as media_service
+from windup_app.server.media.validation import validate_image_magic
 
 logger = logging.getLogger("windup.auth.api")
 
@@ -139,6 +146,7 @@ class UserOut(BaseModel):
     id: int
     email: str
     nickname: str | None = None
+    avatar_url: str | None = None
     email_verified_at: str | None = None
     status: int = 0
     has_password: bool = False
@@ -149,6 +157,7 @@ def _user_out_from_orm(user: User) -> UserOut:
         id=user.id,
         email=user.email,
         nickname=user.nickname,
+        avatar_url=user.avatar_url,
         email_verified_at=user.email_verified_at.isoformat()
         if user.email_verified_at
         else None,
@@ -162,6 +171,7 @@ def _user_out_from_view(user: UserView) -> UserOut:
         id=user.id,
         email=user.email,
         nickname=user.nickname,
+        avatar_url=user.avatar_url,
         email_verified_at=user.email_verified_at.isoformat()
         if user.email_verified_at
         else None,
@@ -357,3 +367,41 @@ def update_nickname(
         session, current_user.id, UpdateNicknameInput(nickname=body.nickname)
     )
     return Response.success(_user_out_from_view(user_view), message="昵称修改成功")
+
+
+@router.post("/profile/avatar", response_model=Response[UserOut])
+async def update_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    """上传并持久化当前用户头像。"""
+    content_type = file.content_type or ""
+    allowed_types = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+    if content_type not in allowed_types:
+        raise BizException(
+            "头像仅支持 PNG、JPEG、GIF 或 WebP", code=BizCode.BAD_REQUEST
+        )
+
+    size_limit = 5 * 1024 * 1024
+    data = bytearray()
+    while chunk := await file.read(64 * 1024):
+        if len(data) + len(chunk) > size_limit:
+            raise BizException("头像大小不能超过 5 MB", code=BizCode.BAD_REQUEST)
+        data.extend(chunk)
+    if not validate_image_magic(data, content_type):
+        raise BizException("头像内容与声明的类型不匹配", code=BizCode.BAD_REQUEST)
+
+    metadata = MediaUploadInput(
+        filename=file.filename or "avatar",
+        content_type=content_type,
+        size=len(data),
+        category=MediaCategory.AVATAR,
+    )
+    uploaded = await asyncio.to_thread(media_service.upload, bytes(data), metadata)
+    user = session.get(User, request.state.current_user.id)
+    if user is None:
+        raise BizException("用户不存在", code=BizCode.NOT_FOUND)
+    user.avatar_url = uploaded.url
+    session.flush()
+    return Response.success(_user_out_from_orm(user), message="头像已更新")

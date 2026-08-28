@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import IntEnum
 
-from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String
+from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from windup_framework.db import Base
@@ -49,6 +49,7 @@ class User(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     nickname: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -93,6 +94,7 @@ class UserView:
     id: int | None = None
     email: str | None = None
     nickname: str | None = None
+    avatar_url: str | None = None
     email_verified_at: datetime | None = None
     status: UserStatus = UserStatus.NORMAL
     last_login_at: datetime | None = None

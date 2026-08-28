@@ -37,6 +37,7 @@ export interface AuthSessionValue {
   loginByCode(input: Parameters<UserApis['loginByCode']>[0]): Promise<AuthTokens>
   refreshCurrentUser(): Promise<User>
   updateNickname(nickname: string): Promise<User>
+  updateAvatar(file: File): Promise<User>
   setPassword(
     input: Parameters<UserApis['setPassword']>[0],
     options?: { keepSession?: boolean },
@@ -357,6 +358,15 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
     },
     [apis, commitCurrentUser],
   )
+  const updateAvatar = useCallback(
+    async (file: File) => {
+      if (stateRef.current.status !== 'authenticated') throw new Error('请先登录')
+      const generation = generationRef.current
+      const user = await apis.updateAvatar(file)
+      return commitCurrentUser(user, generation)
+    },
+    [apis, commitCurrentUser],
+  )
   const setPassword = useCallback(
     async (input: Parameters<UserApis['setPassword']>[0], options?: { keepSession?: boolean }) => {
       await apis.setPassword(input)
@@ -398,6 +408,7 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
       loginByCode,
       refreshCurrentUser,
       updateNickname,
+      updateAvatar,
       setPassword,
       changePassword,
       resetPassword,
@@ -419,6 +430,7 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
       setPassword,
       state,
       updateNickname,
+      updateAvatar,
     ],
   )
 

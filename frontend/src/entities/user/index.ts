@@ -3,6 +3,7 @@ export interface User {
   id: string
   email: string
   nickname: string | null
+  avatarUrl?: string | null
   emailVerifiedAt: string | null
   statusCode: number
   hasPassword: boolean
@@ -34,6 +35,7 @@ export interface UserApis {
   logout(refreshToken: string): Promise<void>
   me(): Promise<User>
   updateNickname(nickname: string): Promise<User>
+  updateAvatar(file: File): Promise<User>
   setPassword(input: { newPassword: string }): Promise<void>
   changePassword(input: { oldPassword: string; newPassword: string }): Promise<void>
   resetPassword(input: { email: string; code: string; newPassword: string }): Promise<void>

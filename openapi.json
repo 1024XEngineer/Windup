@@ -299,6 +299,20 @@
         "title": "Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post",
         "type": "object"
       },
+      "Body_update_avatar_auth_profile_avatar_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_update_avatar_auth_profile_avatar_post",
+        "type": "object"
+      },
       "Body_upload_media_media_upload_post": {
         "properties": {
           "file": {
@@ -2532,6 +2546,7 @@
           "reference-image",
           "outfit-preview",
           "action-frame",
+          "avatar",
           "model-3d",
           "general"
         ],
@@ -3889,6 +3904,17 @@
       "UserOut": {
         "description": "用户信息响应（脱敏）。",
         "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
           "email": {
             "title": "Email",
             "type": "string"
@@ -3949,6 +3975,17 @@
       "UserView": {
         "description": "用户视图（脱敏，不含 password_hash）。",
         "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
           "create_at": {
             "format": "date-time",
             "title": "Create At",
@@ -4776,6 +4813,48 @@
           }
         },
         "summary": "Update Nickname",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/profile/avatar": {
+      "post": {
+        "description": "上传并持久化当前用户头像。",
+        "operationId": "update_avatar_auth_profile_avatar_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_update_avatar_auth_profile_avatar_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_UserOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Avatar",
         "tags": [
           "auth"
         ]

@@ -498,6 +498,7 @@ export function AccountPage() {
     logout,
     refreshCurrentUser,
     sendPasswordChangeCode,
+    updateAvatar,
     updateNickname,
   } = session
   const currentUser = session.state.status === 'authenticated' ? session.state.user : null
@@ -513,9 +514,25 @@ export function AccountPage() {
   )
   const [securityNow, setSecurityNow] = useState(() => Date.now())
   const nicknameId = useId()
+  const avatarInputId = useId()
   const securityCodeId = useId()
   const newPasswordId = useId()
   const confirmPasswordId = useId()
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const [avatarError, setAvatarError] = useState<string | null>(null)
+
+  async function uploadAvatar(file: File | undefined) {
+    if (!file || avatarUploading) return
+    setAvatarUploading(true)
+    setAvatarError(null)
+    try {
+      await updateAvatar(file)
+    } catch (error) {
+      setAvatarError(errorMessage(error))
+    } finally {
+      setAvatarUploading(false)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -641,7 +658,6 @@ export function AccountPage() {
 
   const hasPassword = currentUser.hasPassword
   const displayName = currentUser.nickname || currentUser.email.split('@')[0]
-  const initial = Array.from(displayName)[0]?.toUpperCase() ?? 'W'
   const cooldownSeconds = securityCooldownSeconds()
 
   return (
@@ -734,9 +750,14 @@ export function AccountPage() {
                 </header>
 
                 <div className="mt-5 flex items-center gap-4 border-b border-app-line pb-5">
-                  <span className="grid size-14 shrink-0 place-items-center rounded-full bg-app-accent-soft font-serif text-2xl text-app-accent">
-                    {initial}
-                  </span>
+                  <img
+                    src={currentUser.avatarUrl || '/windup-mark.svg'}
+                    alt=""
+                    aria-hidden="true"
+                    className={`size-14 shrink-0 rounded-full bg-app-accent-soft ${
+                      currentUser.avatarUrl ? 'object-cover' : 'object-contain p-2'
+                    }`}
+                  />
                   <div className="min-w-0">
                     <p className="truncate text-base font-semibold text-app-ink-soft">
                       {displayName}
@@ -747,6 +768,26 @@ export function AccountPage() {
                     {currentUser.emailVerifiedAt ? '已验证' : '未验证'}
                   </span>
                 </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <label htmlFor={avatarInputId} className="account-primary-button cursor-pointer">
+                    {avatarUploading ? '正在上传…' : '更换头像'}
+                  </label>
+                  <input
+                    id={avatarInputId}
+                    type="file"
+                    accept="image/png,image/jpeg,image/gif,image/webp"
+                    disabled={avatarUploading}
+                    onChange={(event) => void uploadAvatar(event.target.files?.[0])}
+                    className="sr-only"
+                  />
+                  <span className="text-xs text-app-faint">PNG、JPEG、GIF 或 WebP，最大 5 MB</span>
+                </div>
+                {avatarError ? (
+                  <p role="alert" className="mt-3 text-sm text-app-danger">
+                    {avatarError}
+                  </p>
+                ) : null}
 
                 <form className="mt-5 grid gap-4" onSubmit={saveNickname} noValidate>
                   <div className="grid max-w-xl gap-1.5">
