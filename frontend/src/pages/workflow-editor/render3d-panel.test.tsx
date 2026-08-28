@@ -182,3 +182,55 @@ describe('3D 资产面板', () => {
     expect(screen.queryByRole('button', { name: /烘入/ })).toBeNull()
   })
 })
+
+describe('资产变化要通知外面', () => {
+  afterEach(cleanup)
+
+  it('模型地址从无到有时通知一次 —— 下游读的是角色数据，不跟着更新就会自相矛盾', async () => {
+    const onAssetChanged = vi.fn()
+    // 建资产是**异步**就绪的（building → rigging → ready），就绪那一刻发生在轮询里，
+    // 不是点击之后。所以这里模拟的是「同一个组件，第二次读到的值变了」。
+    let current = asset({ state: 'rigging', model3dUrl: null })
+    const get = vi.fn(async () => current)
+    const view = render(
+      <Render3DAssetPanel
+        render3d={apis(current, { getOutfitAsset: get })}
+        characterId="7"
+        outfitId="outfit-default"
+        precheck={null}
+        disabled={false}
+        onAssetChanged={onAssetChanged}
+      />,
+    )
+    await waitFor(() => expect(get).toHaveBeenCalled())
+    expect(onAssetChanged).not.toHaveBeenCalled() // 首次读到不算变化
+
+    current = asset({ state: 'ready', model3dUrl: 'https://x/m.glb' })
+    // 轮询间隔 4 秒，默认 1 秒的 waitFor 等不到。
+    // 也**不能改成断言 get 的调用次数** —— StrictMode 下 effect 双跑，
+    // 两次立即调用就把次数满足了，与轮询无关；断言要落在结果上。
+    await waitFor(() => expect(onAssetChanged).toHaveBeenCalledTimes(1), { timeout: 8000 })
+    view.unmount()
+  })
+
+  it('值没变就不通知 —— 轮询期间每一跳都通知会把角色数据打爆', async () => {
+    const onAssetChanged = vi.fn()
+    const current = asset({ state: 'ready', model3dUrl: 'https://x/m.glb' })
+    const get = vi.fn(async () => current)
+    const view = render(
+      <Render3DAssetPanel
+        render3d={apis(current, { getOutfitAsset: get })}
+        characterId="7"
+        outfitId="outfit-default"
+        precheck={null}
+        disabled={false}
+        onAssetChanged={onAssetChanged}
+      />,
+    )
+    await waitFor(() => expect(get).toHaveBeenCalled())
+    // ready 不在 IN_FLIGHT 里,不会再轮询,所以这里等的是"确实没有第二次通知"
+    await new Promise((r) => setTimeout(r, 60))
+    expect(onAssetChanged).not.toHaveBeenCalled()
+    view.unmount()
+  })
+})

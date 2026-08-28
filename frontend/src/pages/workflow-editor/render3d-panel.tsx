@@ -4,7 +4,7 @@
  * 三条约束：金额只从后端 `cost` 读（档位会变，前端抄一份就会分叉）；`awaiting_review`
  * 是人工闸，不提供任何自动放行路径；`error` 直接展示后端文案，不在前端重拼。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   RENDER3D_MOTION_LABELS,
@@ -109,6 +109,8 @@ export interface Render3DAssetPanelProps {
   /** 母版预检结果。不过检就不给建 —— 重出母版比重建模型便宜一个量级。 */
   precheck: MasterPrecheckReport | null
   disabled: boolean
+  /** 模型地址或已烘动作发生变化时调用。角色数据上挂着同一份信息，别处在读，得跟着更新。 */
+  onAssetChanged?: () => void
 }
 
 export function Render3DAssetPanel({
@@ -117,6 +119,7 @@ export function Render3DAssetPanel({
   outfitId,
   precheck,
   disabled,
+  onAssetChanged,
 }: Render3DAssetPanelProps) {
   const [refreshKey, setRefreshKey] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -124,6 +127,22 @@ export function Render3DAssetPanel({
   const [confirming, setConfirming] = useState(false)
   const [stance, setStance] = useState<CharacterStance>('biped')
   const state = useRender3DAsset(render3d, characterId, outfitId, refreshKey)
+
+  // 资产就绪发生在**轮询里**，不是点击之后（build → awaiting_review → rigging → ready）。
+  // 所以盯的是观察到的值本身变化，而不是在动作回调里通知——只在点击后通知的话，
+  // 建资产那一路（异步就绪）永远不会触发，而那正是最需要通知的一路。
+  const observed =
+    state.status === 'done'
+      ? `${state.asset.model3dUrl ?? ''}|${[...state.asset.bakedMotions].sort().join(',')}`
+      : null
+  const lastObserved = useRef<string | null>(null)
+  useEffect(() => {
+    if (observed === null) return
+    const previous = lastObserved.current
+    lastObserved.current = observed
+    // 首次读到不算变化：那是页面本来就有的状态，不需要惊动别人。
+    if (previous !== null && previous !== observed) onAssetChanged?.()
+  }, [observed, onAssetChanged])
 
   if (state.status === 'loading') {
     return (
