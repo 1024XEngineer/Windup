@@ -86,17 +86,17 @@ class CharacterImageInput:
     # 而不是各个构造点:MQ 重建时若另写一份默认值,缺省就会从 2 变成另一份数。
     num_images: int | None = None
     direction: ActionDirection = ActionDirection.EAST
-    # 四向 / 八向动作首帧:参考图必须是正视母版,提示词走 view_sheet 方位角锁。
+    # 四向 / 八向动作首帧:参考图是该朝向已确认立绘,提示词走 view_sheet 方位锁。
     # 默认 False,``/generation/image`` 与 MQ 里旧任务都没有这个字段。
-    lock_from_south: bool = False
+    lock_orientation: bool = False
 
     def __post_init__(self) -> None:
         if self.num_images is None:
             self.num_images = 2
-        if self.lock_from_south:
+        if self.lock_orientation:
             self.reference_image_url = (self.reference_image_url or "").strip() or None
             if not self.reference_image_url:
-                raise ValueError("锁定朝向的动作首帧必须绑定正视母版")
+                raise ValueError("锁定朝向的动作首帧必须绑定该朝向立绘")
             if not (self.prompt or "").strip():
                 raise ValueError("锁定朝向的动作首帧必须提供动作描述")
 

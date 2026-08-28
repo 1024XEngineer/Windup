@@ -66,9 +66,9 @@ def build_oriented_first_frame_prompt(
     view: CharacterView | str = CharacterView.TOP_DOWN,
     action_prompt: str,
 ) -> str:
-    """从正视母版锁相机方位,再换成动作首帧姿态。
+    """以该朝向立绘为参考,锁住朝向后换成动作首帧姿态。
 
-    复用 sheet 的朝向 / 仰角 / 构图节;身份与姿态改成允许动,不能沿用 idle standing。
+    复用 sheet 的朝向 / 仰角 / 构图节当方位锁;身份锚是附上的那张朝向图,不从 south 转相机。
     ``action_prompt`` 必须有正文:空描述会让方位锁后面没有姿态,模型容易站着不动。
     """
 

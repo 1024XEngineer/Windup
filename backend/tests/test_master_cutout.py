@@ -201,7 +201,7 @@ def test_confirmed_master_is_sent_as_identity_reference_without_style_sample():
     assert "preserve its identity" in str(seen["prompt"])
 
 
-def test_lock_from_south_first_frame_uses_view_sheet_camera_not_character_turn():
+def test_lock_orientation_first_frame_keeps_attached_heading():
     master = _master()
     seen: dict[str, object] = {}
 
@@ -218,13 +218,13 @@ def test_lock_from_south_first_frame_uses_view_sheet_camera_not_character_turn()
         fetch_ref=lambda _url: master,
     )._produce_image(
         CharacterImageInput(
-            reference_image_url="https://cdn.example.com/south.png",
+            reference_image_url="https://cdn.example.com/east.png",
             prompt="walk cycle first frame, left foot forward",
             width=64,
             height=64,
             num_images=1,
             direction=ActionDirection.EAST,
-            lock_from_south=True,
+            lock_orientation=True,
         ),
         ProjectConstraints(
             directions=4,
@@ -237,10 +237,11 @@ def test_lock_from_south_first_frame_uses_view_sheet_camera_not_character_turn()
     )
 
     prompt = str(seen["prompt"]).lower()
-    assert "front-view character master" in prompt
+    assert "already facing the requested compass heading" in prompt
     assert "ninety-degree" in prompt
     assert "walk cycle first frame" in prompt
     assert "rotate the character, not the camera" not in prompt
+    assert "front-view character master" not in prompt
     assert seen["n_refs"] == 1
 
 

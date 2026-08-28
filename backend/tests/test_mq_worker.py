@@ -1452,28 +1452,28 @@ def test_image_input_keeps_explicit_zero_num_images():
     assert rebuilt.num_images == 0
 
 
-def test_image_input_restores_lock_from_south():
+def test_image_input_restores_lock_orientation():
     from windup_app.worker.handlers import _image_input
 
     rebuilt = _image_input(
         {
             "prompt": "walk first frame",
-            "reference_image_url": "https://cdn.example.com/south.png",
+            "reference_image_url": "https://cdn.example.com/east.png",
             "direction": "east",
-            "lock_from_south": True,
+            "lock_orientation": True,
         }
     )
 
-    assert rebuilt.lock_from_south is True
+    assert rebuilt.lock_orientation is True
     assert rebuilt.direction is ActionDirection.EAST
 
 
-def test_image_input_defaults_lock_from_south_off():
+def test_image_input_defaults_lock_orientation_off():
     from windup_app.worker.handlers import _image_input
 
     rebuilt = _image_input({"prompt": "hero"})
 
-    assert rebuilt.lock_from_south is False
+    assert rebuilt.lock_orientation is False
 
 
 def test_warmup_injects_one_matte_into_both_executors(monkeypatch):

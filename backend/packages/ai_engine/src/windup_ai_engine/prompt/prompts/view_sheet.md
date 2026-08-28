@@ -18,20 +18,19 @@ Same idle pose, same scale, same costume, same character.
 ## identity.first_frame
 
 ```text
-This is an image-to-image task. The attached image is the confirmed FRONT-VIEW character master.
-Preserve that identity exactly: the same face, hairstyle, body proportions, outfit, colors,
-accessories, and silhouette. Rotate only the camera azimuth around the same figure to the
-compass heading below. Keep that camera lock: do not let the character turn independently of it.
-The pose is the action first frame described after the camera heading, not the idle standing pose.
-Same scale, same costume, same character.
+This is an image-to-image task. The attached image is the confirmed character already facing
+the requested compass heading. Preserve that identity exactly: the same face, hairstyle, body
+proportions, outfit, colors, accessories, and silhouette. Keep this camera azimuth and heading
+locked: do not turn the character toward another direction. Change only the pose to the action
+first frame described after the camera heading. Same scale, same costume, same character.
 ```
 
 ## first_frame.pose_lock
 
 ```text
 The pose is the action first frame described next, not idle standing. Keep the camera azimuth
-and compass heading above for the whole figure. Do not face another direction. Same identity
-as the front-view master.
+and compass heading of the attached image. Do not face another direction. Same identity as
+the attached heading master.
 ```
 
 ## pose

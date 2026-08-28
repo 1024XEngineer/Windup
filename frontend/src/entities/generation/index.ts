@@ -82,7 +82,7 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
   /** 首帧必须与角色母版使用同一个真实源方向。 */
   direction?: ActionDirection
   /**
-   * 四向 / 八向锁定朝向时必填。后端用角色已确认的正视母版，不再吃各向立绘。
+   * 四向 / 八向锁定朝向时必填。后端走 `/generation/first-frame`，参考图仍是该朝向立绘。
    * 单向首帧不传，仍走 `/generation/image`。
    */
   characterId?: string

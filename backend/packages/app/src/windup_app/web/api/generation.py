@@ -333,11 +333,12 @@ class CharacterViewSheetGenerateRequest(BaseModel):
 
 
 class CharacterFirstFrameGenerateRequest(BaseModel):
-    """四向 / 八向动作首帧:正视母版锁朝向后出该方向的动作起手姿态。"""
+    """四向 / 八向动作首帧:以该朝向立绘为参考,锁住朝向后出动作起手姿态。"""
 
     model_config = ConfigDict(extra="forbid")
     project_id: int = Field(gt=0)
     character_id: int = Field(gt=0)
+    reference_image_url: str
     prompt: str
     negative_prompt: str = ""
     width: int = Field(default=1024, ge=64, le=2048)
@@ -346,11 +347,15 @@ class CharacterFirstFrameGenerateRequest(BaseModel):
     direction: ActionDirection
 
     @model_validator(mode="after")
-    def require_action_prompt(self):
+    def require_prompt_and_heading_template(self):
         prompt = (self.prompt or "").strip()
         if not prompt:
             raise ValueError("动作首帧必须提供动作描述")
         self.prompt = prompt
+        url = (self.reference_image_url or "").strip()
+        if not url:
+            raise ValueError("动作首帧必须提供该朝向已确认的立绘")
+        self.reference_image_url = url
         return self
 
 
@@ -825,7 +830,7 @@ def submit_first_frame_generation(
     request: Request,
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
-    """提交锁定朝向的动作首帧:正视母版转相机,再换成动作起手姿态。"""
+    """提交锁定朝向的动作首帧:以该朝向立绘为参考,锁住朝向后换成动作起手姿态。"""
     user_id = request.state.current_user.id
     project = _get_project_or_raise(session, body.project_id, user_id)
     if project.directional_movement not in (2, 3):
@@ -835,19 +840,16 @@ def submit_first_frame_generation(
         )
     _validate_project_size(project, body.width, body.height)
     _validate_project_direction(project, body.direction)
-    character = _get_character_or_raise(session, body.character_id, body.project_id)
-    confirmed_master = (character.reference_image_url or "").strip()
-    if not confirmed_master:
-        raise BizException("请先选择并确认角色母版", code=BizCode.BAD_REQUEST)
+    _get_character_or_raise(session, body.character_id, body.project_id)
     input_data = CharacterImageInput(
-        reference_image_url=confirmed_master,
+        reference_image_url=body.reference_image_url,
         prompt=body.prompt,
         negative_prompt=body.negative_prompt,
         width=body.width,
         height=body.height,
         num_images=body.num_images,
         direction=body.direction,
-        lock_from_south=True,
+        lock_orientation=True,
     )
     task = generation_service.generate_character_image(
         session,

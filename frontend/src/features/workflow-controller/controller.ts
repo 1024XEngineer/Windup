@@ -1028,9 +1028,7 @@ export function createWorkflowController({
                 : nonEmpty(options.prompt, 'prompt'),
           spriteWidth: options.spriteWidth,
           spriteHeight: options.spriteHeight,
-          referenceMedia: lockCharacterId
-            ? []
-            : [sourceImage ?? (characterTemplateReference as MediaReference)],
+          referenceMedia: [sourceImage ?? (characterTemplateReference as MediaReference)],
           direction,
           ...(lockCharacterId === undefined ? {} : { characterId: lockCharacterId }),
           ...(options.candidateCount === undefined
@@ -1427,7 +1425,7 @@ export function createWorkflowController({
                 node.input.name,
               spriteWidth: options.spriteWidth,
               spriteHeight: options.spriteHeight,
-              referenceMedia: characterId ? [] : [templateUrl as MediaReference],
+              referenceMedia: [templateUrl as MediaReference],
               direction: retryDirection,
               ...(characterId === undefined ? {} : { characterId }),
             }

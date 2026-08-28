@@ -70,6 +70,7 @@ def _direction_set_payload(project_id: int, character_id: int, **overrides) -> d
 
 
 _MASTER_URL = "https://cdn.example.com/masters/hero.png"
+_EAST_TEMPLATE_URL = "https://cdn.example.com/masters/hero-east.png"
 
 
 def _action_payload(project_id: int, character_id: int, **overrides) -> dict:
@@ -467,6 +468,7 @@ def _first_frame_payload(project_id: int, character_id: int, **overrides) -> dic
     payload = {
         "project_id": project_id,
         "character_id": character_id,
+        "reference_image_url": _EAST_TEMPLATE_URL,
         "prompt": "walk first frame, left foot forward",
         "width": 64,
         "height": 64,
@@ -476,7 +478,7 @@ def _first_frame_payload(project_id: int, character_id: int, **overrides) -> dic
     return payload
 
 
-def test_first_frame_binds_south_master_and_shares_image_queue(auth_client):
+def test_first_frame_uses_heading_template_not_south_master(auth_client):
     project = _create_project(auth_client)
     character = _create_character(
         auth_client,
@@ -494,28 +496,30 @@ def test_first_frame_binds_south_master_and_shares_image_queue(auth_client):
     assert body["code"] == 200
     assert body["data"]["task_type"] == "character_image"
     assert body["data"]["status"] == "pending"
-    assert body["data"]["input_payload"]["reference_image_url"] == _MASTER_URL
+    assert body["data"]["input_payload"]["reference_image_url"] == _EAST_TEMPLATE_URL
     assert body["data"]["input_payload"]["direction"] == "east"
-    assert body["data"]["input_payload"]["lock_from_south"] is True
+    assert body["data"]["input_payload"]["lock_orientation"] is True
     assert body["data"]["input_payload"]["prompt"] == "walk first frame, left foot forward"
     assert publisher.enqueue.call_args.kwargs["msg_type"] == "character_image"
     assert publisher.enqueue.call_args.kwargs["payload"]["task_type"] == "character_image"
     assert publisher.enqueue.call_args.kwargs["stream"] == "windup:stream:generation-image"
 
 
-def test_first_frame_without_confirmed_master_is_rejected_before_queueing(auth_client):
+def test_first_frame_without_heading_template_is_rejected_before_queueing(auth_client):
     project = _create_project(auth_client)
-    character = _create_character(auth_client, project["id"])
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
     publisher = auth_client.app.state.mq_publisher
     publisher.reset_mock()
 
     response = auth_client.post(
         "/generation/first-frame",
-        json=_first_frame_payload(project["id"], character["id"]),
+        json=_first_frame_payload(project["id"], character["id"], reference_image_url=""),
     )
 
     assert response.json()["code"] == 400
-    assert "请先选择并确认角色母版" in response.json()["message"]
+    assert "该朝向已确认的立绘" in response.json()["message"]
     publisher.enqueue.assert_not_called()
 
 
@@ -552,29 +556,6 @@ def test_first_frame_rejects_west_for_four_way_project(auth_client):
 
     assert body["code"] == 400
     assert "west" in body["message"]
-    publisher.enqueue.assert_not_called()
-
-
-def test_first_frame_rejects_client_supplied_reference_url(auth_client):
-    project = _create_project(auth_client)
-    character = _create_character(
-        auth_client, project["id"], reference_image_url=_MASTER_URL,
-    )
-    publisher = auth_client.app.state.mq_publisher
-    publisher.reset_mock()
-
-    response = auth_client.post(
-        "/generation/first-frame",
-        json=_first_frame_payload(
-            project["id"],
-            character["id"],
-            reference_image_url="https://evil.example/not-the-master.png",
-        ),
-    )
-
-    body = response.json()
-    assert body["code"] == 400
-    assert "reference_image_url" in body["message"] or "Extra" in body["message"]
     publisher.enqueue.assert_not_called()
 
 
