@@ -429,6 +429,57 @@ def test_recover_requeues_pending_tasks_with_open_freeze(session_factory):
         assert _account(session, 1).frozen == quota_settings.generate_action_cost
 
 
+def test_recover_releases_i2v_claim_for_failed_and_missing_tasks(
+    session_factory, monkeypatch,
+):
+    from windup_app.server.mq import i2v_admit
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    publisher, _enqueued = _tracking_publisher()
+    released: list[int] = []
+
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    service = AiGenerationService()
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=2,
+    )
+    with session_factory() as session:
+        failed = service.generate_character_action(
+            session, user_id=1, project_id=7, input=action_input,
+        )
+        live = service.generate_character_action(
+            session, user_id=1, project_id=7, input=action_input,
+        )
+        task_repo.update_status(session, failed.id, TaskStatus.FAILED)
+        task_repo.update_status(session, live.id, TaskStatus.RUNNING)
+        session.commit()
+        failed_id, live_id = failed.id, live.id
+
+    monkeypatch.setattr(i2v_admit, "rebuild", lambda: None)
+    monkeypatch.setattr(
+        i2v_admit, "claimed_ids", lambda: (failed_id, live_id, 99999),
+    )
+    monkeypatch.setattr(i2v_admit, "release", lambda task_id: released.append(task_id))
+    monkeypatch.setattr(i2v_admit, "has_claim", lambda task_id: task_id == live_id)
+    monkeypatch.setattr(i2v_admit, "schedule_retry", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.recover.reschedule_if_waiting",
+        lambda *_a, **_k: False,
+    )
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(session, publisher=publisher)
+        session.commit()
+
+    assert failed_id in released
+    assert 99999 in released
+    assert live_id not in released
+
+
 def test_recover_fails_and_unfreezes_running_orphans(session_factory):
     from datetime import datetime, timedelta, timezone
 

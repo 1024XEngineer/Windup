@@ -73,6 +73,20 @@ def recover_orphaned_generation_tasks(
             _fail_interrupted(session, task)
             continue
         _requeue_pending(session, publisher, task)
+    try:
+        _release_stale_i2v_claims(session)
+    except Exception:
+        logger.exception("清理终态 i2v 在途名额失败")
+
+
+def _release_stale_i2v_claims(session: Session) -> None:
+    """FAILED/COMPLETED/失踪任务仍占坑时清掉。SET 无 TTL，漏一次就永久堵闸。"""
+    for task_id in i2v_admit.claimed_ids():
+        task = task_repo.get_task(session, task_id)
+        if task is not None and not task.is_terminal:
+            continue
+        i2v_admit.release(task_id)
+        logger.info("终态或失踪任务已释放 i2v 名额 | task_id=%s", task_id)
 
 
 def _fail_unrecoverable(session: Session, task: GenerationTask) -> None:

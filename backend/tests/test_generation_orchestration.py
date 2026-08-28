@@ -553,6 +553,62 @@ def test_action_task_prompt_rejected_leaves_no_result(session_factory):
     assert payload["error_message"]
 
 
+def test_action_task_prompt_rejected_releases_i2v_claim(session_factory, monkeypatch):
+    """占坑后被措辞门禁拒绝，必须把名额还回去，否则 failed 任务永久堵闸。"""
+    from windup_ai_engine.ports import PromptRejectCode, PromptRejected
+
+    released: list[int] = []
+
+    class _RejectGen:
+        def start_video(self, *args, **kwargs):
+            raise PromptRejected(PromptRejectCode.NEGATION, "描述里不要写否定词")
+
+        def generate(self, *args, **kwargs):
+            raise AssertionError("有 start_video 时不该走阻塞 generate")
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.try_acquire",
+        lambda _task_id: True,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.can_submit",
+        lambda _task_id: True,
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.retry_state",
+        lambda _task_id: (0, 0),
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.i2v_admit.release",
+        lambda task_id: released.append(task_id),
+    )
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_RejectGen(),
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1,
+        action_type=ActionType.CUSTOM,
+        custom_prompt="不要扬尘",
+        num_frames=4,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+
+    executor.run_action_task(task_id, action_input)
+
+    assert released == [task_id]
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.FAILED
+    assert done.error_message and "动作描述没通过检查" in done.error_message
+
+
 def test_fail_task_clears_stale_result(session_factory):
     from windup_app.server.orchestrator import task_repo
 
