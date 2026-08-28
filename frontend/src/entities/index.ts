@@ -143,7 +143,7 @@ export type { GenerationApiConfig, GenerationTransport } from './generation/api'
 export { createRender3DApis, render3DApis, Render3DContractError } from './render3d/api'
 // 运行时常量要单独导 —— 上面那个 `export type` 块只带类型,
 // 常量混进去在运行时会是 undefined(实测:面板整个白屏)。
-export { RENDER3D_MOTION_CREDITS, RENDER3D_MOTION_LABELS } from './render3d'
+export { RENDER3D_MOTION_LABELS } from './render3d'
 export type {
   BakeCompletion,
   BakeJob,

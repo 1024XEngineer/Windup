@@ -137,9 +137,6 @@ export interface BakeCompletion {
  */
 export type Render3DMotion = 'walk' | 'idle' | 'jump'
 
-/** 每个动作各是一次绑骨。给用户看的价签，与后端 `AUTORIG_CREDITS` 同一个数。 */
-export const RENDER3D_MOTION_CREDITS = 10
-
 /** 动作的中文名。界面上不该出现 `walk` 这种取值。 */
 export const RENDER3D_MOTION_LABELS: Record<Render3DMotion, string> = {
   walk: '走路',

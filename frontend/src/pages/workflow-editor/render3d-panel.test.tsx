@@ -161,6 +161,21 @@ describe('3D 资产面板', () => {
     expect(add.mock.calls[0]?.[2]).toBe('jump')
   })
 
+  it('扣费数字取后端返回的那份，前端不另存一个价', async () => {
+    // 前端另存一份常量的话，改价那天界面会理直气壮地报一个错数，而且哪一道闸都不红。
+    // 所以这里故意给一个不等于历史硬编码值(10)的价。
+    mount(
+      asset({
+        state: 'ready',
+        model3dUrl: 'https://x/m.glb',
+        bakedMotions: [],
+        cost: { ...COST, autorigCredits: 17 },
+      }),
+    )
+    await screen.findByRole('button', { name: '烘入跳跃，17 积分' })
+    expect(screen.queryByRole('button', { name: /10 积分/ })).toBeNull()
+  })
+
   it('可烘动作由后端给，前端不自己列 —— 后端没给就一个都不显示', async () => {
     mount(asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakeableMotions: [] }))
     await screen.findByText(/一份绑骨产物只带一个动作/)
