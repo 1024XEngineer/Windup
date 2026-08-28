@@ -339,15 +339,52 @@ class _LazyAutoRig:
         self._allow_spend = allow_spend
 
     def rig(self, model: bytes, *, want: str = "GLB", motion=None):
-        from windup_framework.providers.render3d import (
-            TencentAutoRigProvider,
-            TencentCosModelUploader,
-        )
+        from windup_framework.providers.render3d import TencentAutoRigProvider
 
         provider = TencentAutoRigProvider(
-            TencentCosModelUploader(), allow_spend=self._allow_spend
+            _MediaModelUploader(), allow_spend=self._allow_spend
         )
         return provider.rig(model, want=want, motion=motion)
+
+
+class _MediaModelUploader:
+    """把模型放到**我们自己的**对象存储,拿绑骨服务器取得到的公网 URL。
+
+    原先走 ``TencentCosModelUploader``(先传腾讯 COS 再提交)。那条路在生产部署机上
+    走不通 —— 2026-08-28 实测:
+
+        部署机 → 腾讯 COS          64KB 通(52MB/s) │ 256KB 超时 │ 1MB BrokenPipe
+        部署机 → 自家对象存储       1MB 0.32s
+        部署机 → 上游 API 网关      1MB 0.23s
+
+    只有 COS 这一条链路超过约 64KB 就断,别的目标 1MB 秒传;18MB 的模型死在
+    ``ssl.sendall``,而失败发生在 ``_upload``,``_submit`` 从没执行(所以没扣费,
+    但也永远建不成资产)。
+
+    换成自家存储还顺带省掉一次 18MB 上传:``_publish_model`` 本来就要把模型传到
+    同一个地方,原先等于同一份文件传两遍、第二遍还传到一条走不通的链路上。
+
+    腾讯认这个 URL —— 同一份模型、同一个接口,实测提交成功
+    (JobId=1484789196060876800,产物 20.4MB FBX、2 个 AnimationStack)。
+    用控制样本区分过错误码:URL 取不到时腾讯报 ``DownloadError: 文件下载失败``,
+    与我们遇到的 ``ServerError`` / ``RequestTimeout`` 是不同的错,后两者重试即过。
+    """
+
+    _NAME = {"model/gltf-binary": "rig-input.glb", "application/x-fbx": "rig-input.fbx"}
+
+    def upload(self, model: bytes, content_type: str) -> str:
+        from windup_app.server.media.model import MediaUploadInput
+        from windup_app.server.media.service import service as media_service
+
+        return media_service.upload(
+            model,
+            MediaUploadInput(
+                filename=self._NAME.get(content_type, "rig-input.bin"),
+                content_type=content_type,
+                size=len(model),
+                category="model-3d",
+            ),
+        )
 
 
 def _publish_model(data: bytes) -> str:
