@@ -4,6 +4,7 @@ from .actions import build_attack_prompt, build_idle_prompt
 from .custom import MAX_ACTION_CHARS, build_custom_prompt
 from .jump import JUMP_PHASES, build_jump_prompt
 from .presets import ACTION_PRESETS, ActionPreset
+from .rig_master import RIG_MASTER_PROMPT_VERSION, build_rig_master_prompt
 from .view_sheet import (
     VIEW_SHEET_PROMPT_VERSION,
     build_oriented_first_frame_prompt,
@@ -30,6 +31,8 @@ __all__ = [
     "PROMPT_VERSION",
     "VIEW_SHEET_PROMPT_VERSION",
     "build_oriented_first_frame_prompt",
+    "build_rig_master_prompt",
+    "RIG_MASTER_PROMPT_VERSION",
     "build_view_sheet_prompt",
     "view_for_perspective",
 ]

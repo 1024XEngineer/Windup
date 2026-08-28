@@ -57,9 +57,13 @@ class _FakeModel3D:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.seen: list[bytes] = []      # 收到的是哪张图 —— 送错图和没送一样致命
+        self.views: dict | None = None   # 多视图有没有真的传下来
 
-    def image_to_3d(self, master: bytes, *, want: str = "GLB") -> bytes:
+    def image_to_3d(self, master: bytes, *, want: str = "GLB", **kw) -> bytes:
         self.calls += 1
+        self.seen.append(master)
+        self.views = kw.get("extra_views")
         return b"glTF-fake-model"
 
 
@@ -479,3 +483,94 @@ def test_discarding_frees_a_slot(api, engine, render3d):
 
     data = _data(api.post(f"{_base()}/build", json=BIPED))
     assert data["state"] in {"building", "awaiting_review"}
+
+
+# ══ 绑骨母版:送进图生 3D 的是 T-Pose 转出来的那张,不是定妆母版 ══════════
+
+
+def _subject_png(w: int, h: int, color: tuple[int, int, int]) -> bytes:
+    """指定主体宽高与颜色。**颜色要能区分** —— 两张图字节一样的话,
+    "用了转出来那张"与"退回定妆母版"结果相同,断言分不出来(变异测试逮出来过)。"""
+    img = Image.new("RGBA", (w + 40, h + 40), (0, 0, 0, 0))
+    for x in range(20, 20 + w):
+        for y in range(20, 20 + h):
+            img.putpixel((x, y), (*color, 255))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+class _PosingImage:
+    """生图桩:返回给定的字节,并记下被调了几次、拿到什么提示词。"""
+
+    def __init__(self, out: bytes | None) -> None:
+        self.out = out
+        self.calls = 0
+        self.prompts: list[str] = []
+
+    def gen_image(self, prompt, refs):
+        self.calls += 1
+        self.prompts.append(prompt)
+        if self.out is None:
+            raise RuntimeError("生图网关不可用")
+        return self.out
+
+
+def test_the_posed_master_is_what_goes_into_image_to_3d(api, render3d):
+    """转出来的 T-Pose 母版要**真的被送进去** —— 转了却不用等于白花一次生图。"""
+    posed = _subject_png(240, 120, (40, 90, 200))   # 明显更宽 = 手臂张开了
+    image = _PosingImage(posed)
+    render3d._image = image
+    api.post(f"{_base()}/build", json=BIPED)
+    assert image.calls == 1
+    assert "T-pose" in image.prompts[0]
+    assert render3d.test_model3d.seen == [posed], "送进图生 3D 的不是转出来那张"
+
+
+def test_a_posed_master_that_did_not_widen_is_rejected(api, render3d):
+    """主体没变宽 = 那一版根本没照做。
+
+    张开手臂必然让主体变宽,所以这是个能证伪的判据。用它而不是信任模型照做了 ——
+    没照做的后果只有渲出动作才看得见（手臂焊在躯干上、一摆手躯干跟着变形）。
+    """
+    # 和定妆母版一样宽（= 没张开），但**颜色不同**所以字节不同 ——
+    # 否则两条路产出相同字节，断言恒真。
+    narrow = _master_png(legs_apart=False)
+    assert narrow != render3d.test_source["master"], "两版字节必须不同,否则断言恒真"
+    image = _PosingImage(narrow)
+    render3d._image = image
+    api.post(f"{_base()}/build", json=BIPED)
+    assert render3d.test_model3d.seen == [render3d.test_source["master"]], (
+        "没变宽却仍然用了转出来那张"
+    )
+
+
+def test_a_failed_pose_step_does_not_sink_the_whole_build(api, render3d):
+    """转不出来就退回定妆母版,不让整条建资产失败。
+
+    绑骨母版是为了把姿势做对,不是必要条件——线上实测臂展 0.523 的定妆母版
+    也绑成过。在这里硬拒等于把一条本来能走的路堵死。
+    """
+    render3d._image = _PosingImage(None)       # 生图直接抛
+    r = api.post(f"{_base()}/build", json=BIPED)
+    assert r.status_code == 200, r.json()
+    assert render3d.test_model3d.seen == [render3d.test_source["master"]]
+
+
+def test_extra_views_survive_alongside_the_posed_master(api, render3d):
+    """多视图与 T-Pose 绑骨母版**同时生效**。
+
+    两者在 build 里挨着,合并时极易只留一半 —— 而少了哪一半都不报错:
+    丢了多视图就是用户按多视图付了钱拿到单图重建;丢了绑骨母版就是手臂焊在躯干上。
+    这条专门盯那一行同时带两个参数的调用。
+    """
+    posed = _subject_png(240, 120, (40, 90, 200))
+    render3d._image = _PosingImage(posed)
+    render3d.test_source["back"] = b"BACK-VIEW-BYTES"
+    original_fetch = render3d._fetch
+    render3d._fetch = lambda url: (
+        b"BACK-VIEW-BYTES" if url == "https://cdn.windup.test/back.png" else original_fetch(url)
+    )
+    api.post(f"{_base()}/build", json={**BIPED, "extra_view_urls": {"back": "https://cdn.windup.test/back.png"}})
+    assert render3d.test_model3d.seen == [posed], "送进图生 3D 的不是 T-Pose 绑骨母版"
+    assert render3d.test_model3d.views == {"back": b"BACK-VIEW-BYTES"}, "多视图没传下去"
