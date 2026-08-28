@@ -882,7 +882,11 @@ export function createWorkflowController({
     input: Pick<WorkflowCharacterInput, 'prompt' | 'referenceMedia'>,
   ) {
     ensureRunning()
-    const prompt = nonEmpty(input.prompt, 'prompt')
+    // 描述**允许为空**。这个方法既保存描述也保存参考图,而用户常常先传图再想文案 ——
+    // 在这里拒空等于「上传成功了,但因为你还没写描述,图丢了」,而界面上参考图那栏
+    // 标的是「选填」。真正必填的是**提交生成**那一刻,那道闸在生成按钮上(prompt 为空
+    // 时按钮置灰),不需要这里再拦一次。
+    const prompt = input.prompt ?? ''
     return persist((run) =>
       updateNode(run, nodeId, (node) => {
         if (node.type !== 'character-setup') throw new Error('目标节点不是角色设定')
