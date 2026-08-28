@@ -33,6 +33,7 @@ from windup_framework.gateway import bind_call_context, fresh_gateway_request
 from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.registry import (
     USER_GATED_MODELS,
+    preferred_model_for,
     ModelRegistry,
     is_allowed_for_user,
 )
@@ -249,7 +250,12 @@ def _resolve_video_model(name: str | None, user_id: int | None = None) -> str | 
     只在 HTTP 边界拦一次,绕过它的路径就直接花钱。
     """
     if name is None:
-        return None
+        # **没指定时,白名单用户默认拿最好的那个。**
+        # 白名单本来只是"允许选",而前端从不发 video_model —— 于是被授权的人在产品里
+        # 点生成,走的仍是部署默认型号,白名单形同虚设。这几个账号存在的意义就是做高质量
+        # 素材,让他们再去某个下拉框里挑一次是多余的一步,而漏挑一次就白跑一单。
+        # 只对白名单生效:其他人这里仍返回 None,照旧走部署默认,行为一个字不变。
+        return preferred_model_for(user_id)
     if name in USER_GATED_MODELS:
         if not is_allowed_for_user(name, user_id):
             raise ValueError(f"视频模型 {name!r} 未对当前用户开放")

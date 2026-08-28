@@ -39,6 +39,21 @@ def allowed_user_ids(cfg, model: str) -> frozenset[int]:
     return frozenset(out)
 
 
+def preferred_model_for(user_id: int | None, cfg=None) -> str | None:
+    """这个用户没指定型号时,应当默认给他哪个。``None`` = 照旧走部署默认。
+
+    受限型号按秒计费、比链上的贵,所以**只对被授权的用户**生效;没被授权的人在这里
+    永远拿到 ``None``,行为与改动前一字不差。
+
+    有多个受限型号时取登记顺序的第一个 —— 不做"挑最贵的"或"挑最新的"这类推断:
+    那种规则会在加型号时静默改变已有用户的默认值,而账单要过一天才看得出来。
+    """
+    for model in USER_GATED_MODELS:
+        if is_allowed_for_user(model, user_id, cfg):
+            return model
+    return None
+
+
 def is_allowed_for_user(model: str, user_id: int | None, cfg=None) -> bool:
     """受限型号是否对这个用户开放。非受限型号一律 True。"""
     if model not in USER_GATED_MODELS:

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings as default_settings
 from windup_framework.gateway.errors import RateLimitBackoff, UpstreamExhaustedError
+from windup_framework.gateway.registry import USER_GATED_MODELS as _GATED_VIDEO_MODELS
 from windup_framework.gateway.billing import billing_flags, upstream_reached_label
 from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.context import current_call_context
@@ -123,8 +124,20 @@ class VideoGateway:
         budget = AttemptBudget()
 
         chain = list(self._registry.chain(Scene.CHARACTER_ACTION))
-        if ctx.start_from_model and ctx.start_from_model in chain:
-            start_i = chain.index(ctx.start_from_model)
+        # 受限型号被 ``_admitted()`` 从链上滤掉了(链是兜底路径,让按用户授权的型号当兜底
+        # 等于对所有人开放),所以它不可能出现在 ``chain`` 里。但调用方能拿到它,只说明
+        # **这一次请求已经过了授权闸**(HTTP 入口与编排层各判了一次)—— 把它排到队首,
+        # 后面仍按原链兜底。
+        #
+        # 不这么做的话:``start_from_model`` 因为不在链里被忽略,``models`` 回落成整条链,
+        # 于是授权用户照旧走部署默认 —— 授权、白名单、默认升舱三层全部形同虚设,而任务
+        # 照常成功、产物照常交付,没有任何一处显示"你要的那个型号没被用上"。
+        wanted = ctx.start_from_model
+        if wanted and wanted in _GATED_VIDEO_MODELS:
+            models = [wanted, *chain]
+            start_i = 0
+        elif wanted and wanted in chain:
+            start_i = chain.index(wanted)
             models = chain[start_i:]
         else:
             start_i = 0
