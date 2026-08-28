@@ -18,6 +18,8 @@ function asset(overrides: Partial<Render3DAsset> = {}): Render3DAsset {
     state: 'absent',
     model3dUrl: null,
     reviewModelUrl: null,
+    bakedMotions: [],
+    bakeableMotions: ['walk', 'idle', 'jump'],
     error: null,
     cost: COST,
     ...overrides,
@@ -30,6 +32,7 @@ function apis(current: Render3DAsset, overrides: Partial<Render3DApis> = {}): Re
     getOutfitAsset: async () => current,
     buildOutfitAsset: async () => current,
     approveOutfitAsset: async () => current,
+    addOutfitMotion: async () => current,
     discardOutfitAsset: async () => current,
     getBakeJob: async () => null,
     putBakeFrame: async () => 1,
@@ -123,5 +126,42 @@ describe('3D 资产面板', () => {
   it('失败时展示后端文案，不在前端重拼', async () => {
     mount(asset({ state: 'failed', error: '模型含武器配件，绑骨会把剑一起绑上权重。' }))
     expect(await screen.findByText(/模型含武器配件/)).toBeTruthy()
+  })
+
+  it('资产就绪后能加动作，价签在点之前就给出', async () => {
+    mount(asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakedMotions: ['walk'] }))
+    const jump = await screen.findByRole('button', { name: '烘入跳跃，10 积分' })
+    expect(jump.textContent).toContain('10 积分')
+    expect(await screen.findByRole('button', { name: '烘入待机，10 积分' })).toBeTruthy()
+  })
+
+  it('已经烘过的动作点不动 —— 重复点就是重复付一次绑骨', async () => {
+    const add = vi.fn(async () => asset({ state: 'ready' }))
+    mount(
+      asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakedMotions: ['walk'] }),
+      { addOutfitMotion: add },
+    )
+    const walk = await screen.findByRole('button', { name: '走路已就绪' })
+    expect((walk as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(walk)
+    expect(add).not.toHaveBeenCalled()
+  })
+
+  it('点一个没烘过的动作，把动作名传给后端', async () => {
+    const add = vi.fn(async () => asset({ state: 'ready' }))
+    mount(
+      asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakedMotions: [] }),
+      { addOutfitMotion: add },
+    )
+    fireEvent.click(await screen.findByRole('button', { name: '烘入跳跃，10 积分' }))
+    await waitFor(() => expect(add).toHaveBeenCalled())
+    // 拿错动作名 = 花了钱烘出另一个动作，而界面照样显示成功。
+    expect(add.mock.calls[0]?.[2]).toBe('jump')
+  })
+
+  it('可烘动作由后端给，前端不自己列 —— 后端没给就一个都不显示', async () => {
+    mount(asset({ state: 'ready', model3dUrl: 'https://x/m.glb', bakeableMotions: [] }))
+    await screen.findByText(/一份绑骨产物只带一个动作/)
+    expect(screen.queryByRole('button', { name: /烘入/ })).toBeNull()
   })
 })

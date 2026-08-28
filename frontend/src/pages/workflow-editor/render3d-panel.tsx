@@ -6,7 +6,15 @@
  */
 import { useEffect, useState } from 'react'
 
-import type { CharacterStance, MasterPrecheckReport, Render3DApis, Render3DAsset } from '@/entities'
+import {
+  RENDER3D_MOTION_CREDITS,
+  RENDER3D_MOTION_LABELS,
+  type CharacterStance,
+  type MasterPrecheckReport,
+  type Render3DApis,
+  type Render3DAsset,
+  type Render3DMotion,
+} from '@/entities'
 import { KineticCopyCycle } from '@/shared/ui'
 
 const PANEL_BUTTON =
@@ -268,6 +276,42 @@ export function Render3DAssetPanel({
             >
               放行绑骨
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {asset.state === 'ready' ? (
+        <div className="flex flex-col gap-2">
+          <p className={PANEL_SUMMARY}>动作</p>
+          <p className={PANEL_TEXT}>
+            一份绑骨产物只带一个动作，所以每加一个动作要再绑一次骨（
+            {RENDER3D_MOTION_CREDITS} 积分）。已经有的不会重复扣。
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {asset.bakeableMotions.map((motion) => {
+              const done = asset.bakedMotions.includes(motion)
+              return (
+                <button
+                  key={motion}
+                  type="button"
+                  className={done ? PANEL_BUTTON_SECONDARY : PANEL_BUTTON}
+                  style={{ width: 'auto' }}
+                  aria-label={
+                    done
+                      ? `${RENDER3D_MOTION_LABELS[motion]}已就绪`
+                      : `烘入${RENDER3D_MOTION_LABELS[motion]}，${RENDER3D_MOTION_CREDITS} 积分`
+                  }
+                  disabled={locked || done}
+                  onClick={() =>
+                    run(() => render3d.addOutfitMotion(characterId, outfitId, motion))
+                  }
+                >
+                  {done
+                    ? `${RENDER3D_MOTION_LABELS[motion]} 已就绪`
+                    : `烘入${RENDER3D_MOTION_LABELS[motion]}（${RENDER3D_MOTION_CREDITS} 积分）`}
+                </button>
+              )
+            })}
           </div>
         </div>
       ) : null}
