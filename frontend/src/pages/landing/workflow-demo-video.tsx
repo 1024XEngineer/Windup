@@ -2,9 +2,18 @@ import { useEffect, useRef } from 'react'
 
 import workflowDemoPoster from '@/assets/landing/workflow-demo/workflow-editor-demo-poster.webp'
 import workflowDemoVideo from '@/assets/landing/workflow-demo/workflow-editor-demo.mp4'
+import workflowEditorProductionVideo from '@/assets/landing/workflow-editor/workflow-editor-production.mp4'
 
 /** 视频只在用户真正看到这一段时播放，离开视口后立即暂停。 */
-export function WorkflowDemoVideo() {
+interface WorkflowDemoVideoProps {
+  source?: string
+  label?: string
+}
+
+export function WorkflowDemoVideo({
+  source = workflowDemoVideo,
+  label = 'Workflow Editor 实际运行演示',
+}: WorkflowDemoVideoProps = {}) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -33,9 +42,9 @@ export function WorkflowDemoVideo() {
     <div className="overflow-hidden rounded-[1.25rem] shadow-[0_36px_96px_rgba(35,38,31,0.24),0_12px_28px_rgba(35,38,31,0.12)]">
       <video
         ref={videoRef}
-        src={workflowDemoVideo}
+        src={source}
         poster={workflowDemoPoster}
-        aria-label="Workflow Editor 实际运行演示"
+        aria-label={label}
         className="block aspect-[1918/1080] w-full object-contain"
         muted
         loop
@@ -44,4 +53,8 @@ export function WorkflowDemoVideo() {
       />
     </div>
   )
+}
+
+export function WorkflowEditorProductionVideo() {
+  return <WorkflowDemoVideo source={workflowEditorProductionVideo} label="Workflow Editor 生产演示" />
 }
