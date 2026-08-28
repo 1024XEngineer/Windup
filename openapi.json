@@ -56,6 +56,21 @@
         "title": "ActionType",
         "type": "string"
       },
+      "AddMotionRequest": {
+        "description": "给已建好的 3D 资产追加一个动作片段。\n\n``motion`` 取 ``render3d_assets.ACTION_MOTIONS`` 里有对应预设的那几个\n(walk / idle / jump);attack 与 custom 没有对应预设,继续走 i2v。",
+        "properties": {
+          "motion": {
+            "minLength": 1,
+            "title": "Motion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "motion"
+        ],
+        "title": "AddMotionRequest",
+        "type": "object"
+      },
       "AdminAccessOut": {
         "description": "管理页访问探针响应。",
         "properties": {
@@ -1001,6 +1016,14 @@
               }
             ],
             "description": "绑骨模型的骨架事实；None = 未建或建于本字段之前"
+          },
+          "rigged_motions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "动作名 → 该动作的绑骨产物 URL",
+            "title": "Rigged Motions",
+            "type": "object"
           }
         },
         "required": [
@@ -6516,6 +6539,68 @@
           }
         },
         "summary": "Discard Outfit Asset",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/characters/{character_id}/outfits/{outfit_id}/motions": {
+      "post": {
+        "description": "给已建好的造型再烘一个动作片段。**按次计费的触发点**,只认用户的显式请求。\n\n只花绑骨那一笔:图生 3D 的产物一直留着,不重付。一份绑骨产物只带一个动作片段\n(接口一次只吃一个 MotionType),所以\"这个角色会走也会跳\"= 两份产物。",
+        "operationId": "add_outfit_motion_render3d_characters__character_id__outfits__outfit_id__motions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "outfit_id",
+            "required": true,
+            "schema": {
+              "title": "Outfit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMotionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Outfit Motion",
         "tags": [
           "render3d"
         ]

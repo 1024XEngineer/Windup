@@ -57,8 +57,8 @@ from windup_app.server.orchestrator.signals import ActionAwaitingAdmit, ActionRa
 from windup_framework.gateway.errors import RateLimitBackoff, UpstreamExhaustedError
 from windup_app.server.orchestrator.render3d_assets import (
     AUTORIG_CREDITS,
+    ACTION_MOTIONS,
     BUILD_MOTION,
-    RENDERABLE_ACTIONS,
 )
 from windup_app.server.orchestrator.model import (
     ActionType,
@@ -533,15 +533,26 @@ class ActionTaskExecutor:
             # 选哪个 kling 不在这里传:run_action_task 已经 bind_call_context(start_from_model)。
             model_url = (input.model_3d_url or "").strip()
             # 一份绑骨产物只带**一个**动作片段(绑骨接口一次只吃一个 MotionType),
-            # 建资产时烘的是 BUILD_MOTION。别的动作在这里当场拒,**不能派给出帧台** ——
-            # 那唯一一个片段照样能渲满 32 张帧,于是攻击任务收到的是一段走路,而帧数、
-            # 时长、朝向、成色全部自洽,没有任何一道会红。也不回落 i2v(见下)。
-            if model_url and input.action_type.value not in RENDERABLE_ACTIONS:
+            # 一份绑骨产物只带**一个**动作片段(绑骨接口一次只吃一个 MotionType)。
+            # 判据取自**这个造型实际烘了什么**,不取全局常量:读常量的话,常量一改,
+            # 已经建好的资产就开始声称自己会另一个动作,而渲出来的仍是旧那段。
+            #
+            # 没烘过的动作在这里当场拒,**不能派给出帧台** —— 手上那个片段照样能渲满
+            # 32 张帧,于是跳跃任务收到的是一段走路,而帧数、时长、朝向、成色全部自洽,
+            # 没有任何一道会红。也不回落 i2v(见上:两条路线画风/成本/多朝向都不同)。
+            baked = dict(input.rigged_motions or {})
+            if model_url and not baked:
+                baked = {BUILD_MOTION: model_url}      # 旧数据只有主产物
+            want_motion = ACTION_MOTIONS.get(input.action_type.value)
+            if model_url and (want_motion is None or want_motion not in baked):
                 raise ValueError(
-                    f"该造型的 3D 资产只烘了 {BUILD_MOTION!r} 一个动作片段,出不了 "
+                    f"该造型的 3D 资产烘了 {sorted(baked) or '(无)'},出不了 "
                     f"{input.action_type.value!r}。要走三渲二得为这个动作再绑一次骨"
                     f"({AUTORIG_CREDITS} 积分);要现在就出,把这个动作交给 i2v。"
                 )
+            # 渲哪个动作就取哪一份产物 —— 取错等于拿走路片段冒充跳跃。
+            if model_url and want_motion in baked:
+                model_url = baked[want_motion]
             # 三渲二那支不取母版,而出口的判官闸口要拿它当参照 —— 不先置 None 的话那支会
             # 撞 UnboundLocalError,而它只在有 3D 资产的造型上触发。
             master: bytes | None = None

@@ -531,7 +531,27 @@ def _require_3d_action_quota(character: Character, outfit_id: str | None) -> Non
             "删掉一个再来,或改走视频路线。",
             code=BizCode.BAD_REQUEST,
         )
+def _outfit_rigged_motions(character: Character, outfit_id: str | None) -> dict[str, str]:
+    """这个造型**实际烘好了**哪些动作片段。判据取自落点,不取全局常量。
 
+    取自落点的理由与 ``Render3DAssetState`` 那条一样:状态由落点推出来,不单独存一份。
+    读常量的话,常量一改,**已经建好的**资产就开始声称自己会另一个动作,而渲出来的仍是
+    旧那段 —— 帧数、时长、成色全部正常的静默错。
+    """
+    if not outfit_id:
+        return {}
+    try:
+        data = CharacterData.model_validate(character.character_data or {})
+    except ValidationError:
+        return {}
+    outfit = next((o for o in data.outfits if o.id == outfit_id), None)
+    if outfit is None:
+        return {}
+    # 只把落点原样读出来。**存量兼容(只有 model_3d_url 没有这张表)由编排层兜** ——
+    # 那边已经有同一条 `if model_url and not baked: baked = {BUILD_MOTION: model_url}`,
+    # 在这里再兜一次既是第二真相源,又会让 web 层经 render3d_assets 连到 ai_engine,
+    # 破坏「入口层不经 ai_engine 直连」那条 import 契约(CI 逮到,本地漏跑了 lint-imports)。
+    return dict(outfit.rigged_motions or {})
 
 def _character_stance(character: Character) -> CharacterStance | None:
     """角色存的体型;没存过就给 None(让下游用它自己的默认值)。
@@ -797,6 +817,7 @@ def submit_action_generation(
         # 路线选择在这里定死并写进入参,而不是留给编排层现查:这样"这次走的哪条路线"
         # 在任务入参上就是可见的,排查时不用去猜当时 DB 是什么状态。
         model_3d_url=model_3d_url,
+        rigged_motions=_outfit_rigged_motions(character, body.outfit_id),
         # 请求没显式给就取角色上存的那个。与 model_3d_url 同一个模式:web 层读
         # character_data、写进入参,这样"这次按什么体型算的"在任务入参上就是可见的,
         # 排查时不用去猜当时 DB 是什么状态。

@@ -416,6 +416,55 @@ class Render3DAssetBuilder:
         logger.info("造型级 3D 资产已落点 key=%s fmt=%s", key, rigged.fmt)
         return rigged.data
 
+    def add_motion(self, key: str, motion: str, progress: ProgressPort) -> bytes:
+        """给**已建好**的造型再烘一个动作片段。**只花绑骨那一笔**(见 AUTORIG_CREDITS)。
+
+        为什么能只花一笔:图生 3D 的产物一直留在 ``raw:`` 那份落点上(只有 discard 会删
+        它),所以这里直接拿它再绑一次骨,不重付图生 3D。这也是这个方法存在的全部理由 ——
+        用 ``ensure`` 再跑一遍会连图生 3D 一起重付,而那份模型明明还在。
+
+        一份绑骨产物只带一个动作片段(接口一次只吃一个 MotionType),所以每个动作各存一份,
+        键是 ``{造型键}#{动作}``。**不覆盖主产物** —— 覆盖等于用户为第二个动作付的钱把
+        第一个顶掉。
+
+        Raises:
+            ValueError: 这个造型还没建过资产(没有 raw),或动作名不在 ``ACTION_MOTIONS``
+                的可烘集合里。两种都在花钱之前拒。
+        """
+        want = ACTION_MOTIONS.get(motion)
+        if want is None:
+            bakeable = sorted(a for a, m in ACTION_MOTIONS.items() if m)
+            raise ValueError(
+                f"{motion!r} 走不了三渲二(可烘的是 {bakeable});"
+                "attack / custom 的运动拓扑没有对应的预设动作,继续走 i2v。"
+            )
+        raw = self._store.get(f"{RAW_KEY_PREFIX}{key}")
+        if raw is None:
+            raise ValueError(
+                "这个造型还没有 3D 模型,先建资产再加动作 —— 现建的话要连图生 3D 一起付。"
+            )
+        if not self._review.is_approved(key):
+            raise ValueError("这个造型的 3D 模型还没被确认放行,先看过模型再加动作。")
+
+        motion_key = f"{key}#{want}"
+        cached = self._store.get(motion_key)
+        if cached is not None:
+            return cached                      # 已经烘过这个动作,不重复付费
+
+        progress.step("assets", 0, 1, f"为 {motion} 再绑一次骨并烘入(按次计费)")
+        # 追加动作同样走云到云:上游 URL 还在就不用把 18MB 再中转一遍(#860)。
+        rigged: RiggedModel = _rig(self._autorig, raw,
+                                   self._store.get(f"{URL_KEY_PREFIX}{key}"),
+                                   motion=want)
+        if rigged.motion is None:
+            # 与主产物那条同一个理由:零片段的产物在下游每一道闸前都正常,存下来就是
+            # 把 10 积分买来的哑模型挂成可用。
+            raise RuntimeError(
+                f"绑骨产物里没有动作片段(请求的是 {want!r})—— 拒绝当成就绪资产存下。"
+            )
+        self._store.put(motion_key, rigged.data)
+        logger.info("造型追加动作已落点 key=%s motion=%s", motion_key, want)
+        return rigged.data
 
 def _image_to_3d(provider, master: bytes) -> tuple[bytes, str | None]:
     """图生 3D,顺带取回上游那个产物 URL。
