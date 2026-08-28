@@ -502,6 +502,11 @@ class ActionTaskExecutor:
                 "cyclic": cyclic,
                 "ground_contact": grounded,
             }
+        elif (input.custom_prompt or "").strip():
+            # 写死的那几个动作也带着用户写的那句细节:前端把一句自由文本拆成
+            # action_type(选管线)+ custom_prompt(说这次具体要什么)两半发过来,
+            # 只读前一半就是把用户的输入静默丢了(#838)。
+            extra = {"detail": input.custom_prompt}
         action = ActionSpec(
             action=engine_action,
             poses=[""] * input.num_frames,
@@ -844,6 +849,9 @@ class ActionTaskExecutor:
         if engine_action is EngineActionType.CUSTOM:
             cyclic = False if input.loop is None else bool(input.loop)
             extra = {"custom_action": input.custom_prompt or "", "cyclic": cyclic}
+        elif (input.custom_prompt or "").strip():
+            # 同上(#838):这条路径也要把用户那句细节带下去,否则两处行为不一致。
+            extra = {"detail": input.custom_prompt}
         action = ActionSpec(
             action=engine_action,
             poses=[""] * input.num_frames,
