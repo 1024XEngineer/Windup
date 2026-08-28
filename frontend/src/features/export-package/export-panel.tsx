@@ -575,7 +575,7 @@ export function ExportPanel({
 export function ExportButton({
   model,
   exporter = defaultExporter,
-  cocosExporter = defaultCocosExporter,
+  cocosExporter,
   cocosImporter,
   cocosPairer,
   className = '',
@@ -583,12 +583,14 @@ export function ExportButton({
   idleLabel,
   pill = false,
   iconOnly = false,
-  enableCocosExport = true,
+  enableCocosExport = false,
 }: ExportButtonProps) {
   const { state, working, startExport } = useExportAction(model, exporter)
   const tooltipId = useId()
-  const cocos = useExportAction(model, cocosExporter)
+  const cocos = useExportAction(model, cocosExporter ?? defaultCocosExporter)
   const cocosImport = useCocosImportAction(model, cocosImporter, cocosPairer)
+  const showCocosExport =
+    enableCocosExport || Boolean(cocosExporter || cocosImporter || cocosPairer)
   const label =
     state.status === 'working'
       ? PHASE_LABELS[state.phase]
@@ -648,7 +650,7 @@ export function ExportButton({
           导出失败：{state.message}
         </span>
       ) : null}
-      {enableCocosExport ? (
+      {showCocosExport ? (
         <>
           <button
             type="button"

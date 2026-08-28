@@ -270,6 +270,7 @@ function CharacterExport({
       idleLabel="导出资产包"
       icon={<DownloadSimple size={15} weight="bold" />}
       pill
+      enableCocosExport
       className={ASSET_ACTION_SECONDARY}
     />
   )
