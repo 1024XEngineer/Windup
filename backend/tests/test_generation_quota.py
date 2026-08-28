@@ -8,9 +8,11 @@ from sqlalchemy.pool import StaticPool
 from windup_framework.db.base import Base
 from windup_app.server.orchestrator import billing
 from windup_app.server.orchestrator.executor import ActionTaskExecutor, ImageTaskExecutor
+from windup_app.server.orchestrator.first_frame_executor import FirstFrameTaskExecutor
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     GenerationTask,
     GenerationTaskRecord,
@@ -19,6 +21,7 @@ from windup_app.server.orchestrator.model import (
 )
 from windup_app.server.orchestrator.service import AiGenerationService
 from windup_app.server.quota.model import CreditAccount, CreditTransaction
+from windup_common.directions import ActionDirection
 from windup_common.enums.quota import CreditReason
 from windup_common.exceptions import BizException
 from windup_framework.config.quota import settings as quota_settings
@@ -797,3 +800,53 @@ def test_a_row_without_an_id_is_skipped_instead_of_crashing_recovery(
             session,
             publisher=_tracking_publisher()[0],
         )
+
+
+def test_first_frame_failure_releases_reserved_credit(session_factory):
+    """首帧任务失败必须置失败态并退回冻结额度。
+
+    这条盯的是**新执行器与既有结算助手的接线**,不是助手本身。把 ``run_first_frame_task``
+    的失败分支整个掏空,原先全树 2064 条一条都不红 —— 也就是"扣了钱、任务永远挂在
+    RUNNING、用户既拿不到图也拿不回积分"这一整类后果没有任何一处守着。
+    """
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    service = AiGenerationService()
+
+    def _boom(_url):
+        raise RuntimeError("朝向立绘下载失败")
+
+    executor = FirstFrameTaskExecutor(
+        image=None,
+        matte=None,
+        upload=lambda _png: "https://cdn.example.com/x.png",
+        fetch_ref=_boom,
+        session_factory=session_factory,
+    )
+    first_frame_input = CharacterFirstFrameInput(
+        character_id=1,
+        reference_image_url="https://cdn.example.com/east.png",
+        prompt="walk cycle first frame",
+        direction=ActionDirection.EAST,
+        action_type=ActionType.WALK,
+        num_images=1,
+    )
+    with session_factory() as session:
+        task = service.generate_character_first_frame(
+            session, user_id=1, project_id=1, input=first_frame_input
+        )
+        session.commit()
+        task_id = task.id
+
+    executor.run_first_frame_task(task_id, first_frame_input)
+
+    with session_factory() as session:
+        done = service.get_task(session, project_id=1, task_id=task_id)
+        account = _account(session, 1)
+        assert done.status is TaskStatus.FAILED, "任务还挂在 RUNNING —— 钱扣了,人也不知道"
+        assert account.frozen == 0
+        assert account.total_spent == 0
+        assert account.balance == quota_settings.register_gift_amount
+        assert CreditReason.REFUND in _reasons(session, 1)
