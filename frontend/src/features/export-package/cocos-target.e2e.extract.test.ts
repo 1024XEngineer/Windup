@@ -126,6 +126,7 @@ describe('Cocos Creator 一键导出 e2e — 落盘', () => {
         const ctx = {
           clearRect: () => undefined,
           drawImage: () => undefined,
+          getImageData: () => ({ data: new Uint8ClampedArray(w * h * 4) }),
         } as unknown as CanvasRenderingContext2D
         return {
           width: w,

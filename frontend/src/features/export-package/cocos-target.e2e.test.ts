@@ -189,6 +189,7 @@ const runtime: AssetExportRuntime = {
     const stubContext = {
       clearRect: () => undefined,
       drawImage: () => undefined,
+      getImageData: () => ({ data: new Uint8ClampedArray(w * h * 4) }),
     } as unknown as CanvasRenderingContext2D
     const fakeCanvas = {
       width: w,
@@ -387,10 +388,10 @@ describe('Cocos Creator 一键导出 e2e', () => {
     // 图集是 3 帧横排,宽 3*64=192,高 64
     expect(atlasPng.data.length).toBeGreaterThan(0)
 
-    // meta.json 是合法 JSON 且符合 schema_version 1.1.0
+    // meta.json 是合法 JSON 且符合当前通用导出契约版本
     const metaEntry = entries.find((e) => e.name === `${rootPrefix}meta.json`)!
     const meta = JSON.parse(metaEntry.data.toString('utf8'))
-    expect(meta.schema_version).toBe('1.1.0')
+    expect(meta.schema_version).toBe('1.2.0')
     expect(meta.character.id).toBe('char-42')
     expect(meta.outfit.id).toBe('outfit-7')
     expect(meta.canvas).toEqual({ w: CANVAS_W, h: CANVAS_H })
