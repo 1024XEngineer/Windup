@@ -877,3 +877,26 @@ def test_no_views_means_the_keyword_is_not_passed_at_all(tmp_path):
     )
     builder.ensure(OUTFIT, _png(), _NullProgress())
     assert m.saw_kwarg is False, "没有多视图却把关键字传下去了"
+
+
+def test_the_lazy_facade_accepts_every_argument_the_endpoint_passes():
+    """生产装的是 ``_LazyOperations`` 门面,不是 ``Render3DAssetOperations`` 本身。
+
+    端点按位置传参,门面少一个形参就是每一次建资产请求当场 500 —— 而全树 2000+ 条
+    用例一条都不会红,因为它们打的都是里面那个具体实现。这条专门打门面。
+    """
+    import inspect
+
+    from windup_app.server.orchestrator.render3d_service import (
+        Render3DAssetOperations,
+        _LazyOperations,
+    )
+
+    for name in ("view", "build", "approve", "discard", "add_motion"):
+        real = getattr(Render3DAssetOperations, name, None)
+        facade = getattr(_LazyOperations, name, None)
+        if real is None or facade is None:
+            continue
+        assert inspect.signature(real) == inspect.signature(facade), (
+            f"门面 {name} 的签名与实现对不上 —— 端点按位置传参,少一个形参就是线上 500"
+        )

@@ -565,8 +565,9 @@ class _LazyOperations:
     def view(self, outfit_key: str) -> dict:
         return self._ops().view(outfit_key)
 
-    def build(self, outfit_key: str, master_url: str, stance: CharacterStance) -> dict:
-        return self._ops().build(outfit_key, master_url, stance)
+    def build(self, outfit_key: str, master_url: str, stance: CharacterStance,
+              extra_view_urls: Mapping[str, str] | None = None) -> dict:
+        return self._ops().build(outfit_key, master_url, stance, extra_view_urls)
 
     def approve(self, outfit_key: str, master_url: str) -> dict:
         return self._ops().approve(outfit_key, master_url)
