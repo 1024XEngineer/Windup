@@ -911,3 +911,156 @@ def test_frame_convention_covers_every_action_type():
     from windup_app.server.orchestrator.model import ACTION_FRAME_COUNTS, ActionType
 
     assert set(ACTION_FRAME_COUNTS) == set(ActionType)
+
+
+# ── 体型存在角色上,而不是每次请求带(#840)────────────────────────────────
+
+
+def _create_character_with_stance(auth_client, project_id: int, stance: str) -> dict:
+    """建一个存了体型的角色。
+
+    走的是**现有**的角色接口 —— ``CharacterData`` 加了字段之后它自动收下,
+    不需要新端点。这条本身就在证明这一点。
+    """
+    return auth_client.post(
+        "/characters",
+        json={
+            "project_id": project_id,
+            "workflow_run_id": 1,
+            "name": "大蛇",
+            "character_data": {"version": 1, "templates": [], "outfits": [],
+                               "stance": stance},
+        },
+    ).json()["data"]
+
+
+def test_stance_stored_on_the_character_reaches_the_engine(auth_client, monkeypatch):
+    """拦的坏例:体型只能靠每次请求带,而没有任何调用方会带。
+
+    实测(2026-08-27 生产):558/558 个任务的 input_payload 里 stance 都是未传,
+    96/96 个角色的 character_data 里也从没存过它 —— 三道按体型分流的判据因此全是
+    死代码。存在角色上才是对的:体型是角色的属性,不是这次生成的选项。
+    """
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character_with_stance(auth_client, project["id"], "serpentine")
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"]),   # 请求不带 stance
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs, "任务没被收下"
+    assert inputs[0].stance is not None, "角色上存了体型,却没被读出来"
+    assert inputs[0].stance.value == "serpentine"
+
+
+def test_an_explicit_request_stance_beats_the_one_on_the_character(auth_client, monkeypatch):
+    """请求优先。角色上那个存错了的话,得有办法单次绕过。"""
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character_with_stance(auth_client, project["id"], "serpentine")
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], stance="quadruped"),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs[0].stance.value == "quadruped"
+
+
+def test_a_character_without_a_stance_behaves_exactly_as_before(auth_client, monkeypatch):
+    """96 个存量角色没有这个字段,行为必须一个字不变。
+
+    这里断言的是 ``None`` 而不是 ``biped``:默认值只该由 ``CharacterCard.stance``
+    定义一次,在读取处再兜一个就是第二真相源,两处一定会各自漂。
+    """
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"]),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs[0].stance is None
+
+
+def test_a_garbage_stance_on_the_character_does_not_block_generation(
+    auth_client, monkeypatch, db_session
+):
+    """拦的坏例:一个脏字段把整条生成挡住。
+
+    ``character_data`` 是裸 JSONB,可能被别的写入方塞进不认识的值。当没存过处理并留
+    一条 WARNING,好过让用户拿到一个他改不动的 5xx。
+    """
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.character.model import Character
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    row = db_session.get(Character, character["id"])
+    row.character_data = {**(row.character_data or {}), "stance": "octopod"}
+    db_session.commit()
+
+    resp = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"]),
+    )
+    assert resp.status_code < 500, resp.text
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].stance is None
+
+
+def test_a_serpentine_character_now_actually_trips_the_body_part_gate(auth_client, monkeypatch):
+    """这条是 #840 的验收:那道门禁**不再是死的**。
+
+    ``stance_mismatch`` 判据一直都在(``ai_engine.prompt.lint``),但生产里 558/558 个
+    任务没传过体型、96/96 个角色没存过 —— 它一次都没触发过。非双足角色的描述里出现
+    "手臂",模型会给它凭空接上一对人的上肢,而帧数、时长、成色全部正常,没有一道会红。
+
+    这条从 HTTP 入口发起,一路走到提示词构建,断言它现在会被拒。
+    """
+    from windup_ai_engine.ports import PromptRejected
+    from windup_ai_engine.strategy.concrete import VideoFrameStrategy
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.executor import ActionTaskExecutor, ProjectConstraints
+    from windup_app.server.orchestrator.model import CharacterActionInput
+    from windup_common.models import CharacterCard
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character_with_stance(auth_client, project["id"], "serpentine")
+
+    payload = _action_payload(project["id"], character["id"])
+    payload["action_type"] = "custom"
+    payload["custom_prompt"] = "角色挥动双臂，手肘弯曲，双手向前推出。"
+    payload["loop"] = False
+    auth_client.post("/generation/action", json=payload)
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].stance.value == "serpentine", "体型没走到入参"
+
+    # 入参 → 引擎契约 → 提示词。走的是生产那条路径,不是手搓一个 ActionSpec。
+    _card, spec, _canvas = ActionTaskExecutor._action_spec(
+        object(), inputs[0], ProjectConstraints(facing="side", stylize="pixel"),
+    )
+    card = CharacterCard(name="c", desc="", stance=inputs[0].stance)
+    with pytest.raises(PromptRejected):
+        VideoFrameStrategy(video=None, matte=None)._build_prompt(spec, card.stance)

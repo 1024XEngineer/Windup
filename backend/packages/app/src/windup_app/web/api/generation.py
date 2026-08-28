@@ -533,6 +533,29 @@ def _require_3d_action_quota(character: Character, outfit_id: str | None) -> Non
         )
 
 
+def _character_stance(character: Character) -> CharacterStance | None:
+    """角色存的体型;没存过就给 None(让下游用它自己的默认值)。
+
+    返回 None 而不是直接给 BIPED:默认值只该由 ``CharacterCard.stance`` 定义一次。
+    在这里再兜一个,就是第二真相源 —— 两处默认值一定会各自漂。
+
+    ``character_data`` 是裸 dict(存量 96 个角色都没有这个键),按契约解析会因为别的
+    字段不合规而整条炸掉,而这里只要一个字段。取不到就当没存过。
+    """
+    data = character.character_data
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("stance")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return CharacterStance(raw)
+    except ValueError:
+        # 存了个不认识的值 —— 当没存过,别让一个脏字段挡住整条生成。
+        logger.warning("角色 %s 的 stance=%r 不是合法取值,按未设置处理", character.id, raw)
+        return None
+
+
 def _require_master(model_3d_url: str | None, reference_image_urls: list[str]) -> None:
     """动作生成拿不到母版就当场拒收,不收下一个注定在执行阶段失败的任务。"""
     # 判据照抄执行器的取母版逻辑(``ActionTaskExecutor._produce_action``):有 3D 资产走
@@ -774,7 +797,13 @@ def submit_action_generation(
         # 路线选择在这里定死并写进入参,而不是留给编排层现查:这样"这次走的哪条路线"
         # 在任务入参上就是可见的,排查时不用去猜当时 DB 是什么状态。
         model_3d_url=model_3d_url,
-        stance=body.stance,
+        # 请求没显式给就取角色上存的那个。与 model_3d_url 同一个模式:web 层读
+        # character_data、写进入参,这样"这次按什么体型算的"在任务入参上就是可见的,
+        # 排查时不用去猜当时 DB 是什么状态。
+        #
+        # 请求优先于角色:前者是这次生成的显式意图(脚本 / 调试会用),而角色上那个是
+        # 常态。反过来的话,角色一旦存错就没有任何办法单次绕过。
+        stance=body.stance if body.stance is not None else _character_stance(character),
     )
     task = generation_service.generate_character_action(
         session,
