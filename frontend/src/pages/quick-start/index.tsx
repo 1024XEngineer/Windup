@@ -2890,6 +2890,7 @@ function QuickStartRun({
       return
     }
     const requestActionId = currentActionId
+    if (!requestActionId) return
     const sources = pixelPerfectSources(exportModel, requestActionId, actionFrames)
     setPixelPerfectStatus('working')
     setActionVersion('original')
@@ -2905,6 +2906,7 @@ function QuickStartRun({
         setPixelPerfectStatus('idle')
         return
       }
+      await target.persistPixelPerfectActionFrames?.(requestActionId, reconstructed)
       const urls = reconstructed.map((frame) => URL.createObjectURL(frame.blob))
       pixelPerfectUrlsRef.current = urls
       const replacements = reconstructed.map(
@@ -2928,6 +2930,7 @@ function QuickStartRun({
         }),
       )
       setPixelPerfectStatus('ready')
+      setActionVersion('pixel-perfect')
     } catch (cause) {
       releasePixelPerfectUrls()
       if (!mountedRef.current || activeSessionRef.current !== target) return
@@ -4071,7 +4074,13 @@ function QuickStartRun({
                       {pixelPerfectReady ? (
                         <PixelPerfectVersionSwitch
                           value={actionVersion}
-                          onChange={setActionVersion}
+                          onChange={(version) => {
+                            setActionVersion(version)
+                            if (!session || !currentActionId) return
+                            void session
+                              .setActionAssetVersion?.(currentActionId, version)
+                              .catch((cause) => reportWorkflowError(cause, '保存资产版本失败'))
+                          }}
                         />
                       ) : null}
                     </>

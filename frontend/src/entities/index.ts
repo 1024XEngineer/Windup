@@ -61,6 +61,7 @@ export type {
   ActionDirection,
   ActionSequence,
   ActionType,
+  CharacterAssetVersion,
   Character,
   CharacterApis,
   CharacterSummaryApis,
@@ -81,6 +82,7 @@ export {
   characterTemplateImages,
   characterTemplatesFromImages,
   characterTemplatesFromViewSheetCells,
+  resolvedFrameImageUrl,
   validateDirectionalAsset,
 } from './character'
 export {

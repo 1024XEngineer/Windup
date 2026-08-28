@@ -393,6 +393,15 @@
             "title": "Name",
             "type": "string"
           },
+          "preferred_version": {
+            "default": "original",
+            "enum": [
+              "original",
+              "pixel-perfect"
+            ],
+            "title": "Preferred Version",
+            "type": "string"
+          },
           "root_motion": {
             "anyOf": [
               {
@@ -877,6 +886,18 @@
             "minimum": 0.0,
             "title": "Index",
             "type": "integer"
+          },
+          "pixel_perfect_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "完美像素化帧 URL",
+            "title": "Pixel Perfect Image Url"
           }
         },
         "required": [
