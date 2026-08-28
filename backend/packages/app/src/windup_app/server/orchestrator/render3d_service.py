@@ -409,18 +409,25 @@ class _MediaModelUploader:
     _NAME = {"model/gltf-binary": "rig-input.glb", "application/x-fbx": "rig-input.fbx"}
 
     def upload(self, model: bytes, content_type: str) -> str:
-        from windup_app.server.media.model import MediaUploadInput
+        from windup_app.server.media.model import MediaCategory, MediaUploadInput
         from windup_app.server.media.service import service as media_service
 
+        # **取 .url**:``media_service.upload`` 返回的是 ``MediaUploadResult`` 对象,
+        # 不是字符串。返回整个对象的话,``_upload`` 那道"必须是 http(s) URL"的断言会拒,
+        # 而那发生在**图生 3D 已经付过 20 积分之后**、绑骨提交之前 ——
+        # 用户卡在"模型建好了但绑不了骨"的中间态(2026-08-28 生产实测踩到)。
+        #
+        # 分类取枚举成员而不是字面量:与 ``_publish_model`` 同一条理由 ——
+        # 字面量打错会在两笔钱都花完之后才炸,而错误文本只说"输入不合法"。
         return media_service.upload(
             model,
             MediaUploadInput(
                 filename=self._NAME.get(content_type, "rig-input.bin"),
                 content_type=content_type,
                 size=len(model),
-                category="model-3d",
+                category=MediaCategory.MODEL_3D,
             ),
-        )
+        ).url
 
 
 def _publish_model(data: bytes) -> str:
