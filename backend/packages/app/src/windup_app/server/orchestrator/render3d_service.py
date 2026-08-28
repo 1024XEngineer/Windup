@@ -31,6 +31,7 @@ from windup_ai_engine.ports import MasterRejected
 from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_media
 from windup_common.models import CharacterStance
 from windup_app.server.orchestrator.render3d_assets import (
+    ACTION_MOTIONS,
     AUTORIG_CREDITS,
     BUILD_MOTION,
     BUILD_CREDITS,
@@ -164,6 +165,23 @@ class Render3DAssetOperations:
         self._lock = threading.Lock()
 
     # ── 查 ───────────────────────────────────────────────────────────────
+    def _baked_motions(self, outfit_key: str) -> set[str]:
+        """这个造型已经烘好的动作名。判据取**落点**,不取常量。
+
+        取常量的话,常量一改,已经建好的资产就开始声称自己会另一个动作,而渲出来的
+        仍是旧那段 —— 帧数、时长、成色全部正常的静默错(与派单闸同一条理由)。
+        """
+        got: set[str] = set()
+        for action, motion in ACTION_MOTIONS.items():
+            if motion is None:
+                continue
+            if self._store.get(f"{outfit_key}#{motion}") is not None:
+                got.add(action)
+        # 主产物那一份存在裸 key 上,不带 # 后缀。
+        if self._store.get(outfit_key) is not None:
+            got.add(BUILD_MOTION)
+        return got
+
     def view(self, outfit_key: str) -> dict:
         """状态 + 成本。**不花钱、无副作用**,可以随便轮询。
 
@@ -187,6 +205,15 @@ class Render3DAssetOperations:
             # web 层 import render3d_assets 会经它连到 ai_engine,破坏
             # 「入口层不经 ai_engine 直连」那条 import 契约。
             "primary_motion": BUILD_MOTION,
+            # 这个造型**已经烘好**了哪些动作。界面靠它决定哪些按钮要禁掉 ——
+            # 读不到的话用户会为同一个动作重复付费,而后端那边只是返回缓存、
+            # 不报错也不退钱(它对,但用户以为自己买了新东西)。
+            "baked_motions": sorted(self._baked_motions(outfit_key)),
+            # 还能烘哪些。由本层给而不是让前端硬编码一份 —— 抄一份就会和
+            # ACTION_MOTIONS 各自漂,而漂的方向是「界面上有、点了才发现不支持」。
+            "bakeable_motions": sorted(
+                a for a, m in ACTION_MOTIONS.items() if m is not None
+            ),
             "review_model_url": review_url.decode() if review_url else None,
             "error": error,
             "cost": {
