@@ -139,6 +139,22 @@ def _raise_for_error(response: Mapping) -> Mapping:
         raise InsufficientCreditsError(
             f"积分不足({code}: {msg})。这是充值问题,不是接口坏了 —— "
             "别照着接口文档排查参数。")
+    # 上游自己的瞬时故障。**都可重试** —— 2026-08-28 一次端到端里三种都撞到过,
+    # 而每一次都是「同一个请求原样再发一遍就过」:
+    #
+    #   FailedOperation.ServerError      算法服务异常     重试即过
+    #   FailedOperation.RequestTimeout   后端服务超时     重试即过
+    #   FailedOperation.DownloadError    文件下载失败     ← 这个最误导
+    #
+    # DownloadError 字面看像"我们的 URL 取不到",实测不是:同一个 18MB URL 在报了
+    # DownloadError 之后原样重发就成功了(JobId=1484843892775575552),而那个 URL
+    # 我们自己 HEAD 过 —— 206、18366000 字节、content-type 正确。
+    # 它照字面排查会把人引到"是不是对象存储坏了",而真因在上游那一侧。
+    #
+    # 不重试的代价:这三种都发生在**图生 3D 已经付过 20 积分之后**,用户卡在
+    # 「模型建好了但绑不了骨」,钱花了、资产建不成。
+    if any(x in code for x in ("ServerError", "RequestTimeout", "DownloadError")):
+        raise UpstreamBusyError(code or "FailedOperation", msg)
     if "JobNumExceed" in code or "RequestLimitExceeded" in code:
         # 上游**同时只允许 1 个绑骨任务**,而且上一个已经 DONE 位子也不立刻释放
         # (实测 2026-08-28:连续三次被拒,等约 30 秒后即过)—— 所以限的是时间窗,
@@ -405,17 +421,28 @@ class TencentModel3DProvider:
         return data, url
 
     def _submit(self, params: dict) -> str:
-        r = _raise_for_error(call("SubmitHunyuanTo3DProJob", params, service=SERVICE,
-                                  version=VERSION, creds=self._creds))
+        # 与绑骨提交同一条理由:上游那三种瞬时故障重发就过,而这里失败虽然还没扣钱,
+        # 却会让用户在"点了建资产、什么都没发生"之间反复试(#874 评审指出本处遗漏)。
+        r = _submit_with_backoff(lambda: _raise_for_error(
+            call("SubmitHunyuanTo3DProJob", params, service=SERVICE,
+                 version=VERSION, creds=self._creds)))
         if "JobId" not in r:
             raise JobFailedError(redact(f"提交图生 3D 没拿到 JobId: {r}"))
         return str(r["JobId"])
 
     def _wait(self, job_id: str) -> list:
         for _ in range(max(1, int(self._max_min * 60 // self._poll))):
-            r = _raise_for_error(call("QueryHunyuanTo3DProJob", {"JobId": job_id},
-                                      service=SERVICE, version=VERSION, creds=self._creds,
-                                      idempotent=True))
+            # 轮询撞上游瞬时故障时**继续下一轮**,不抛 —— 任务在云上还在跑,
+            # JobId 也还在,抛出去等于把一次已经付过钱的图生 3D作废
+            # (#874 评审指出本处遗漏)。真正的终态由下面的 Status 判定。
+            try:
+                r = _raise_for_error(call("QueryHunyuanTo3DProJob", {"JobId": job_id},
+                                          service=SERVICE, version=VERSION, creds=self._creds,
+                                          idempotent=True))
+            except UpstreamBusyError as exc:
+                logger.info("轮询撞上游瞬时故障,继续等 JobId=%s(%s)", job_id, exc)
+                time.sleep(self._poll)
+                continue
             status = str(r.get("Status") or "")
             if status == "DONE":
                 files = r.get("ResultFile3Ds") or r.get("ResultFile3D") or []
@@ -582,9 +609,17 @@ class TencentAutoRigProvider:
 
     def _wait(self, job_id: str) -> list:
         for _ in range(max(1, int(self._max_min * 60 // self._poll))):
-            r = _raise_for_error(call("DescribeAutoRiggingJob", {"JobId": job_id},
-                                      service=SERVICE, version=VERSION, creds=self._creds,
-                                      idempotent=True))
+            # 轮询撞上游瞬时故障时**继续下一轮**,不抛 —— 任务在云上还在跑,
+            # JobId 也还在,抛出去等于把一次已经付过钱的绑骨作废
+            # (#874 评审指出本处遗漏)。真正的终态由下面的 Status 判定。
+            try:
+                r = _raise_for_error(call("DescribeAutoRiggingJob", {"JobId": job_id},
+                                          service=SERVICE, version=VERSION, creds=self._creds,
+                                          idempotent=True))
+            except UpstreamBusyError as exc:
+                logger.info("轮询撞上游瞬时故障,继续等 JobId=%s(%s)", job_id, exc)
+                time.sleep(self._poll)
+                continue
             status = str(r.get("Status") or "")
             if status == "DONE":
                 files = r.get("ResultFile3Ds") or []
