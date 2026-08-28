@@ -132,13 +132,23 @@ describe('AccountPage', () => {
     fireEvent.click(badgeButton)
     expect(badgeButton.className).toContain('account-badge-shake')
     expect(screen.getByRole('navigation', { name: '账号设置' })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: '账号设置' }).parentElement?.className).toContain(
+      'md:sticky',
+    )
     expect(screen.getByRole('heading', { name: '个人资料' })).toBeTruthy()
+    expect(screen.getByLabelText('昵称').getAttribute('placeholder')).toBe('输入昵称')
+    expect(screen.getByTestId('account-profile-default-avatar').getAttribute('src')).toBe(
+      '/windup-mark.svg',
+    )
     expect(screen.queryByLabelText('邮箱验证码')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
     expect(screen.getByRole('heading', { name: '修改密码' })).toBeTruthy()
     const code = screen.getByLabelText('邮箱验证码')
     const newPassword = screen.getByLabelText('新密码')
+    expect(code.getAttribute('placeholder')).toBe('6 位验证码')
+    expect(newPassword.getAttribute('placeholder')).toBe('8–128 位新密码')
+    expect(screen.getByLabelText('确认新密码').getAttribute('placeholder')).toBe('再次输入新密码')
     expect(code).toBeTruthy()
     expect(screen.getByText('reader@example.com')).toBeTruthy()
     expect(screen.queryByLabelText('当前密码')).toBeNull()

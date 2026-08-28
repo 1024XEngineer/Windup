@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
 import { quotaApis as defaultQuotaApis } from '@/entities'
@@ -120,6 +120,9 @@ export function AppHeader({
   const navigate = useNavigate()
   const session = useAuthSession()
   const accountMenu = useProductPopoverMotion()
+  const closeAccountMenu = accountMenu.close
+  const accountMenuExpanded = accountMenu.expanded
+  const accountRegionRef = useRef<HTMLDivElement>(null)
   const [inviteHintVisible, setInviteHintVisible] = useState(false)
   const creditBalance = useQuotaBalance(
     accountMenu.mounted && session.state.status === 'authenticated',
@@ -161,6 +164,24 @@ export function AppHeader({
 
     return () => window.clearTimeout(timer)
   }, [pathname, session.state.status])
+
+  useEffect(() => {
+    if (!accountMenuExpanded) return
+
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (!accountRegionRef.current?.contains(event.target as Node)) closeAccountMenu()
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeAccountMenu()
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [accountMenuExpanded, closeAccountMenu])
 
   function signOut() {
     window.sessionStorage.removeItem(inviteHintStorageKey)
@@ -327,7 +348,17 @@ export function AppHeader({
           })}
         </nav>
 
-        <div aria-label="账号" className="relative col-start-3 ml-auto shrink-0">
+        <div
+          ref={accountRegionRef}
+          aria-label="账号"
+          onPointerLeave={accountMenu.close}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              accountMenu.close()
+            }
+          }}
+          className="relative col-start-3 ml-auto shrink-0"
+        >
           {session.state.status === 'booting' ? (
             <span
               aria-label="正在恢复登录状态"
@@ -394,7 +425,13 @@ export function AppHeader({
                     accountMenu.expanded ? 'scale-110' : 'scale-100'
                   }`}
                 >
-                  {(session.state.user.nickname || session.state.user.email).slice(0, 1)}
+                  <img
+                    data-testid="default-account-avatar"
+                    src="/windup-mark.svg"
+                    alt=""
+                    aria-hidden="true"
+                    className="h-5 w-5 object-contain"
+                  />
                 </span>
                 <span className="hidden truncate sm:inline">
                   {session.state.user.nickname || session.state.user.email}
