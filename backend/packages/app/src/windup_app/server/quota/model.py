@@ -258,3 +258,14 @@ class InviteCodeView:
     expires_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     update_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
+class InviteRecordView:
+    """邀请明细视图；被邀请人身份已脱敏。"""
+
+    id: int
+    invitee: str
+    code: str
+    rewarded: bool
+    create_at: datetime

@@ -325,6 +325,12 @@ describe('AccountPage', () => {
       createdAt: '2026-08-12T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })
+    vi.spyOn(quotaApis, 'listInviteRecords').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 5,
+    })
 
     renderAccount()
     fireEvent.click(await screen.findByRole('button', { name: '邀请奖励' }))
@@ -350,6 +356,12 @@ describe('AccountPage', () => {
       expiresAt: '2026-09-16T01:02:03Z',
       createdAt: '2026-08-12T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'listInviteRecords').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 5,
     })
 
     renderAccount(createApis(), '/account?section=invite')

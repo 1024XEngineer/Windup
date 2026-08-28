@@ -107,6 +107,43 @@ describe('createQuotaApis', () => {
     expect(request).toHaveBeenCalledWith('/quota/invite/code')
   })
 
+  it('分页读取并映射当前用户的邀请明细', async () => {
+    requestList.mockResolvedValue({
+      items: [
+        {
+          id: 31,
+          invitee: 'n***@example.com',
+          code: 'AB23CD45',
+          rewarded: true,
+          create_at: '2026-08-29T01:02:03Z',
+        },
+      ],
+      total: 7,
+      page: 2,
+      pageSize: 5,
+    })
+
+    await expect(
+      createQuotaApis({ client }).listInviteRecords({ page: 2, pageSize: 5 }),
+    ).resolves.toEqual({
+      items: [
+        {
+          id: '31',
+          invitee: 'n***@example.com',
+          code: 'AB23CD45',
+          rewarded: true,
+          createdAt: '2026-08-29T01:02:03Z',
+        },
+      ],
+      total: 7,
+      page: 2,
+      pageSize: 5,
+    })
+    expect(requestList).toHaveBeenCalledWith('/quota/invite/records', {
+      query: { page: 2, page_size: 5 },
+    })
+  })
+
   it('轮换邀请码并映射新的有效期', async () => {
     request.mockResolvedValueOnce({
       code: 'XY89KL23',
@@ -179,7 +216,7 @@ describe('createQuotaApis', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
       let body: unknown
-      if (url.includes('/quota/transactions')) {
+      if (url.includes('/quota/transactions') || url.includes('/quota/invite/records')) {
         body = {
           code: 200,
           message: 'ok',
@@ -220,6 +257,10 @@ describe('createQuotaApis', () => {
         total: 0,
       })
       await expect(quotaApis.getInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
+      await expect(quotaApis.listInviteRecords({ page: 1, pageSize: 5 })).resolves.toMatchObject({
+        items: [],
+        total: 0,
+      })
       await expect(quotaApis.generateInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
       expect(fetchFn).toHaveBeenCalledWith(
         'https://api.windup.test/quota/balance',
@@ -233,7 +274,10 @@ describe('createQuotaApis', () => {
         'https://api.windup.test/quota/transactions?page=1&page_size=20',
       )
       expect(fetchFn.mock.calls[2]?.[0]).toBe('https://api.windup.test/quota/invite/code')
-      expect(fetchFn.mock.calls[3]?.[0]).toBe('https://api.windup.test/quota/invite/generate')
+      expect(fetchFn.mock.calls[3]?.[0]).toBe(
+        'https://api.windup.test/quota/invite/records?page=1&page_size=5',
+      )
+      expect(fetchFn.mock.calls[4]?.[0]).toBe('https://api.windup.test/quota/invite/generate')
     } finally {
       unregister()
       vi.unstubAllGlobals()
