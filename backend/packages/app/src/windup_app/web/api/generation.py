@@ -53,6 +53,7 @@ from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterDirectionSetInput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     CharacterViewSheetInput,
     GenerationTask,
@@ -345,6 +346,7 @@ class CharacterFirstFrameGenerateRequest(BaseModel):
     height: int = Field(default=1024, ge=64, le=2048)
     num_images: int = Field(default=3, ge=1, le=4)
     direction: ActionDirection
+    action_type: ActionType
 
     @model_validator(mode="after")
     def require_prompt_and_heading_template(self):
@@ -841,7 +843,8 @@ def submit_first_frame_generation(
     _validate_project_size(project, body.width, body.height)
     _validate_project_direction(project, body.direction)
     _get_character_or_raise(session, body.character_id, body.project_id)
-    input_data = CharacterImageInput(
+    input_data = CharacterFirstFrameInput(
+        character_id=body.character_id,
         reference_image_url=body.reference_image_url,
         prompt=body.prompt,
         negative_prompt=body.negative_prompt,
@@ -849,9 +852,9 @@ def submit_first_frame_generation(
         height=body.height,
         num_images=body.num_images,
         direction=body.direction,
-        lock_orientation=True,
+        action_type=body.action_type,
     )
-    task = generation_service.generate_character_image(
+    task = generation_service.generate_character_first_frame(
         session,
         user_id=user_id,
         project_id=body.project_id,

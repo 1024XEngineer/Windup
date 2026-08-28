@@ -28,6 +28,7 @@ class GenerationType(StrEnum):
     CHARACTER_DIRECTION_SET = "character_direction_set"  # 一次生成项目所需全部母版方向
     CHARACTER_FOUR_VIEW = "character_four_view"  # 四向立绘 sheet
     CHARACTER_EIGHT_VIEW = "character_eight_view"  # 八向立绘 sheet
+    CHARACTER_FIRST_FRAME = "character_first_frame"  # 四向 / 八向动作首帧
     CHARACTER_ACTION = "character_action"  # 角色动作帧序列
 
 
@@ -86,19 +87,10 @@ class CharacterImageInput:
     # 而不是各个构造点:MQ 重建时若另写一份默认值,缺省就会从 2 变成另一份数。
     num_images: int | None = None
     direction: ActionDirection = ActionDirection.EAST
-    # 四向 / 八向动作首帧:参考图是该朝向已确认立绘,提示词走 view_sheet 方位锁。
-    # 默认 False,``/generation/image`` 与 MQ 里旧任务都没有这个字段。
-    lock_orientation: bool = False
 
     def __post_init__(self) -> None:
         if self.num_images is None:
             self.num_images = 2
-        if self.lock_orientation:
-            self.reference_image_url = (self.reference_image_url or "").strip() or None
-            if not self.reference_image_url:
-                raise ValueError("锁定朝向的动作首帧必须绑定该朝向立绘")
-            if not (self.prompt or "").strip():
-                raise ValueError("锁定朝向的动作首帧必须提供动作描述")
 
 
 @dataclass
@@ -158,6 +150,31 @@ class CharacterViewSheetInput:
             raise ValueError("立绘 sheet 锚点必须是 south（正视图）")
         if self.num_images is None:
             self.num_images = 1
+
+
+@dataclass
+class CharacterFirstFrameInput:
+    """四向 / 八向动作首帧:以该朝向立绘为参考,锁住朝向后换成动作起手姿态。"""
+
+    character_id: int
+    reference_image_url: str
+    prompt: str
+    direction: ActionDirection
+    action_type: ActionType
+    negative_prompt: str = ""
+    width: int = 1024
+    height: int = 1024
+    num_images: int | None = None
+
+    def __post_init__(self) -> None:
+        self.reference_image_url = (self.reference_image_url or "").strip()
+        if not self.reference_image_url:
+            raise ValueError("动作首帧必须提供该朝向已确认的立绘")
+        self.prompt = (self.prompt or "").strip()
+        if not self.prompt:
+            raise ValueError("动作首帧必须提供动作描述")
+        if self.num_images is None:
+            self.num_images = 3
 
 
 @dataclass
@@ -226,6 +243,16 @@ class CharacterImageOutput:
     # 出图当场量的主体数(``ai_engine.slicing.quality.subject_blobs`` 的逐张读数)。与动作
     # 结果那份 ``quality`` 同键同语义:只落库、不参与前端回填,本层不据此判成败。
     # ``None`` = **没量过**,不是"量了没问题"。
+    quality: dict | None = None
+
+
+@dataclass
+class CharacterFirstFrameOutput:
+    """四向 / 八向动作首帧结果。前端按方向选一张写入首帧节点。"""
+
+    type: str = "character_first_frame"
+    image_urls: list[str] = field(default_factory=list)
+    direction: ActionDirection = ActionDirection.EAST
     quality: dict | None = None
 
 
@@ -382,6 +409,7 @@ class GenerationTask:
     input_payload: dict | None = None
     result: (
         CharacterImageOutput
+        | CharacterFirstFrameOutput
         | CharacterDirectionSetOutput
         | CharacterViewSheetOutput
         | CharacterActionOutput

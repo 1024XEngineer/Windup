@@ -165,7 +165,10 @@ def msg_type_for_generation(task_type: str) -> str:
         "character_direction_set",
         "character_four_view",
         "character_eight_view",
+        "character_first_frame",
     ):
+        # 与单张立绘同一图像并发池。payload.task_type 才是执行器分叉,
+        # 不要另开 TypeSpec,否则会把线程池和信号量再加一倍。
         # 与单张立绘同一图像并发池。payload.task_type 才是执行器分叉,
         # 不要另开 TypeSpec,否则会把线程池和信号量再加一倍。
         return MSG_TYPE_CHARACTER_IMAGE

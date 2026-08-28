@@ -24,6 +24,7 @@ from windup_app.server.orchestrator.executor import (
     run_direction_set_task,
 )
 from windup_app.server.orchestrator.view_sheet_executor import run_view_sheet_task
+from windup_app.server.orchestrator.first_frame_executor import run_first_frame_task
 from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 from windup_app.worker.consumer import StreamConsumer, start_delayed_loop, start_relay_loop
 from windup_app.worker.pending_timeout import release_stale_pending_tasks
@@ -80,6 +81,7 @@ def main() -> None:
             run_action_task=run_action_task,
             run_direction_set_task=run_direction_set_task,
             run_view_sheet_task=run_view_sheet_task,
+            run_first_frame_task=run_first_frame_task,
             stop_event=stop_event,
             resume_action_poll=resume_action_poll,
             resume_action_client_bake=resume_action_client_bake,
@@ -92,6 +94,7 @@ def main() -> None:
             run_action_task=run_action_task,
             run_direction_set_task=run_direction_set_task,
             run_view_sheet_task=run_view_sheet_task,
+            run_first_frame_task=run_first_frame_task,
             stop_event=stop_event,
         ),
         _generation_consumer(generation_image_stream_spec()),

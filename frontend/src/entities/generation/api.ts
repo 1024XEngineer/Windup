@@ -66,6 +66,7 @@ type BackendGenerationType =
   | 'character_direction_set'
   | 'character_four_view'
   | 'character_eight_view'
+  | 'character_first_frame'
   | 'character_action'
 
 const TASK_STATUSES = new Set<TaskStatus>(['pending', 'running', 'completed', 'partial', 'failed'])
@@ -130,6 +131,7 @@ function backendTaskType(value: unknown): BackendGenerationType {
     value !== 'character_direction_set' &&
     value !== 'character_four_view' &&
     value !== 'character_eight_view' &&
+    value !== 'character_first_frame' &&
     value !== 'character_action'
   ) {
     throw new GenerationApiError('生成任务 task_type 无效', 200)
@@ -216,8 +218,17 @@ function parseTaskDto(value: unknown): GenerationTaskDto {
 
 function expectedBackendType(type: GenerationTaskType): BackendGenerationType {
   if (type === 'complete_animation') return 'character_action'
+  if (type === 'first_frame') return 'character_first_frame'
   if (type === 'character_four_view' || type === 'character_eight_view') return type
   return type === 'character_direction_set' ? 'character_direction_set' : 'character_image'
+}
+
+function matchesBackendType(type: GenerationTaskType, taskType: BackendGenerationType): boolean {
+  // 单向首帧仍走 /generation/image；四向/八向走 /generation/first-frame。
+  if (type === 'first_frame') {
+    return taskType === 'character_first_frame' || taskType === 'character_image'
+  }
+  return taskType === expectedBackendType(type)
 }
 
 export const IMAGE_CANDIDATE_COUNT = 3
@@ -259,7 +270,11 @@ function mapImageResult(
   expectation: Extract<GenerationExpectation, { type: 'character_template' | 'first_frame' }>,
   expectedCandidateCount?: ImageCandidateCount,
 ): GenerationResult {
-  if (result.type !== 'character_image') {
+  const allowedResultType =
+    expectation.type === 'first_frame'
+      ? result.type === 'character_first_frame' || result.type === 'character_image'
+      : result.type === 'character_image'
+  if (!allowedResultType) {
     throw new GenerationApiError('角色图片结果 type 无效', 200)
   }
   const resultDirection = taskDirection(result.direction, '角色图片结果 direction')
@@ -647,6 +662,18 @@ function inferExpectation(dto: GenerationTaskDto): GenerationExpectation {
   const direction = dto.inputPayload
     ? taskDirection(dto.inputPayload.direction, '生成任务 direction')
     : undefined
+  if (dto.taskType === 'character_first_frame') {
+    if (dto.inputPayload === null) {
+      throw new GenerationApiError('动作首帧任务缺少 input_payload', 200)
+    }
+    const actionType = dto.inputPayload.action_type
+    if (typeof actionType !== 'string' || !ACTION_TYPES.has(actionType)) {
+      throw new GenerationApiError('动作首帧任务 input_payload.action_type 无效', 200)
+    }
+    return direction === undefined
+      ? { type: 'first_frame', actionType }
+      : { type: 'first_frame', actionType, direction }
+  }
   if (dto.taskType === 'character_image') {
     return direction === undefined
       ? { type: 'character_template' }
@@ -679,7 +706,7 @@ function validateTaskIdentity(
   if (expectedTaskId !== undefined && dto.id !== expectedTaskId) {
     throw new GenerationApiError(`生成任务 ID 与请求的 ${expectedTaskId} 不一致`, 200)
   }
-  if (dto.taskType !== expectedBackendType(expectation.type)) {
+  if (!matchesBackendType(expectation.type, dto.taskType)) {
     throw new GenerationApiError(`生成任务类型与 ${expectation.type} 不匹配`, 200)
   }
   validateStatusError(dto.status, dto.errorMessage)
@@ -837,7 +864,7 @@ function mapEvent<TType extends GenerationTaskType>(
       },
     } as GenerationEvent<TType>
   }
-  if (backendTaskType(value.task_type) !== expectedBackendType(expectation.type)) {
+  if (!matchesBackendType(expectation.type, backendTaskType(value.task_type))) {
     throw new GenerationApiError(`task_update 类型与 ${expectation.type} 不匹配`, 200)
   }
   if (
@@ -1013,6 +1040,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
             height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
             num_images: candidateCount,
             direction: input.direction ?? DEFAULT_DIRECTION,
+            action_type: input.actionType,
           },
           candidateCount,
         )

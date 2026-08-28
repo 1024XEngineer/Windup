@@ -22,6 +22,7 @@ from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterDirectionSetInput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     CharacterViewSheetInput,
     GenerationType,
@@ -88,7 +89,6 @@ def _image_input(payload: dict) -> CharacterImageInput:
         height=int(payload.get("height") or 1024),
         num_images=int(raw_num_images) if raw_num_images is not None else None,
         direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
-        lock_orientation=bool(payload.get("lock_orientation")),
     )
 
 
@@ -155,6 +155,23 @@ def _view_sheet_input(payload: dict) -> CharacterViewSheetInput:
     )
 
 
+def _first_frame_input(payload: dict) -> CharacterFirstFrameInput:
+    raw_num_images = payload.get("num_images")
+    raw_type = payload.get("action_type")
+    action_type = raw_type if isinstance(raw_type, ActionType) else ActionType(raw_type)
+    return CharacterFirstFrameInput(
+        character_id=int(payload["character_id"]),
+        reference_image_url=str(payload.get("reference_image_url") or ""),
+        prompt=payload.get("prompt") or "",
+        negative_prompt=payload.get("negative_prompt") or "",
+        width=int(payload.get("width") or 1024),
+        height=int(payload.get("height") or 1024),
+        num_images=int(raw_num_images) if raw_num_images is not None else None,
+        direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
+        action_type=action_type,
+    )
+
+
 def handle_generation(
     payload: dict[str, Any],
     *,
@@ -162,6 +179,7 @@ def handle_generation(
     run_action_task: Callable[..., Any],
     run_direction_set_task: Callable[..., Any] | None = None,
     run_view_sheet_task: Callable[..., Any] | None = None,
+    run_first_frame_task: Callable[..., Any] | None = None,
 ) -> None:
     task_id = int(payload["task_id"])
     task_type = str(payload.get("task_type") or "")
@@ -212,6 +230,10 @@ def handle_generation(
             GenerationType(task_type),
             project_id,
         )
+    elif task_type == GenerationType.CHARACTER_FIRST_FRAME.value:
+        if run_first_frame_task is None:
+            raise RuntimeError("未注入 run_first_frame_task")
+        run_first_frame_task(task_id, _first_frame_input(input_payload), project_id)
     elif task_type == GenerationType.CHARACTER_ACTION.value:
         try:
             run_action_task(task_id, _action_input(input_payload), project_id)
@@ -297,6 +319,7 @@ def dispatch_handler(
     resume_action_client_bake: Callable[..., Any] | None = None,
     run_direction_set_task: Callable[..., Any] | None = None,
     run_view_sheet_task: Callable[..., Any] | None = None,
+    run_first_frame_task: Callable[..., Any] | None = None,
 ) -> None:
     handler = HANDLERS.get(msg_type)
     if handler is None:
@@ -309,6 +332,7 @@ def dispatch_handler(
         resume_action_client_bake=resume_action_client_bake,
         run_direction_set_task=run_direction_set_task,
         run_view_sheet_task=run_view_sheet_task,
+        run_first_frame_task=run_first_frame_task,
     )
 
 
@@ -323,6 +347,7 @@ def _dispatch_generation(
     run_action_task: Callable[..., Any],
     run_direction_set_task: Callable[..., Any] | None = None,
     run_view_sheet_task: Callable[..., Any] | None = None,
+    run_first_frame_task: Callable[..., Any] | None = None,
     **_deps: Any,
 ) -> None:
     handle_generation(
@@ -331,6 +356,7 @@ def _dispatch_generation(
         run_action_task=run_action_task,
         run_direction_set_task=run_direction_set_task,
         run_view_sheet_task=run_view_sheet_task,
+        run_first_frame_task=run_first_frame_task,
     )
 
 
