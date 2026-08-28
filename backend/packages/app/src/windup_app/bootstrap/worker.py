@@ -143,9 +143,11 @@ def _warmup_local_inference() -> None:
     except Exception:
         logger.warning("抽帧后端预热失败", exc_info=True)
     try:
-        from windup_framework.providers import OnnxU2NetMatteProvider
+        from windup_framework.providers import get_matte_provider
 
-        matte = OnnxU2NetMatteProvider()
+        # 取进程里那唯一一份 —— 三个 executor 的惰性兜底取到的是同一个对象,
+        # 所以就算下面 warmup() 抛了、bind_matte 没跑成,也不会各建一份。
+        matte = get_matte_provider()
         matte.warmup()
         bind_matte(matte)
         logger.info("ONNX 抠图会话已预热")

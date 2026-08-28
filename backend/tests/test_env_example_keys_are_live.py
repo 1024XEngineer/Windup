@@ -34,6 +34,10 @@ _INFRA_KEYS = frozenset({
     "WINDUP_SSE_REDIS_CHANNEL",
     # windup_framework.providers.matte._refine_enabled:os.environ,不走 BaseSettings
     "WINDUP_MATTE_REFINE",
+    # providers.matte_factory.make_matte_provider:同上,os.environ。
+    # 走 BaseSettings 的话 framework 的配置层就要认识 provider 的名字,而选哪个 provider
+    # 是装配决定,不是配置数据。
+    "WINDUP_MATTE_PROVIDER",
     # render3d._tc3.TencentCredentials.resolve:环境变量 → 加锁文件,不走 BaseSettings
     "TENCENT_SECRET_ID", "TENCENT_SECRET_KEY", "TENCENT_REGION",
     # orchestrator.client_bake / docker-compose 的构建目标,都是 os.getenv

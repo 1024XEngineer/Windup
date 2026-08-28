@@ -948,12 +948,12 @@ class ActionTaskExecutor:
         from windup_common.models import GenRoute
         from windup_framework.gateway import build_image_gateway, build_video_gateway
         from windup_framework.gateway.image import _CIRCUIT
-        from windup_framework.providers import OnnxU2NetMatteProvider
+        from windup_framework.providers import get_matte_provider
 
         from windup_app.server.media.first_frame import MediaFirstFrameUploader
 
         if self._matte is None:
-            self._matte = OnnxU2NetMatteProvider()
+            self._matte = get_matte_provider()
         if self._image is None:
             self._image = build_image_gateway(circuit=_CIRCUIT)
         # uploader 在这里注入而不是让 provider 自己去拿:framework 不认识 app 的对象存储。
@@ -1074,7 +1074,7 @@ class ImageTaskExecutor:
         self,
         *,
         image=None,  # None → 懒加载 ImageGateway
-        matte: MatteProvider | None = None,  # None → 懒加载 OnnxU2NetMatteProvider
+        matte: MatteProvider | None = None,  # None → 懒加载,按 WINDUP_MATTE_PROVIDER 选
         upload: Callable[[bytes], str] | None = None,  # None → 真实对象存储上传
         fetch_ref: Callable[[str], bytes]
         | None = None,  # None → 下载 reference_image_url
@@ -1285,9 +1285,9 @@ class ImageTaskExecutor:
             return self._matte
         with self._assembly_lock:
             if self._matte is None:
-                from windup_framework.providers import OnnxU2NetMatteProvider
+                from windup_framework.providers import get_matte_provider
 
-                self._matte = OnnxU2NetMatteProvider()
+                self._matte = get_matte_provider()
             return self._matte
 
     def _download(self, url: str) -> bytes:
