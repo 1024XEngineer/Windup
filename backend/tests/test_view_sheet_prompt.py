@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from windup_ai_engine.prompt import build_view_sheet_prompt
+from windup_ai_engine.prompt import (
+    build_oriented_first_frame_prompt,
+    build_view_sheet_prompt,
+    view_for_perspective,
+)
 from windup_ai_engine.prompt._md import load_section
 from windup_common.directions import ActionDirection
 from windup_common.models import CharacterView
@@ -65,3 +69,28 @@ def test_illegal_direction_or_view_raises():
         build_view_sheet_prompt("eastt")
     with pytest.raises(ValueError):
         build_view_sheet_prompt(ActionDirection.EAST, view="topdown")
+
+
+def test_first_frame_reuses_camera_lock_and_replaces_idle_pose():
+    text = build_oriented_first_frame_prompt(
+        ActionDirection.EAST,
+        action_prompt="walk cycle first frame, left foot forward",
+    )
+    assert "FRONT-VIEW character master" in text
+    assert "ninety-degree" in text
+    assert "walk cycle first frame, left foot forward" in text
+    assert "Neutral idle standing pose" not in text
+    assert text.index("FRONT-VIEW character master") < text.index("ninety-degree")
+    assert text.endswith("walk cycle first frame, left foot forward")
+
+
+def test_first_frame_blank_action_prompt_raises():
+    with pytest.raises(ValueError, match="动作描述"):
+        build_oriented_first_frame_prompt(ActionDirection.SOUTH, action_prompt="   ")
+
+
+def test_view_for_perspective_maps_project_camera():
+    assert view_for_perspective(1) is CharacterView.SIDE
+    assert view_for_perspective(2) is CharacterView.TOP_DOWN
+    assert view_for_perspective(3) is CharacterView.ISOMETRIC
+    assert view_for_perspective(99) is CharacterView.SIDE

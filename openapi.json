@@ -785,6 +785,63 @@
         "title": "CharacterDirectionSetGenerateRequest",
         "type": "object"
       },
+      "CharacterFirstFrameGenerateRequest": {
+        "additionalProperties": false,
+        "description": "四向 / 八向动作首帧:正视母版锁朝向后出该方向的动作起手姿态。",
+        "properties": {
+          "character_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Character Id",
+            "type": "integer"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/ActionDirection"
+          },
+          "height": {
+            "default": 1024,
+            "maximum": 2048.0,
+            "minimum": 64.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "negative_prompt": {
+            "default": "",
+            "title": "Negative Prompt",
+            "type": "string"
+          },
+          "num_images": {
+            "default": 3,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Num Images",
+            "type": "integer"
+          },
+          "project_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Project Id",
+            "type": "integer"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "width": {
+            "default": 1024,
+            "maximum": 2048.0,
+            "minimum": 64.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "character_id",
+          "prompt",
+          "direction"
+        ],
+        "title": "CharacterFirstFrameGenerateRequest",
+        "type": "object"
+      },
       "CharacterFrame": {
         "description": "动作帧。",
         "properties": {
@@ -5312,6 +5369,48 @@
           }
         },
         "summary": "Submit Eight View Generation",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/generation/first-frame": {
+      "post": {
+        "description": "提交锁定朝向的动作首帧:正视母版转相机,再换成动作起手姿态。",
+        "operationId": "submit_first_frame_generation_generation_first_frame_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterFirstFrameGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_GenerationTaskOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit First Frame Generation",
         "tags": [
           "generation"
         ]

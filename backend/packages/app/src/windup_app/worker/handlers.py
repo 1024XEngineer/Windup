@@ -88,6 +88,7 @@ def _image_input(payload: dict) -> CharacterImageInput:
         height=int(payload.get("height") or 1024),
         num_images=int(raw_num_images) if raw_num_images is not None else None,
         direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
+        lock_from_south=bool(payload.get("lock_from_south")),
     )
 
 

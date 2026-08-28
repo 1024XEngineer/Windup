@@ -25,6 +25,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from windup_ai_engine.ports import PromptRejected
+from windup_ai_engine.prompt import (
+    build_oriented_first_frame_prompt,
+    view_for_perspective,
+)
 from windup_ai_engine.slicing.quality import subject_blobs
 from windup_common.directions import direction_prompt
 from windup_common.enums import ArtStyle
@@ -1191,7 +1195,9 @@ class ImageTaskExecutor:
         # 2. 风格参考图(项目级,有 sprite_sample_url 时走图生图模式)
         style_url = (cons.sprite_sample_url or "").strip()
         want_char = _is_url(char_url)
-        want_style = _is_url(style_url)
+        # 锁定朝向只吃正视母版,不再叠项目风格图:第二张图会让
+        # "attached image is the FRONT-VIEW master" 对不上。
+        want_style = (not input.lock_from_south) and _is_url(style_url)
 
         def _fetch_style(url: str) -> bytes | None:
             try:
@@ -1217,39 +1223,48 @@ class ImageTaskExecutor:
                     refs.append(style_bytes)
                     has_style_ref = True
 
-        # 3. 构建提示词
-        base = (
-            input.prompt
-            or "Clean full-body character reference of the figure in the image."
-        )
-        parts = [
-            base,
-            _image_view_prompt(cons),
-            direction_prompt(input.direction),
-        ]
-        if cons.style:
-            parts.append(f"Art style: {cons.style}.")
-        parts.append("Plain light-gray background, no shadow.")
-
-        # 图生图模式:明确标注参考图用途。只有角色母版、没有项目风格图时同样必须写明
-        # 身份约束，否则 Provider 虽收到图片，仍可能把它当普通构图参考重新设计角色。
-        if want_char and has_style_ref:
-            prefix = (
-                "This is an image-to-image task. "
-                "The first image is the CHARACTER reference — preserve its identity. "
-                "The second image is the STYLE reference — follow its art style, "
-                "color palette, and rendering technique. "
+        if input.lock_from_south:
+            if not want_char:
+                raise ValueError("锁定朝向的动作首帧必须绑定正视母版")
+            prompt = build_oriented_first_frame_prompt(
+                input.direction,
+                view=view_for_perspective(cons.perspective),
+                action_prompt=input.prompt,
             )
-            parts.insert(0, prefix)
-        elif want_char:
-            parts.insert(
-                0,
-                "This is an image-to-image task. The first image is the confirmed "
-                "CHARACTER master — preserve its identity, face, body proportions, "
-                "outfit, colors, and accessories exactly. ",
+        else:
+            # 3. 构建提示词
+            base = (
+                input.prompt
+                or "Clean full-body character reference of the figure in the image."
             )
+            parts = [
+                base,
+                _image_view_prompt(cons),
+                direction_prompt(input.direction),
+            ]
+            if cons.style:
+                parts.append(f"Art style: {cons.style}.")
+            parts.append("Plain light-gray background, no shadow.")
 
-        prompt = " ".join(parts)
+            # 图生图模式:明确标注参考图用途。只有角色母版、没有项目风格图时同样必须写明
+            # 身份约束，否则 Provider 虽收到图片，仍可能把它当普通构图参考重新设计角色。
+            if want_char and has_style_ref:
+                prefix = (
+                    "This is an image-to-image task. "
+                    "The first image is the CHARACTER reference — preserve its identity. "
+                    "The second image is the STYLE reference — follow its art style, "
+                    "color palette, and rendering technique. "
+                )
+                parts.insert(0, prefix)
+            elif want_char:
+                parts.insert(
+                    0,
+                    "This is an image-to-image task. The first image is the confirmed "
+                    "CHARACTER master — preserve its identity, face, body proportions, "
+                    "outfit, colors, and accessories exactly. ",
+                )
+
+            prompt = " ".join(parts)
 
         import io
 
