@@ -36,6 +36,7 @@ from windup_app.server.quota.model import (
     InviteCode,
     InviteCodeView,
     InviteRecord,
+    InviteRecordView,
 )
 from windup_app.server.user.model import User
 from windup_framework.config.quota import settings as quota_settings
@@ -134,6 +135,21 @@ def _to_txn_view(txn: CreditTransaction) -> CreditTransactionView:
         balance_after=txn.balance_after,
         create_at=txn.create_at,
     )
+
+
+def _mask_invitee(user: User | None) -> str:
+    """提供可辨认但不可还原的邀请对象标签。"""
+    if user is None:
+        return "已注销用户"
+    if user.nickname:
+        nickname = user.nickname.strip()
+        if nickname:
+            return f"{nickname[0]}{'*' * max(1, min(len(nickname) - 1, 3))}"
+
+    local, separator, domain = user.email.partition("@")
+    if not separator:
+        return f"{local[:1]}***"
+    return f"{local[:1]}***@{domain}"
 
 
 class SqlAlchemyQuotaService(QuotaService):
@@ -522,6 +538,57 @@ class SqlAlchemyQuotaService(QuotaService):
         session.flush()
         logger.info("[WINDUP] 生成邀请码 | user_id=%s code=%s", user_id, row.code)
         return _to_invite_view(row)
+
+    def list_invite_records(
+        self,
+        session: Session,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[InviteRecordView], int]:
+        total = (
+            session.scalar(
+                select(func.count())
+                .select_from(InviteRecord)
+                .where(InviteRecord.inviter_id == user_id)
+            )
+            or 0
+        )
+        rows = session.execute(
+            select(InviteRecord, User)
+            .outerjoin(User, User.id == InviteRecord.invitee_id)
+            .where(InviteRecord.inviter_id == user_id)
+            .order_by(InviteRecord.create_at.desc(), InviteRecord.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+
+        reward_refs = {f"invite:{record.invitee_id}:inviter" for record, _user in rows}
+        rewarded_refs: set[str] = set()
+        if reward_refs:
+            rewarded_refs = set(
+                session.scalars(
+                    select(CreditTransaction.ref_id).where(
+                        CreditTransaction.user_id == user_id,
+                        CreditTransaction.reason == int(CreditReason.INVITE_REWARD),
+                        CreditTransaction.ref_id.in_(reward_refs),
+                    )
+                ).all()
+            )
+
+        return (
+            [
+                InviteRecordView(
+                    id=record.id,
+                    invitee=_mask_invitee(invitee),
+                    code=record.code,
+                    rewarded=f"invite:{record.invitee_id}:inviter" in rewarded_refs,
+                    create_at=record.create_at,
+                )
+                for record, invitee in rows
+            ],
+            total,
+        )
 
     def _allocate_invite_code(self, session: Session) -> str:
         for _ in range(16):

@@ -56,6 +56,7 @@ function createQuotaMock(): QuotaApis & {
   return {
     getBalance: vi.fn(async () => creditAccount),
     listTransactions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
+    listInviteRecords: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
     redeemCode: vi.fn(async () => ({ credited: 1000, account: creditAccount })),
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',

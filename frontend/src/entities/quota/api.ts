@@ -2,9 +2,11 @@ import type {
   CreditAccount,
   CreditTransaction,
   InviteCode,
+  InviteRecord,
   QuotaApis,
   QuotaTransactionPageQuery,
 } from './types'
+import type { PageQuery } from '@/shared/pagination'
 
 import { createApiClient, getApiAccessToken } from '@/shared/api'
 import type { ApiClient, ApiClientOptions } from '@/shared/api'
@@ -37,6 +39,14 @@ interface InviteCodeDto {
   expires_at: string
   create_at: string
   update_at: string
+}
+
+interface InviteRecordDto {
+  id: number
+  invitee: string
+  code: string
+  rewarded: boolean
+  create_at: string
 }
 
 interface CreditRedemptionResultDto {
@@ -84,6 +94,16 @@ function toInviteCode(dto: InviteCodeDto): InviteCode {
   }
 }
 
+function toInviteRecord(dto: InviteRecordDto): InviteRecord {
+  return {
+    id: String(dto.id),
+    invitee: dto.invitee,
+    code: dto.code,
+    rewarded: dto.rewarded,
+    createdAt: dto.create_at,
+  }
+}
+
 export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis {
   const { client, ...clientOptions } = options
   const protectedClient =
@@ -125,6 +145,12 @@ export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis
     async getInviteCode() {
       return toInviteCode(await protectedClient.request<InviteCodeDto>('/quota/invite/code'))
     },
+    async listInviteRecords(query: PageQuery = {}) {
+      const result = await protectedClient.requestList<InviteRecordDto>('/quota/invite/records', {
+        query: { page: query.page, page_size: query.pageSize },
+      })
+      return { ...result, items: result.items.map(toInviteRecord) }
+    },
     async generateInviteCode() {
       return toInviteCode(
         await protectedClient.request<InviteCodeDto>('/quota/invite/generate', { method: 'POST' }),
@@ -146,5 +172,6 @@ export const quotaApis: QuotaApis = {
   listTransactions: (query) => getDefaultApis().listTransactions(query),
   redeemCode: (code) => getDefaultApis().redeemCode(code),
   getInviteCode: () => getDefaultApis().getInviteCode(),
+  listInviteRecords: (query) => getDefaultApis().listInviteRecords(query),
   generateInviteCode: () => getDefaultApis().generateInviteCode(),
 }

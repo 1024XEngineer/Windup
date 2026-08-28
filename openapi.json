@@ -2091,6 +2091,41 @@
         "title": "InviteCodeOut",
         "type": "object"
       },
+      "InviteRecordOut": {
+        "description": "当前用户发出的单条邀请；身份字段已脱敏。",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "create_at": {
+            "format": "date-time",
+            "title": "Create At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "invitee": {
+            "title": "Invitee",
+            "type": "string"
+          },
+          "rewarded": {
+            "title": "Rewarded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "invitee",
+          "code",
+          "rewarded",
+          "create_at"
+        ],
+        "title": "InviteRecordOut",
+        "type": "object"
+      },
       "ListResponse_ActionPresetOut_": {
         "properties": {
           "code": {
@@ -2325,6 +2360,65 @@
           }
         },
         "title": "ListResponse[CreditTransactionOut]",
+        "type": "object"
+      },
+      "ListResponse_InviteRecordOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "description": "业务数据列表",
+            "items": {
+              "$ref": "#/components/schemas/InviteRecordOut"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "description": "当前页码,从 1 开始",
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 0,
+            "description": "每页条数;0 表示不分页(全量)",
+            "minimum": 0.0,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          },
+          "total": {
+            "default": 0,
+            "description": "数据总数;分页时为查询条件总数,不分页时为 len(data)",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ListResponse[InviteRecordOut]",
         "type": "object"
       },
       "ListResponse_ProjectListOut_": {
@@ -6084,6 +6178,63 @@
           }
         },
         "summary": "Generate Invite Code",
+        "tags": [
+          "quota"
+        ]
+      }
+    },
+    "/quota/invite/records": {
+      "get": {
+        "description": "分页查询当前登录用户发出的邀请。",
+        "operationId": "list_invite_records_quota_invite_records_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_InviteRecordOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Invite Records",
         "tags": [
           "quota"
         ]

@@ -20,6 +20,20 @@ function createApis(): QuotaApis & Record<keyof QuotaApis, ReturnType<typeof vi.
   return {
     getBalance: vi.fn(async () => account),
     listTransactions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
+    listInviteRecords: vi.fn(async () => ({
+      items: [
+        {
+          id: '31',
+          invitee: 'n***@example.com',
+          code: 'AB23CD45',
+          rewarded: true,
+          createdAt: '2026-08-29T01:02:03Z',
+        },
+      ],
+      total: 6,
+      page: 1,
+      pageSize: 5,
+    })),
     redeemCode: vi.fn(async () => ({ credited: 1000, account })),
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',
@@ -77,12 +91,41 @@ describe('InviteSection', () => {
     renderInvite()
 
     expect(await screen.findByText('AB23CD45')).toBeTruthy()
-    expect(screen.getByText('2')).toBeTruthy()
+    expect(screen.getByText('当前码注册').parentElement?.textContent).toContain('2')
     expect(screen.getByText('100')).toBeTruthy()
     expect(screen.getByText('当前码注册')).toBeTruthy()
     expect(screen.getByText(/邀请成功，双方各得 200 积分/)).toBeTruthy()
     expect(screen.getByText(/每日前 3 次邀请可得奖励/)).toBeTruthy()
     expect(screen.getByText('有效至 2026年9月16日')).toBeTruthy()
+  })
+
+  it('展示累计邀请和可分页的邀请明细', async () => {
+    const { apis } = renderInvite()
+
+    expect(await screen.findByText('n***@example.com')).toBeTruthy()
+    expect(screen.getByText('已获得奖励')).toBeTruthy()
+    expect(screen.getByText('累计邀请')).toBeTruthy()
+    expect(screen.getByText('6')).toBeTruthy()
+    expect(screen.getByText(/2026年8月29日/)).toBeTruthy()
+    expect(apis.listInviteRecords).toHaveBeenCalledWith({ page: 1, pageSize: 5 })
+
+    fireEvent.click(screen.getByRole('button', { name: '第 2 页' }))
+    await waitFor(() =>
+      expect(apis.listInviteRecords).toHaveBeenLastCalledWith({ page: 2, pageSize: 5 }),
+    )
+  })
+
+  it('邀请明细加载失败后允许单独重试', async () => {
+    const apis = createApis()
+    apis.listInviteRecords
+      .mockRejectedValueOnce(new Error('邀请记录暂时不可用'))
+      .mockResolvedValueOnce({ items: [], total: 0, page: 1, pageSize: 5 })
+    renderInvite(apis)
+
+    expect((await screen.findByRole('alert')).textContent).toContain('邀请记录暂时不可用')
+    fireEvent.click(screen.getByRole('button', { name: '重新加载邀请记录' }))
+    await waitFor(() => expect(apis.listInviteRecords).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('还没有邀请记录')).toBeTruthy()
   })
 
   it('邀请码有效期异常时使用安全提示', async () => {
