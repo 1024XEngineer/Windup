@@ -7,10 +7,11 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useParams } from 'react-router'
 
 import {
+  characterApis,
   projectApis,
   type ArtStyle,
   type ActionPreset,
@@ -1189,6 +1190,19 @@ function Render3DAssetPanelHost({
 }) {
   const precheck = useMasterPrecheck(input, masterUrl)
   const characterId = input.character?.id
+  // 角色数据上挂着 model_3d_url 与 rigged_motions,而「生产方式」等节点读的是这份数据。
+  // 建资产不在角色数据的更新路径上,所以建完必须把它重取一遍 —— 不重取的话,
+  // 用户刚在这里看到「3D 资产已就绪」,走到下游却被告知「该造型暂无绑骨 3D 模型」。
+  const refreshCharacter = useCallback(() => {
+    if (!characterId) return
+    void characterApis
+      .get(characterId)
+      .then((fresh) => input.setCharacter(fresh))
+      .catch(() => {
+        // 重取失败不该打断建资产那条主线:资产本身已经建成了,这里只是同步一份视图。
+        // 下游最坏退回到"需要刷新页面",与修这条之前一样,不会更糟。
+      })
+  }, [characterId, input])
   if (!characterId) return null
   return (
     <Render3DAssetPanel
@@ -1197,6 +1211,7 @@ function Render3DAssetPanelHost({
       outfitId={outfitId}
       precheck={precheck.status === 'done' ? precheck.report : null}
       disabled={disabled}
+      onAssetChanged={refreshCharacter}
     />
   )
 }
