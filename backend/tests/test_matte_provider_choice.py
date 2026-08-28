@@ -262,3 +262,113 @@ def test_the_union_u2net_is_created_once_under_concurrency(monkeypatch):
     for t in threads:
         t.join()
     assert len(made) == 1, f"并发下建了 {len(made)} 份 u2net,每份一套 ONNX 会话"
+
+
+# ── 进程里只能有一份 ─────────────────────────────────────────────────────
+
+
+def test_every_caller_gets_the_same_single_instance(monkeypatch):
+    """拦的坏例:进程里存在第二份 provider。
+
+    每份自带一套 ONNX 会话(u2net 常驻 ~0.53GB,并集模式下 BiRefNet 内部再挂一个
+    u2net)。生产 worker 容器上限 5GiB —— 多几份不是"稍微费点内存",是起不来。
+    """
+    from windup_framework.providers import get_matte_provider, reset_matte_provider
+
+    monkeypatch.delenv(ENV, raising=False)
+    reset_matte_provider()
+    try:
+        a, b, c = get_matte_provider(), get_matte_provider(), get_matte_provider()
+        assert a is b is c
+    finally:
+        reset_matte_provider()
+
+
+def test_a_failed_warmup_does_not_triple_the_instances(monkeypatch):
+    """拦的坏例:``warmup()`` 抛异常 → ``bind_matte`` 不执行 → 三个 executor 各建一份。
+
+    这正是此前唯一性靠运气的那条路径:``bootstrap.worker`` 把 warmup + bind_matte 包在
+    同一个 ``except Exception`` 里,warmup 一抛,bind_matte 就到不了,而三个 executor
+    各自还有惰性兜底。日志里只有一条"ONNX 预热失败,首个抠图任务会再加载"的 WARNING,
+    没有任何一处说"你现在有三份"。
+    """
+    from windup_framework.providers import get_matte_provider, reset_matte_provider
+    from windup_framework.providers import matte_factory as mf
+
+    built = []
+
+    class _Boom:
+        def __init__(self):
+            built.append(1)
+
+        def warmup(self):
+            raise RuntimeError("模型下载失败")
+
+        def cutout(self, frame):
+            return frame
+
+    monkeypatch.setattr(mf, "make_matte_provider", lambda *a, **k: _Boom())
+    reset_matte_provider()
+    try:
+        # 模拟 bootstrap:拿一份、预热炸了
+        p0 = get_matte_provider()
+        with pytest.raises(RuntimeError):
+            p0.warmup()
+        # 三个 executor 各自走惰性兜底
+        got = [get_matte_provider() for _ in range(3)]
+        assert all(g is p0 for g in got), "预热失败后又建了新的实例"
+        assert len(built) == 1, f"进程里建了 {len(built)} 份 provider"
+    finally:
+        reset_matte_provider()
+
+
+def test_concurrent_first_calls_build_exactly_one(monkeypatch):
+    """拦的坏例:惰性初始化是检查后赋值,并发下多建几份。
+
+    worker 的生成并发默认 IMAGE=4 / ACTION=2,首个抠图任务并发到达是常态。
+    """
+    import threading
+
+    from windup_framework.providers import get_matte_provider, reset_matte_provider
+    from windup_framework.providers import matte_factory as mf
+
+    built = []
+
+    class _Slow:
+        def __init__(self):
+            built.append(1)
+            time.sleep(0.02)          # 放大竞态窗口
+
+    monkeypatch.setattr(mf, "make_matte_provider", lambda *a, **k: _Slow())
+    reset_matte_provider()
+    try:
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(get_matte_provider()))
+                   for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(built) == 1, f"并发下建了 {len(built)} 份"
+        assert len({id(o) for o in out}) == 1, "拿到了不同的实例"
+    finally:
+        reset_matte_provider()
+
+
+def test_no_production_call_site_bypasses_the_singleton():
+    """拦的坏例:新增一个调用点直接用工厂,唯一性就又只能靠人守规矩。
+
+    实测:此前四个调用点全部直接调工厂,唯一性完全靠 ``bind_matte`` 恰好跑成。
+    """
+    import pathlib
+
+    app_src = pathlib.Path(__file__).resolve().parents[1] / "packages/app/src"
+    offenders = []
+    for f in app_src.rglob("*.py"):
+        text = f.read_text(encoding="utf-8")
+        if "make_matte_provider" in text:
+            offenders.append(str(f.relative_to(app_src)))
+    assert not offenders, (
+        f"这些生产文件绕过了单例、直接用工厂:{offenders};"
+        "工厂只给测试和本地脚本用,生产一律走 get_matte_provider()"
+    )

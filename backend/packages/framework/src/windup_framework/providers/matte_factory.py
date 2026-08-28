@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+import threading
 
 from .interfaces import MatteProvider
 
@@ -105,3 +106,41 @@ def make_matte_provider(name: str | None = None) -> MatteProvider:
     from .matte import OnnxU2NetMatteProvider
 
     return OnnxU2NetMatteProvider()
+
+
+#: 进程级唯一实例。**这是硬保证,不是优化。**
+#:
+#: 每份 provider 自带一套 ONNX 会话:u2net 常驻 ~0.53GB、BiRefNet ~0.45GB,而并集模式
+#: 下 BiRefNet 内部再挂一个 u2net。生产 worker 容器上限 5GiB —— 多几份就不是"稍微费点
+#: 内存",是起不来。
+#:
+#: 此前唯一性靠的是运气:``bootstrap.worker`` 建一份 → ``warmup()`` → ``bind_matte()``
+#: 把它塞给三个 executor。但那三个 executor 各自还有一条惰性兜底
+#: (``if self._matte is None: self._matte = make_matte_provider()``),而 ``warmup()``
+#: 一抛异常 ``bind_matte`` 就不执行 —— 于是三个 executor 各建一份,日志里只有一条
+#: "ONNX 预热失败,首个抠图任务会再加载" 的 WARNING,没有任何一处说"你现在有三份"。
+#: 那条惰性路径本身也不是线程安全的(检查后赋值),并发下还能更多。
+_INSTANCE: MatteProvider | None = None
+_INSTANCE_LOCK = threading.Lock()
+
+
+def get_matte_provider() -> MatteProvider:
+    """进程里那**唯一**一份抠图 provider。所有生产调用点都走这里。
+
+    与 :func:`make_matte_provider` 的分工:那个是**工厂**(每调一次造一份,给测试和
+    本地脚本用),这个是**取唯一那份**。生产代码一律用这个 —— 工厂直接暴露给调用点,
+    唯一性就只能靠每个调用点自己守规矩,而实测已经证明守不住。
+    """
+    global _INSTANCE
+    if _INSTANCE is None:
+        with _INSTANCE_LOCK:
+            if _INSTANCE is None:                      # 双检:锁外读、锁内再确认
+                _INSTANCE = make_matte_provider()
+    return _INSTANCE
+
+
+def reset_matte_provider() -> None:
+    """丢掉那份单例。**只给测试用** —— 生产里换 provider 要重启进程。"""
+    global _INSTANCE
+    with _INSTANCE_LOCK:
+        _INSTANCE = None

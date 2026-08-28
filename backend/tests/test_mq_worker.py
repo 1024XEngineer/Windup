@@ -1464,9 +1464,12 @@ def test_warmup_injects_one_matte_into_both_executors(monkeypatch):
             self.warmed = True
 
     fake = _Fake()
-    monkeypatch.setattr(
-        "windup_framework.providers.make_matte_provider", lambda *a, **k: fake
-    )
+    # 桩在**工厂**上,并清掉单例 —— 生产已改走 get_matte_provider(),它内部调工厂。
+    # 桩 get_matte_provider 本身会把"单例真的只建一份"这层一起绕过去,那正是要守的东西。
+    from windup_framework.providers import matte_factory as _mf
+
+    monkeypatch.setattr(_mf, "make_matte_provider", lambda *a, **k: fake)
+    _mf.reset_matte_provider()
     prev_a, prev_i = ex.executor._matte, ex.image_executor._matte
     try:
         w._warmup_local_inference()
@@ -1476,6 +1479,7 @@ def test_warmup_injects_one_matte_into_both_executors(monkeypatch):
     finally:
         ex.executor._matte = prev_a
         ex.image_executor._matte = prev_i
+        _mf.reset_matte_provider()      # 单例是进程级的,不清会污染同进程后面的用例
 
 
 def test_consumer_trims_heap_after_image_not_email(engine, worker_session, monkeypatch):
