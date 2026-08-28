@@ -498,6 +498,41 @@ def _outfit_model_3d_url(character: Character, outfit_id: str | None) -> str | N
     return (outfit.model_3d_url or "").strip() or None
 
 
+#: 一个 3D 资产下最多能有几个动作。
+#:
+#: 这条是**产品限额**不是技术限制:三渲二的动作由浏览器出帧,对我们几乎零成本,
+#: 限的是本期试用范围。作用域取"每个 3D 资产"而不是"每个用户":动作是从模型生成
+#: 出来的,换个模型就是另一批动作;按用户总数算的话,建了第二个模型却分不到名额。
+#: 要改成按用户总数,把 ``_owned_3d_action_count`` 的统计范围换掉即可。
+MAX_ACTIONS_PER_3D_ASSET = 3
+
+
+def _require_3d_action_quota(character: Character, outfit_id: str | None) -> None:
+    """三渲二动作的条数上限。**只管三渲二** —— i2v 那条路线不受此限。
+
+    在 HTTP 边界就拒:任务还没建、积分还没冻,拒起来干净;而超限这件事与用户输入无关,
+    让它走到执行阶段才失败的话,用户看到的是通用的"生成失败",不知道是撞了限额。
+    """
+    if not outfit_id:
+        return
+    try:
+        data = CharacterData.model_validate(character.character_data or {})
+    except ValidationError:
+        # 与 ``_outfit_model_3d_url`` 同一个取舍:结构脏了不该让生成起不来。
+        # 这里放行的后果只是少拦一次,而拦错的后果是用户被卡住且看不出原因。
+        return
+    outfit = next((o for o in data.outfits if o.id == outfit_id), None)
+    if outfit is None or not (outfit.model_3d_url or "").strip():
+        return                      # 没有 3D 资产 = 走 i2v,不归本闸管
+    if len(outfit.actions) >= MAX_ACTIONS_PER_3D_ASSET:
+        raise BizException(
+            f"这个 3D 角色已经有 {len(outfit.actions)} 个动作了,"
+            f"本期每个 3D 角色最多 {MAX_ACTIONS_PER_3D_ASSET} 个。"
+            "删掉一个再来,或改走视频路线。",
+            code=BizCode.BAD_REQUEST,
+        )
+
+
 def _require_master(model_3d_url: str | None, reference_image_urls: list[str]) -> None:
     """动作生成拿不到母版就当场拒收,不收下一个注定在执行阶段失败的任务。"""
     # 判据照抄执行器的取母版逻辑(``ActionTaskExecutor._produce_action``):有 3D 资产走
@@ -722,6 +757,7 @@ def submit_action_generation(
     _validate_project_direction(project, body.direction)
     character = _get_character_or_raise(session, body.character_id, body.project_id)
     model_3d_url = _outfit_model_3d_url(character, body.outfit_id)
+    _require_3d_action_quota(character, body.outfit_id)
     _require_master(model_3d_url, body.reference_image_urls)
     input_data = CharacterActionInput(
         character_id=body.character_id,
