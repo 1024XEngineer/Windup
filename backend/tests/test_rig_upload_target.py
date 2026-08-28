@@ -67,7 +67,20 @@ def test_the_uploader_returns_a_public_http_url():
             seen["filename"] = spec.filename
             seen["category"] = spec.category
             seen["size"] = spec.size
-            return "https://media.example.com/media/model-3d/abc.glb"
+            # **返回真实类型**,不是字符串。第一版这里桩了个 str,于是
+            # "忘了取 .url" 这个 bug 被测试完美地放过去了 —— 断言的是自己写的桩的
+            # 行为,而生产上 upload() 返回的是 MediaUploadResult 对象。
+            # 2026-08-28 生产实测:图生 3D 付完 20 积分后绑骨报
+            # ModelNotPublicError,用户卡在"模型建好了但绑不了骨"。
+            from windup_app.server.media.model import MediaUploadResult
+
+            return MediaUploadResult(
+                url="https://media.example.com/media/model-3d/abc.glb",
+                object_key="media/model-3d/abc.glb",
+                filename=spec.filename,
+                content_type=spec.content_type,
+                size=spec.size,
+            )
 
     import windup_app.server.media.service as ms
     real = ms.service
@@ -77,8 +90,17 @@ def test_the_uploader_returns_a_public_http_url():
     finally:
         ms.service = real
 
+    assert isinstance(url, str), f"返回的不是字符串而是 {type(url).__name__} —— 忘了取 .url"
     assert url.startswith("https://")
-    assert seen["category"] == "model-3d", "分类错了会走回 MediaCategory 那个老坑(#834②)"
+    # 分类必须是 model-3d。**这一条只断言取值**,不断言"是不是枚举成员" ——
+    # MediaUploadInput 是 pydantic 模型,字面量在构造时就被转成枚举了,
+    # 断言 `is MediaCategory.MODEL_3D` 对两种写法都成立(试过,变异不红)。
+    # 用字面量的真实风险是**打错字**,而那由下面这条覆盖:打错就不等于 "model-3d"。
+    from windup_app.server.media.model import MediaCategory
+
+    assert seen["category"] == MediaCategory.MODEL_3D, (
+        f"分类是 {seen['category']!r} —— 不是 model-3d 就会走回 #834② 那个老坑"
+    )
     assert seen["size"] == 104, "size 要报真实字节数"
 
 
