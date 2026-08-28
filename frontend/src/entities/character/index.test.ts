@@ -355,6 +355,44 @@ describe('characterApis', () => {
     })
   })
 
+  it('stamps character_data.version 2 when PATCHing a version 1 multi-direction asset', async () => {
+    let request: Request | undefined
+    const legacyDto = structuredClone(characterDto)
+    legacyDto.character_data.version = 1
+    const characterApis = await loadCharacterApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse(legacyDto)
+    })
+    const character = await characterApis.get('51')
+
+    await characterApis.update(character)
+
+    expect(character.dataVersion).toBe(1)
+    await expect(request?.json()).resolves.toMatchObject({
+      character_data: { version: 2 },
+    })
+  })
+
+  it('keeps character_data.version 1 when PATCHing an east/west-only asset', async () => {
+    let request: Request | undefined
+    const legacyDto = structuredClone(characterDto)
+    legacyDto.character_data.version = 1
+    legacyDto.character_data.templates = legacyDto.character_data.templates.filter(
+      (template) => template.direction === 'east' || template.direction === 'west',
+    )
+    const characterApis = await loadCharacterApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse(legacyDto)
+    })
+    const character = await characterApis.get('51')
+
+    await characterApis.update(character)
+
+    await expect(request?.json()).resolves.toMatchObject({
+      character_data: { version: 1 },
+    })
+  })
+
   it('preserves directional action sequences across GET and PATCH', async () => {
     let request: Request | undefined
     const directionalDto = structuredClone(characterDto)

@@ -107,7 +107,16 @@ describe('Character asset publisher', () => {
     ]
 
     const published = await publisher.publishReviewedAction({
-      character: characterFixture(),
+      character: {
+        ...characterFixture(),
+        templates: fourWayTemplates(),
+        outfits: [
+          {
+            ...characterFixture().outfits[0]!,
+            actions: [],
+          },
+        ],
+      },
       workflow,
       reviewNodeId: 'action-walk:review',
       generations: [
@@ -117,6 +126,8 @@ describe('Character asset publisher', () => {
       ],
       directionalMovement: 'four-way',
     })
+
+    expect(published.dataVersion).toBe(2)
 
     expect(published.outfits[0]?.actions.at(-1)?.sequences).toEqual([
       {
@@ -249,6 +260,40 @@ describe('Character asset publisher', () => {
       }),
     ).rejects.toThrow('完整动画方向 east 的生成结果不可发布')
   })
+
+  it('rejects a four-way publish when character templates are still incomplete', async () => {
+    const publisher = (
+      exportFeature as unknown as ExportFeatureModule
+    ).createCharacterAssetPublisher({
+      async update() {
+        throw new Error('不应写入 Character')
+      },
+    })
+    const workflow = workflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = [
+      { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
+      { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
+    ]
+
+    await expect(
+      publisher.publishReviewedAction({
+        character: {
+          ...characterFixture(),
+          outfits: [{ ...characterFixture().outfits[0]!, actions: [] }],
+        },
+        workflow,
+        reviewNodeId: 'action-walk:review',
+        generations: [
+          directionalAnimationFixture('generation-east', 'east', 'east'),
+          directionalAnimationFixture('generation-north', 'north', 'north'),
+          directionalAnimationFixture('generation-south', 'south', 'south'),
+        ],
+        directionalMovement: 'four-way',
+      }),
+    ).rejects.toThrow('角色母版缺少真实方向')
+  })
 })
 
 function createRejectingPublisher() {
@@ -257,6 +302,15 @@ function createRejectingPublisher() {
       throw new Error('不应写入 Character')
     },
   })
+}
+
+function fourWayTemplates(): NonNullable<Character['templates']> {
+  return [
+    { direction: 'east', sourceDirection: null, mirrorX: false, imageUrl: 'east.png' },
+    { direction: 'west', sourceDirection: 'east', mirrorX: true, imageUrl: null },
+    { direction: 'north', sourceDirection: null, mirrorX: false, imageUrl: 'north.png' },
+    { direction: 'south', sourceDirection: null, mirrorX: false, imageUrl: 'south.png' },
+  ]
 }
 
 function characterFixture(): Character {

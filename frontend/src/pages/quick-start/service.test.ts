@@ -106,6 +106,15 @@ function fourViewSheet(southImageUrl: string): CharacterViewSheetCandidate {
   }
 }
 
+function fourWayTemplates(): NonNullable<Character['templates']> {
+  return [
+    { direction: 'east', sourceDirection: null, mirrorX: false, imageUrl: 'east-sheet.png' },
+    { direction: 'west', sourceDirection: 'east', mirrorX: true, imageUrl: null },
+    { direction: 'north', sourceDirection: null, mirrorX: false, imageUrl: 'north-sheet.png' },
+    { direction: 'south', sourceDirection: null, mirrorX: false, imageUrl: 'south-sheet.png' },
+  ]
+}
+
 function automaticDeliveryGenerationApis(): GenerationApis {
   const tasks = new Map<string, Awaited<ReturnType<GenerationApis['create']>>>()
   tasks.set('task-template', {
@@ -1830,6 +1839,7 @@ describe('createQuickStartService', () => {
       subscribe: vi.fn(() => () => undefined),
     }
     let character = characterWithDefaultOutfit(run.id)
+    character.templates = fourWayTemplates()
     const characterApis = mutableCharacterApis(
       () => character,
       (value) => (character = value),
