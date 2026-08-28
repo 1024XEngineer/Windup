@@ -62,6 +62,11 @@ logger = logging.getLogger(__name__)
 # 字面量** —— 待审模型"在哪"这件事有两个说法时,放行与展示会指向不同的文件。
 RAW_KEY_PREFIX = "raw:"
 
+#: 图生 3D 产物在**上游**那边的 URL。给绑骨当云到云的输入(#860)。
+#: 与 ``RAW_KEY_PREFIX`` 那份 bytes 分开存:两个用途、两种寿命 —— bytes 给人工确认闸
+#: 渲给人看、要在整个审核期内稳定,而上游这个 URL 实测 24 小时过期。
+URL_KEY_PREFIX = "rawurl:"
+
 # 两段的报价。**不在这里抄数字**,从计费实现取 —— 抄一份过去,供应商调价时两处会分叉,
 # 而分叉的那一份正是给用户看的成本提示(告知了错的价钱比不告知更糟)。
 # ``CREDITS["Normal"]`` 是本管线用的生成模式(非 PBR、单视图),与 ``TencentModel3DProvider``
@@ -370,9 +375,16 @@ class Render3DAssetBuilder:
         model = self._store.get(raw_key)
         if model is None:
             progress.step("assets", 0, 2, "造型级 3D 资产未就绪:图生 3D(按次计费)")
-            model = self._model3d.image_to_3d(master, want="GLB")
+            model, upstream_url = _image_to_3d(self._model3d, master)
             self._store.put(raw_key, model)
-            logger.info("图生 3D 产物已落点 key=%s bytes=%d", raw_key, len(model))
+            if upstream_url:
+                # 上游那个 URL 单独存一份,给绑骨当**云到云**的输入 —— 它是上游自家的
+                # 文件,交回给同一个上游就不用我们中转(省每资产约 36MB,#860)。
+                # 与 raw_key 那份 bytes 是两个用途:bytes 给人工确认闸渲给人看,
+                # 那个 URL 必须在整个审核期内稳定;上游这个 24 小时会过期。
+                self._store.put(f"{URL_KEY_PREFIX}{key}", upstream_url.encode())
+            logger.info("图生 3D 产物已落点 key=%s bytes=%d 云到云=%s",
+                        raw_key, len(model), bool(upstream_url))
 
         where = self._review.submit(key, model, "GLB")
         if not self._review.is_approved(key):
@@ -387,7 +399,9 @@ class Render3DAssetBuilder:
             )
 
         progress.step("assets", 1, 2, f"模型已确认,自动绑骨并烘入 {BUILD_MOTION} 动作(按次计费)")
-        rigged: RiggedModel = self._autorig.rig(model, want="GLB", motion=BUILD_MOTION)
+        rigged: RiggedModel = _rig(self._autorig, model,
+                                   self._store.get(f"{URL_KEY_PREFIX}{key}"),
+                                   motion=BUILD_MOTION)
         if rigged.motion is None:
             # 不带动作的绑骨产物在下游**每一道闸前都是正常的**:格式对、28 骨对、体积对,
             # 只是出帧台拿到零个动画片段。存下来就等于把 10 积分买来的哑模型挂成 READY,
@@ -401,3 +415,42 @@ class Render3DAssetBuilder:
         self._store.put(key, rigged.data)
         logger.info("造型级 3D 资产已落点 key=%s fmt=%s", key, rigged.fmt)
         return rigged.data
+
+
+def _image_to_3d(provider, master: bytes) -> tuple[bytes, str | None]:
+    """图生 3D,顺带取回上游那个产物 URL。
+
+    provider 没有 ``image_to_3d_with_url`` 时退回旧方法、URL 给 None —— 测试里的桩与
+    别的实现不该因为这个新增能力而全部要改。
+    """
+    fn = getattr(provider, "image_to_3d_with_url", None)
+    if fn is None:
+        return provider.image_to_3d(master, want="GLB"), None
+    return fn(master, want="GLB")
+
+
+def _model_not_public():
+    """上游 URL 不可取时那个异常类型。局部取,免得模块顶层耦合到具体 provider。"""
+    from windup_framework.providers.render3d import ModelNotPublicError
+
+    return ModelNotPublicError
+
+
+_MODEL_NOT_PUBLIC = _model_not_public()
+
+
+def _rig(provider, model: bytes, upstream_url: bytes | None, *, motion: str):
+    """绑骨。有上游 URL 就走**云到云**,没有就退回传 bytes。
+
+    退回不是可有可无的:上游 URL 会过期(24 小时),而人可能隔天才放行;
+    存量资产也没有这份 URL。退回那条路仍然可用,只是要多走一次中转。
+    """
+    url = (upstream_url or b"").decode() if upstream_url else ""
+    fn = getattr(provider, "rig_from_url", None)
+    if url and fn is not None:
+        try:
+            return fn(url, "GLB", want="GLB", motion=motion)
+        except _MODEL_NOT_PUBLIC:
+            # URL 过期或不再可取 —— 退回中转,别让整条建资产失败。
+            logger.info("上游 URL 不可用,退回经应用机中转绑骨")
+    return provider.rig(model, want="GLB", motion=motion)
