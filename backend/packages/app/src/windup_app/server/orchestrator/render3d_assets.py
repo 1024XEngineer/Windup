@@ -66,6 +66,16 @@ RAW_KEY_PREFIX = "raw:"
 #: 与 ``RAW_KEY_PREFIX`` 那份 bytes 分开存:两个用途、两种寿命 —— bytes 给人工确认闸
 #: 渲给人看、要在整个审核期内稳定,而上游这个 URL 实测 24 小时过期。
 URL_KEY_PREFIX = "rawurl:"
+# 已提交、已计费、还没取回来的绑骨任务号。**费在提交那一刻就扣了**,之后的每一步
+# (等待、下载、进程存活)都可能失败,而失败一次就重新提交等于再扣一次。存着它,
+# 下次进来先零成本续取。取回来就删 —— 留着会让下一次真正的新请求被续取顶掉。
+RIGJOB_KEY_PREFIX = "rigjob:"
+# 连续几轮续不回来才放弃这个任务号。
+# 不能"续取一失败就删":``JobTimeoutError`` 的意思是**任务还在上游跑、费已经扣了**,
+# 而产物下载失败也照样抛 ``JobFailedError`` —— 两种都不代表任务没了。删掉再提交
+# 就是同一份产物付两次钱,正是本机制要防的。反过来永远不删也不行:任务真的失效时
+# 会卡死在续取上,谁也建不出资产。所以留几轮,超了才当它没了。
+RIGJOB_MAX_RESUMES = 3
 
 # 两段的报价。**不在这里抄数字**,从计费实现取 —— 抄一份过去,供应商调价时两处会分叉,
 # 而分叉的那一份正是给用户看的成本提示(告知了错的价钱比不告知更糟)。
@@ -401,7 +411,9 @@ class Render3DAssetBuilder:
         progress.step("assets", 1, 2, f"模型已确认,自动绑骨并烘入 {BUILD_MOTION} 动作(按次计费)")
         rigged: RiggedModel = _rig(self._autorig, model,
                                    self._store.get(f"{URL_KEY_PREFIX}{key}"),
-                                   motion=BUILD_MOTION)
+                                   motion=BUILD_MOTION,
+                                   store=self._store,
+                                   job_key=f"{RIGJOB_KEY_PREFIX}{key}#{BUILD_MOTION}")
         if rigged.motion is None:
             # 不带动作的绑骨产物在下游**每一道闸前都是正常的**:格式对、28 骨对、体积对,
             # 只是出帧台拿到零个动画片段。存下来就等于把 10 积分买来的哑模型挂成 READY,
@@ -455,7 +467,9 @@ class Render3DAssetBuilder:
         # 追加动作同样走云到云:上游 URL 还在就不用把 18MB 再中转一遍(#860)。
         rigged: RiggedModel = _rig(self._autorig, raw,
                                    self._store.get(f"{URL_KEY_PREFIX}{key}"),
-                                   motion=want)
+                                   motion=want,
+                                   store=self._store,
+                                   job_key=f"{RIGJOB_KEY_PREFIX}{key}#{want}")
         if rigged.motion is None:
             # 与主产物那条同一个理由:零片段的产物在下游每一道闸前都正常,存下来就是
             # 把 10 积分买来的哑模型挂成可用。
@@ -488,18 +502,55 @@ def _model_not_public():
 _MODEL_NOT_PUBLIC = _model_not_public()
 
 
-def _rig(provider, model: bytes, upstream_url: bytes | None, *, motion: str):
+def _rig(provider, model: bytes, upstream_url: bytes | None, *, motion: str,
+         store: CharacterAssetStore | None = None, job_key: str = ""):
     """绑骨。有上游 URL 就走**云到云**,没有就退回传 bytes。
 
     退回不是可有可无的:上游 URL 会过期(24 小时),而人可能隔天才放行;
     存量资产也没有这份 URL。退回那条路仍然可用,只是要多走一次中转。
+
+    给了 ``store``/``job_key`` 就带**断点续取**:提交成功即落盘任务号,下一次进来
+    先零成本取一遍那个任务的产物。没有它的话,提交之后的任何失败都让已扣的费作废。
     """
+    # 续取与落盘是一对,缺一没意义,所以一起按 provider 是否有 fetch 来开关。
+    resumable = store is not None and bool(job_key) and hasattr(provider, "fetch")
+    if resumable:
+        prior = store.get(job_key)
+        if prior:
+            job_id, _, tried = prior.decode().partition("|")
+            n = int(tried or 0)
+            try:
+                got = provider.fetch(job_id, want="GLB", motion=motion)
+                logger.info("续取上次已计费的绑骨产物 JobId=%s,没有重复提交", job_id)
+                store.delete(job_key)
+                return got
+            except Exception as exc:      # noqa: BLE001 —— 什么错都不足以断定任务没了
+                n += 1
+                if n < RIGJOB_MAX_RESUMES:
+                    # **不退回重新提交** —— 退回就是再扣一次,而这一单大概率还在上游跑。
+                    store.put(job_key, f"{job_id}|{n}".encode())
+                    raise
+                logger.info("JobId=%s 连续 %d 轮续不回来(%s),当它没了,按新任务提交",
+                            job_id, n, exc)
+                store.delete(job_key)
+
+    # 只有支持续取的 provider 才收得下这个钩子。不支持的(测试替身、别家实现)连
+    # 关键字都不该看见 —— 传过去是 TypeError,而这里本来就没它的事。
+    hook = ({"on_submitted": lambda job_id: store.put(job_key, job_id.encode())}
+            if resumable else {})
     url = (upstream_url or b"").decode() if upstream_url else ""
     fn = getattr(provider, "rig_from_url", None)
+    got = None
     if url and fn is not None:
         try:
-            return fn(url, "GLB", want="GLB", motion=motion)
+            got = fn(url, "GLB", want="GLB", motion=motion, **hook)
         except _MODEL_NOT_PUBLIC:
             # URL 过期或不再可取 —— 退回中转,别让整条建资产失败。
             logger.info("上游 URL 不可用,退回经应用机中转绑骨")
-    return provider.rig(model, want="GLB", motion=motion)
+    if got is None:
+        got = provider.rig(model, want="GLB", motion=motion, **hook)
+    if resumable:
+        # 取回来了就把任务号清掉。留着的话,这个造型下次被丢弃重建时会**续到上一版
+        # 模型的绑骨产物** —— 拿到的是别的模型,而且哪一道闸都拦不住。
+        store.delete(job_key)
+    return got
