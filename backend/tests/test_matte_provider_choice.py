@@ -363,12 +363,16 @@ def test_no_production_call_site_bypasses_the_singleton():
     import pathlib
 
     app_src = pathlib.Path(__file__).resolve().parents[1] / "packages/app/src"
+    # 两个口子都要堵:调工厂,和直接 new 具体类。只堵前者的话,一句
+    # ``OnnxU2NetMatteProvider()`` 照样多出一份,而它连工厂都没经过。
+    banned = ("make_matte_provider", "OnnxU2NetMatteProvider(", "BiRefNetMatteProvider(")
     offenders = []
     for f in app_src.rglob("*.py"):
         text = f.read_text(encoding="utf-8")
-        if "make_matte_provider" in text:
-            offenders.append(str(f.relative_to(app_src)))
+        hit = [b for b in banned if b in text]
+        if hit:
+            offenders.append(f"{f.relative_to(app_src)} → {hit}")
     assert not offenders, (
-        f"这些生产文件绕过了单例、直接用工厂:{offenders};"
-        "工厂只给测试和本地脚本用,生产一律走 get_matte_provider()"
+        f"这些生产文件绕过了单例:{offenders};"
+        "工厂与具体类只给测试和本地脚本用,生产一律走 get_matte_provider()"
     )
