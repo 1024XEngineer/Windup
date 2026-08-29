@@ -1,11 +1,5 @@
 import { useEffect, useState } from 'react'
-import {
-  ChatCircle,
-  ClockCounterClockwise,
-  NotePencil,
-  SidebarSimple,
-  X,
-} from '@phosphor-icons/react'
+import { ClockCounterClockwise, Note, NotePencil, SidebarSimple, X } from '@phosphor-icons/react'
 import { Link } from 'react-router'
 
 import type { QuickStartEntryService, QuickStartHistoryItem } from './service'
@@ -138,13 +132,14 @@ export function QuickStartHistorySidebar({
                           : 'text-app-ink-soft hover:bg-app-surface-muted'
                       }`}
                     >
-                      <ChatCircle
+                      <Note
                         aria-hidden="true"
+                        data-icon="history-entry"
                         size={17}
                         weight={current ? 'fill' : 'regular'}
                         className={current ? 'text-app-accent' : 'text-app-faint'}
                       />
-                      <span className="truncate">{item.title}</span>
+                      <span className="min-w-0 flex-1 truncate">{item.title}</span>
                     </Link>
                   </li>
                 )

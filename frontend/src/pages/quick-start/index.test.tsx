@@ -762,6 +762,26 @@ describe('QuickStartPage', () => {
     expect(service.open).toHaveBeenLastCalledWith('run-old')
   })
 
+  it('让超长历史标题占用剩余宽度并稳定省略', async () => {
+    const longTitle = '披白羽斗篷、戴月牙面具并携带星盘的占星师'
+    renderAt(
+      '/quick-start/run-current',
+      serviceFor(workflow(setupAndTemplate(), 'run-current'), {
+        listHistory: vi.fn(async () => [{ runId: 'run-current', title: longTitle }]),
+      }),
+    )
+
+    const history = await screen.findByRole('navigation', { name: '创作历史' })
+    const link = within(history).getByRole('link', { name: longTitle })
+    const title = within(link).getByText(longTitle)
+
+    expect(link.getAttribute('title')).toBe(longTitle)
+    expect(title.className).toContain('min-w-0')
+    expect(title.className).toContain('flex-1')
+    expect(title.className).toContain('truncate')
+    expect(link.querySelector('svg')?.getAttribute('data-icon')).toBe('history-entry')
+  })
+
   it('keeps the main export capability available in the conversation UI', async () => {
     const run = workflow(setupAndTemplate({ selectedImageUrl: '/master.png' }))
     const model: ExportPackageModel = {
