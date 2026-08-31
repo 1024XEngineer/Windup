@@ -46,6 +46,15 @@ export interface InviteCode {
   updatedAt: string
 }
 
+/** 当前用户发出的单次邀请；invitee 是后端生成的脱敏身份。 */
+export interface InviteRecord {
+  id: string
+  invitee: string
+  code: string
+  rewarded: boolean
+  createdAt: string
+}
+
 /** 兑换码入账结果；account 是本次事务提交后的最新账户快照。 */
 export interface CreditRedemptionResult {
   credited: number
@@ -57,5 +66,6 @@ export interface QuotaApis {
   listTransactions(query?: QuotaTransactionPageQuery): Promise<Paged<CreditTransaction>>
   redeemCode(code: string): Promise<CreditRedemptionResult>
   getInviteCode(): Promise<InviteCode>
+  listInviteRecords(query?: PageQuery): Promise<Paged<InviteRecord>>
   generateInviteCode(): Promise<InviteCode>
 }

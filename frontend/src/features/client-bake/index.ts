@@ -41,6 +41,9 @@ export class BakeAborted extends Error {
  * 任何一步失败都要**主动告诉后端**,否则这笔冻结的积分要等满期限才解冻,用户在界面上
  * 看到的是一个一直转的进度条。只有"取消"不上报 —— 那是用户自己的动作。
  */
+/** 主体平均亮度下限。纯黑剪影量到 0.0,正常帧量到约 148 —— 取 20 只拦「全黑」。 */
+const MIN_SUBJECT_LUMA = 20
+
 export async function runClientBake(options: RunClientBakeOptions): Promise<void> {
   const { job, apis, onProgress, signal } = options
   const throwIfAborted = () => {
@@ -73,6 +76,14 @@ export async function runClientBake(options: RunClientBakeOptions): Promise<void
         // 角色出画或片段选错都会安静地产出全透明帧,而外面照样以为成功了。
         throw new StageError(
           `第 ${i} 帧几乎全透明(覆盖率 ${coverage.toFixed(5)} < ${job.minCoverage})`,
+        )
+      }
+      // 纯黑主体逃得过覆盖率那道闸(它只数 alpha),所以在这里再判一次亮度。
+      // 触发点几乎只有一个:贴图还没传上 GPU 就渲了 —— 交付出去才看得见。
+      const luma = stage.subjectLuma()
+      if (luma >= 0 && luma < MIN_SUBJECT_LUMA) {
+        throw new StageError(
+          `第 ${i} 帧主体是纯黑(平均亮度 ${luma.toFixed(1)} < ${MIN_SUBJECT_LUMA})，贴图可能还没就绪`,
         )
       }
       await apis.putBakeFrame(job.taskId, i, await stage.grab())

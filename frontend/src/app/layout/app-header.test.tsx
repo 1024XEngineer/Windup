@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
@@ -56,6 +56,7 @@ function createQuotaMock(): QuotaApis & {
   return {
     getBalance: vi.fn(async () => creditAccount),
     listTransactions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
+    listInviteRecords: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
     redeemCode: vi.fn(async () => ({ credited: 1000, account: creditAccount })),
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',
@@ -480,7 +481,32 @@ describe('AppHeader', () => {
 
     const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
     expect(accountMenu.textContent).toContain('reader@example.com')
-    expect(accountMenu.textContent).toContain('r')
+    expect(within(accountMenu).getByTestId('default-account-avatar').getAttribute('src')).toBe(
+      '/windup-mark.svg',
+    )
+  })
+
+  it('账号菜单在点击外部、按 Escape 或指针移出账号区域时关闭', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    const trigger = await screen.findByRole('button', { name: '打开账号菜单' })
+    const menu = screen.getByTestId('account-menu')
+    const accountRegion = screen.getByLabelText('账号')
+
+    fireEvent.click(trigger)
+    fireEvent.pointerDown(document.body)
+    expect(menu.getAttribute('data-state')).toBe('closing')
+    fireEvent.animationEnd(menu)
+
+    fireEvent.click(trigger)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(menu.getAttribute('data-state')).toBe('closing')
+    fireEvent.animationEnd(menu)
+
+    fireEvent.click(trigger)
+    fireEvent.pointerLeave(accountRegion)
+    expect(menu.getAttribute('data-state')).toBe('closing')
   })
 
   it('让登录用户从 Header 的账号信息进入账号中心', async () => {

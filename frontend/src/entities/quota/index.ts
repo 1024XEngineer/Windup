@@ -5,6 +5,7 @@ export type {
   CreditRedemptionResult,
   CreditTransaction,
   InviteCode,
+  InviteRecord,
   CreditTransactionDirection,
   QuotaApis,
   QuotaTransactionFilters,

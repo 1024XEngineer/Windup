@@ -33,3 +33,5 @@ export {
   useImageDropTarget,
 } from './image-drop-target'
 export type { ImageDropTargetOptions } from './image-drop-target'
+export { ProductSelect } from './product-select'
+export type { ProductSelectOption, ProductSelectProps } from './product-select'

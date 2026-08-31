@@ -45,6 +45,7 @@ function createQuotaApis(): QuotaApis & {
       page,
       pageSize,
     })),
+    listInviteRecords: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
     redeemCode: vi.fn(async () => ({ credited: 1000, account })),
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',
