@@ -81,9 +81,12 @@ import {
   FrameAnimationPlayer,
   GenerationPreviewCard,
   GenerationProgressCopy,
+  IMAGE_UPLOAD_ACCEPT,
+  IMAGE_UPLOAD_HINT,
   KineticCopyCycle,
   productPopoverClass,
   productPopoverMotionClass,
+  useImageDropTarget,
   useProductPopoverMotion,
   type KineticCopyMessage,
 } from '@/shared/ui'
@@ -1196,14 +1199,23 @@ function QuickStartInput({
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
     if (entryBusy) return
     const selected = event.target.files?.[0] ?? null
-    setTemplateFile(selected)
-    setError(null)
+    event.target.value = ''
+    if (selected) templateDropTarget.selectFile(selected)
   }
 
   function removeTemplateFile() {
     setTemplateFile(null)
     if (fileInput.current) fileInput.current.value = ''
   }
+
+  const templateDropTarget = useImageDropTarget({
+    disabled: entryBusy || hasConversation,
+    onFile(file) {
+      setTemplateFile(file)
+      setError(null)
+    },
+    onError: setError,
+  })
 
   function chooseGameStyle(next: ArtStyle) {
     gameStyleRef.current = next
@@ -1525,13 +1537,21 @@ function QuickStartInput({
           <form
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
+            aria-label="角色母版图片上传区"
             data-prompt-state={promptState}
+            data-drag-active={templateDropTarget.isDragging}
+            {...templateDropTarget.dropTargetProps}
             className={`quick-start-agent-composer relative flex flex-col ${
               hasConversation
                 ? 'mt-12 rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
                 : ''
             }`}
           >
+            {templateDropTarget.isDragging ? (
+              <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center rounded-app-surface border-2 border-dashed border-app-accent bg-app-surface-raised/95 text-sm font-semibold text-app-accent shadow-app-panel backdrop-blur-sm">
+                松开以添加角色母版
+              </div>
+            ) : null}
             <label
               className={`relative block min-h-[52px] min-w-0 overflow-hidden ${
                 hasConversation
@@ -1605,7 +1625,7 @@ function QuickStartInput({
             <input
               ref={fileInput}
               type="file"
-              accept="image/*"
+              accept={IMAGE_UPLOAD_ACCEPT}
               aria-label="上传角色母版"
               disabled={entryBusy || hasConversation}
               className="sr-only"
@@ -1968,6 +1988,11 @@ function QuickStartInput({
                 </div>
               </div>
             </div>
+            {!hasConversation ? (
+              <p className="order-first mb-1 px-2 text-[11px] leading-4 text-app-faint">
+                拖入角色母版，或点击添加 · {IMAGE_UPLOAD_HINT}
+              </p>
+            ) : null}
           </form>
 
           {unavailableReason ? (

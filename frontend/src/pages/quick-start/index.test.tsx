@@ -3175,6 +3175,38 @@ describe('QuickStartPage', () => {
     await waitFor(() => expect(service.dispose).toHaveBeenCalledTimes(2))
   })
 
+  it('accepts a supported role template dropped anywhere on the entry composer', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const dropzone = screen.getByRole('form', { name: '角色母版图片上传区' })
+    const file = new File(['pixels'], 'hero.webp', { type: 'image/webp' })
+
+    expect(dropzone.textContent).toContain('PNG、JPG、GIF、WEBP')
+    expect(dropzone.textContent).toContain('10 MB')
+
+    fireEvent.dragEnter(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    expect(screen.getByText('松开以添加角色母版')).toBeTruthy()
+
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    expect(screen.getByText('hero.webp')).toBeTruthy()
+  })
+
+  it('rejects unsupported files dropped on the entry composer', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const dropzone = screen.getByRole('form', { name: '角色母版图片上传区' })
+    const file = new File(['not-an-image'], 'notes.txt', { type: 'text/plain' })
+
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+
+    expect(screen.getByRole('alert').textContent).toContain('仅支持 PNG、JPG、GIF、WEBP')
+    expect(screen.queryByText('notes.txt')).toBeNull()
+  })
+
   it('shows entry errors and supports removing an uploaded template', async () => {
     const service = serviceFor(null)
     const agent = agentFor({

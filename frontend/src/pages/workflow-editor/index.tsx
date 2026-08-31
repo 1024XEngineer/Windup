@@ -9,6 +9,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useParams } from 'react-router'
+import { UploadSimple } from '@phosphor-icons/react'
 
 import {
   characterApis,
@@ -43,7 +44,14 @@ import {
   ExportButton,
   type ExportPackageModel,
 } from '@/features/export-package'
-import { FrameAnimationPlayer, GenerationPreviewCard, GenerationProgressCopy } from '@/shared/ui'
+import {
+  FrameAnimationPlayer,
+  GenerationPreviewCard,
+  GenerationProgressCopy,
+  IMAGE_UPLOAD_ACCEPT,
+  IMAGE_UPLOAD_HINT,
+  useImageDropTarget,
+} from '@/shared/ui'
 import { Render3DAssetPanel } from './render3d-panel'
 import { loadDefaultActionPresets, type WorkflowEditorSession } from './runtime'
 import { useWorkflowEditorSession } from './use-workflow-editor-session'
@@ -641,6 +649,7 @@ function CharacterSetupContent({
   const [uploadingReference, setUploadingReference] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const uploadAbortRef = useRef<AbortController | null>(null)
+  const referenceInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => () => uploadAbortRef.current?.abort(), [])
 
@@ -669,6 +678,12 @@ function CharacterSetupContent({
       })
   }
 
+  const referenceDropTarget = useImageDropTarget({
+    disabled: branchBusy || uploadingReference,
+    onFile: uploadReferenceImage,
+    onError: setUploadError,
+  })
+
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.status === 'passed') return <p className={CARD_SUMMARY}>角色描述已确认</p>
   return (
@@ -694,18 +709,49 @@ function CharacterSetupContent({
       </label>
       <div className="grid gap-[7px]">
         <span className="text-[9px] font-[750] text-app-muted">角色参考图（选填）</span>
-        <input
-          type="file"
-          accept="image/*"
-          aria-label="角色参考图"
-          className="block w-full rounded-lg border border-[var(--color-app-line)] bg-app-surface text-[10px] text-[var(--color-app-muted)] file:mr-3 file:border-0 file:border-r file:border-[var(--color-app-line)] file:bg-transparent file:px-3 file:py-2 file:text-[10px] file:font-[700] file:text-[var(--color-app-ink)]"
-          disabled={branchBusy || uploadingReference}
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0]
-            event.currentTarget.value = ''
-            if (file) uploadReferenceImage(file)
-          }}
-        />
+        <div
+          role="group"
+          aria-label="角色参考图上传区"
+          data-drag-active={referenceDropTarget.isDragging}
+          {...referenceDropTarget.dropTargetProps}
+          className={`rounded-xl border border-dashed transition-[border-color,background-color,box-shadow] duration-150 ${
+            referenceDropTarget.isDragging
+              ? 'border-app-accent bg-app-accent-soft shadow-[0_0_0_2px_var(--color-app-accent-soft)]'
+              : 'border-app-line-strong bg-app-surface hover:border-app-accent hover:bg-app-surface-raised'
+          }`}
+        >
+          <input
+            ref={referenceInputRef}
+            type="file"
+            accept={IMAGE_UPLOAD_ACCEPT}
+            aria-label="角色参考图"
+            className="sr-only"
+            disabled={branchBusy || uploadingReference}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0]
+              event.currentTarget.value = ''
+              if (file) referenceDropTarget.selectFile(file)
+            }}
+          />
+          <button
+            type="button"
+            disabled={branchBusy || uploadingReference}
+            onClick={() => referenceInputRef.current?.click()}
+            className="flex min-h-24 w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-app-accent-muted text-app-accent">
+              <UploadSimple aria-hidden="true" size={18} weight="bold" />
+            </span>
+            <span className="grid min-w-0 gap-1">
+              <strong className="text-[10px] font-[750] text-app-ink-soft">
+                {referenceDropTarget.isDragging ? '松开以上传参考图' : '拖入图片，或点击选择'}
+              </strong>
+              <small className="text-[9px] leading-[1.45] text-app-faint">
+                {IMAGE_UPLOAD_HINT}
+              </small>
+            </span>
+          </button>
+        </div>
         {uploadingReference ? (
           <small role="status" className="text-[9px] font-[750] text-app-muted">
             正在上传参考图…

@@ -556,6 +556,48 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     ).toBe(false)
   })
 
+  it('支持在角色设定卡的大区域拖入参考图并提示格式限制', async () => {
+    const uploadReferenceImage = vi.fn().mockResolvedValue('opaque-reference-1' as MediaReference)
+    const session = createSession(workflowFixture(), { uploadReferenceImage })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    const dropzone = await screen.findByRole('group', { name: '角色参考图上传区' })
+    const file = new File(['pixels'], 'reference.gif', { type: 'image/gif' })
+
+    expect(dropzone.textContent).toContain('拖入图片，或点击选择')
+    expect(dropzone.textContent).toContain('PNG、JPG、GIF、WEBP')
+    expect(dropzone.textContent).toContain('10 MB')
+
+    fireEvent.dragEnter(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    expect(screen.getByText('松开以上传参考图')).toBeTruthy()
+
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    await waitFor(() =>
+      expect(uploadReferenceImage).toHaveBeenCalledWith(file, expect.any(AbortSignal)),
+    )
+  })
+
+  it('拖入超过 10 MB 的参考图时在本地拒绝且不发起上传', async () => {
+    const uploadReferenceImage = vi.fn()
+    const session = createSession(workflowFixture(), { uploadReferenceImage })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    const dropzone = await screen.findByRole('group', { name: '角色参考图上传区' })
+    const file = new File(['pixels'], 'oversized.png', { type: 'image/png' })
+    Object.defineProperty(file, 'size', { value: 10 * 1024 * 1024 + 1 })
+
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+
+    expect(screen.getByRole('alert').textContent).toContain('图片不能超过 10 MB')
+    expect(uploadReferenceImage).not.toHaveBeenCalled()
+  })
+
   it('上传失败时提示错误且不写入 WorkflowRun', async () => {
     const uploadReferenceImage = vi.fn().mockRejectedValue(new Error('对象存储暂不可用'))
     const session = createSession(workflowFixture(), { uploadReferenceImage })
