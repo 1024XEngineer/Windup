@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Windup 整体架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/xiaocheny214/DireSoul.git",
+      "revision": "ed500be30482ef8316f6f655bf0f06d19f1cce63"
+    },
+    "views": [
+      {
+        "id": "product-request",
+        "label": "同步产品路径",
+        "focus": ["workbench", "edge", "webapi", "pg"],
+        "note": "浏览器经 Nginx 进入 FastAPI，JWT 鉴权后读写项目、角色、流程与积分。"
+      },
+      {
+        "id": "async-work",
+        "label": "异步执行",
+        "focus": ["mq", "worker", "aigw", "models"],
+        "note": "Worker 消费邮件与生成 Stream，生成路径经进程内 AI Gateway 调用上游。"
+      },
+      {
+        "id": "identity-media",
+        "label": "登录与媒资",
+        "focus": ["webapi", "mq", "worker", "mail", "kodo"],
+        "note": "验证码经 Resend 发出；参考图与生成产物落到七牛 Kodo。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "workbench",
+      "type": "frontend",
+      "label": "React 工作台",
+      "sublabel": "项目 / 流程 / 试玩",
+      "brand": "react",
+      "pos": [40, 300],
+      "size": [124, 62],
+      "sources": [
+        { "path": "frontend/src/app/app.tsx", "line": 35, "label": "路由表" },
+        { "path": "frontend/src/main.tsx", "line": 10, "label": "React 入口" }
+      ]
+    },
+    {
+      "id": "edge",
+      "type": "cloud",
+      "label": "Nginx",
+      "sublabel": "静态 + /api",
+      "pos": [224, 300],
+      "size": [124, 62],
+      "sources": [
+        { "path": "frontend/README.md", "line": 26, "label": "宿主机 Nginx" },
+        { "path": "docker-compose.yml", "line": 61, "label": "站点目录" }
+      ]
+    },
+    {
+      "id": "webapi",
+      "type": "backend",
+      "label": "FastAPI",
+      "sublabel": "鉴权 · 资产 · 生成",
+      "tag": "JWT",
+      "brand": "fastapi",
+      "pos": [408, 300],
+      "size": [124, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/bootstrap/app.py", "line": 138, "label": "create_app" },
+        { "path": "backend/packages/app/src/windup_app/web/api/auth.py", "line": 29, "label": "/auth" },
+        { "path": "backend/packages/app/src/windup_app/web/api/generation.py", "line": 63, "label": "/generation" }
+      ]
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "用户 / 资产 / 任务",
+      "brand": "postgresql",
+      "pos": [600, 128],
+      "size": [132, 62],
+      "sources": [
+        { "path": "docker-compose.db.yml", "line": 56, "label": "windup-postgres" },
+        { "path": "backend/packages/framework/src/windup_framework/db/__init__.py", "line": 4, "label": "SessionLocal" }
+      ]
+    },
+    {
+      "id": "mail",
+      "type": "external",
+      "label": "Resend",
+      "sublabel": "验证码邮件",
+      "pos": [792, 128],
+      "size": [124, 62],
+      "sources": [
+        { "path": "backend/packages/framework/src/windup_framework/providers/email.py", "line": 24, "label": "ResendEmailProvider" }
+      ]
+    },
+    {
+      "id": "kodo",
+      "type": "cloud",
+      "label": "七牛 Kodo",
+      "sublabel": "对象存储",
+      "pos": [40, 488],
+      "size": [124, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/server/media/service.py", "line": 17, "label": "ObjectStorageMediaService" }
+      ]
+    },
+    {
+      "id": "mq",
+      "type": "messagebus",
+      "label": "Redis Stream",
+      "sublabel": "邮件 / 生成 / SSE",
+      "brand": "redis",
+      "pos": [600, 488],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/server/mq/catalog.py", "line": 33, "label": "EMAIL_STREAM" },
+        { "path": "backend/packages/framework/src/windup_framework/sse/bridge.py", "line": 15, "label": "SSE channel" }
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Worker",
+      "sublabel": "邮件 · 生成",
+      "pos": [792, 488],
+      "size": [124, 62],
+      "sources": [
+        { "path": "docker-compose.yml", "line": 26, "label": "worker 服务" },
+        { "path": "backend/packages/app/src/windup_app/bootstrap/worker.py", "line": 55, "label": "main" },
+        { "path": "backend/packages/app/src/windup_app/worker/handlers.py", "line": 52, "label": "验证码 handler" }
+      ]
+    },
+    {
+      "id": "aigw",
+      "type": "backend",
+      "label": "AI Gateway",
+      "sublabel": "Chat · Image · Video",
+      "pos": [976, 488],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/framework/src/windup_framework/gateway/__init__.py", "line": 1, "label": "Gateway 导出" },
+        { "path": "backend/packages/app/src/windup_app/server/orchestrator/executor.py", "line": 988, "label": "懒装配 Gateway" }
+      ]
+    },
+    {
+      "id": "models",
+      "type": "external",
+      "label": "上游模型",
+      "sublabel": "OpenAI 兼容",
+      "pos": [1168, 488],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/framework/src/windup_framework/gateway/routes.py", "line": 65, "label": "routes_from_settings" }
+      ]
+    }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "应用机", "wraps": ["edge", "webapi", "worker", "aigw"] },
+    { "kind": "region", "label": "数据层", "wraps": ["pg", "mq"] }
+  ],
+  "connections": [
+    { "id": "https-in", "from": "workbench", "to": "edge", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "api-proxy", "from": "edge", "to": "webapi", "label": "/api" },
+    { "id": "sql-write", "from": "webapi", "to": "pg", "label": "SQL", "fromSide": "top", "toSide": "left" },
+    { "id": "media-put", "from": "webapi", "to": "kodo", "label": "put_data", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "stream-add", "from": "webapi", "to": "mq", "label": "XADD 入队", "variant": "dashed", "fromSide": "bottom", "toSide": "left" },
+    { "id": "stream-read", "from": "mq", "to": "worker", "label": "出队", "variant": "emphasis" },
+    { "id": "in-process", "from": "worker", "to": "aigw", "label": "进程内" },
+    { "id": "model-https", "from": "aigw", "to": "models", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "status-back", "from": "worker", "to": "pg", "label": "状态回写", "fromSide": "top", "toSide": "bottom" },
+    { "id": "send-code", "from": "worker", "to": "mail", "label": "验证码", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "labelAt": [880, 310] }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "产品面",
+      "items": [
+        "React 工作台覆盖落地页、项目、Quick Start、Workflow Editor、Playtest 与导出",
+        "宿主机 Nginx 提供 SPA 并反代 /api",
+        "FastAPI 挂载鉴权、项目、角色、流程、生成、媒资、积分与 /ai"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "执行面",
+      "items": [
+        "Worker 同时消费邮件 Stream 与图片/动作生成 Stream",
+        "生成经进程内 ImageGateway / VideoGateway 调上游",
+        "进度经 Redis Pub/Sub 推 SSE 回浏览器"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "登录与媒资",
+      "items": [
+        "注册/登录验证码经 Resend 发出，验证码本身存在 Redis",
+        "参考图与生成产物 put_data 到七牛 Kodo",
+        "用户、资产、任务与积分账本落在 PostgreSQL"
+      ]
+    }
+  ]
+}

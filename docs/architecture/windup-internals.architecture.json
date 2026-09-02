@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Windup 内部服务",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/xiaocheny214/DireSoul.git",
+      "revision": "ed500be30482ef8316f6f655bf0f06d19f1cce63"
+    },
+    "views": [
+      {
+        "id": "project-assets",
+        "label": "项目是容器",
+        "focus": ["workbench", "project", "workflow", "character"],
+        "note": "工作台打开的是项目；项目拥有 workflow_run 和角色，并保存朝向/尺寸等生成约束。"
+      },
+      {
+        "id": "account",
+        "label": "鉴权与积分",
+        "focus": ["workbench", "auth", "quota", "generation", "filter"],
+        "note": "JWT 认出用户；敏感词先于建任务和冻积分；积分按用户账户扣。"
+      },
+      {
+        "id": "dual-pipeline",
+        "label": "双出帧路径",
+        "focus": ["workflow", "generation", "bake", "aigw", "postprocess"],
+        "note": "编排只调任务调度。调度走 i2v；三渲二出帧指向 Gateway 做图生 3D，再下发浏览器出帧。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "鉴权",
+      "sublabel": "JWT Bearer",
+      "tag": "JWT",
+      "pos": [40, 128],
+      "size": [124, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/web/middleware/auth.py", "line": 1, "label": "中间件" },
+        { "path": "backend/packages/app/src/windup_app/web/api/auth.py", "line": 29, "label": "/auth" },
+        { "path": "frontend/src/features/auth-guard/index.tsx", "line": 10, "label": "受保护路由" }
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "frontend",
+      "label": "Quick Start Agent",
+      "sublabel": "浏览器沙箱",
+      "pos": [456, 128],
+      "size": [148, 62],
+      "sources": [
+        { "path": "frontend/src/features/quick-start-agent/production.ts", "line": 14, "label": "装配 Controller" },
+        { "path": "backend/packages/app/src/windup_app/web/api/agent.py", "line": 107, "label": "/ai 对话" }
+      ]
+    },
+    {
+      "id": "quota",
+      "type": "backend",
+      "label": "积分",
+      "sublabel": "按用户账户",
+      "pos": [860, 128],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/server/quota/model.py", "line": 10, "label": "一人一行" },
+        { "path": "backend/packages/app/src/windup_app/server/orchestrator/billing.py", "line": 1, "label": "提交冻结" },
+        { "path": "backend/packages/app/src/windup_app/web/api/quota.py", "line": 1, "label": "/quota" }
+      ]
+    },
+    {
+      "id": "workbench",
+      "type": "frontend",
+      "label": "工作台",
+      "sublabel": "首页 / 试玩 / 导出",
+      "brand": "react",
+      "pos": [40, 300],
+      "size": [124, 62],
+      "sources": [
+        { "path": "frontend/src/app/app.tsx", "line": 35, "label": "路由表" }
+      ]
+    },
+    {
+      "id": "project",
+      "type": "database",
+      "label": "项目",
+      "sublabel": "工作区 · 生成约束",
+      "pos": [248, 300],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/server/project/model.py", "line": 11, "label": "全局约束" },
+        { "path": "backend/packages/app/src/windup_app/web/api/project.py", "line": 33, "label": "/projects" }
+      ]
+    },
+    {
+      "id": "workflow",
+      "type": "frontend",
+      "label": "节点编排",
+      "sublabel": "前端感知 · 后端只存",
+      "pos": [456, 300],
+      "size": [148, 62],
+      "sources": [
+        { "path": "frontend/src/features/workflow-controller/controller.ts", "line": 157, "label": "Controller" },
+        { "path": "backend/packages/app/src/windup_app/web/api/workflow_run.py", "line": 11, "label": "只做存储" },
+        { "path": "backend/packages/app/src/windup_app/server/workflow_run/model.py", "line": 46, "label": "project_id" }
+      ]
+    },
+    {
+      "id": "filter",
+      "type": "security",
+      "label": "敏感词",
+      "sublabel": "提交前拦截",
+      "pos": [680, 300],
+      "size": [124, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/server/sensitive_word/service.py", "line": 58, "label": "assert_clean" },
+        { "path": "backend/packages/app/src/windup_app/server/orchestrator/service.py", "line": 63, "label": "先于建任务" },
+        { "path": "backend/packages/app/src/windup_app/web/api/agent.py", "line": 396, "label": "/ai 先拦" }
+      ]
+    },
+    {
+      "id": "generation",
+      "type": "backend",
+      "label": "任务调度",
+      "sublabel": "出图 / i2v / 出帧",
+      "pos": [860, 300],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/web/api/generation.py", "line": 290, "label": "project_id" }
+      ]
+    },
+    {
+      "id": "aigw",
+      "type": "backend",
+      "label": "AI Gateway",
+      "sublabel": "Chat · 图 · 视频 · 3D",
+      "pos": [1160, 300],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/framework/src/windup_framework/gateway/__init__.py", "line": 1, "label": "Gateway" },
+        { "path": "backend/packages/app/src/windup_app/server/orchestrator/executor.py", "line": 988, "label": "Image/Video" },
+        { "path": "backend/packages/app/src/windup_app/server/orchestrator/render3d_service.py", "line": 392, "label": "图生 3D" }
+      ]
+    },
+    {
+      "id": "character",
+      "type": "database",
+      "label": "角色",
+      "sublabel": "项目下的产物",
+      "pos": [1160, 488],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/app/src/windup_app/server/character/model.py", "line": 1, "label": "隶属项目" },
+        { "path": "backend/packages/app/src/windup_app/server/character/model.py", "line": 80, "label": "project_id" }
+      ]
+    },
+    {
+      "id": "bake",
+      "type": "frontend",
+      "label": "三渲二出帧",
+      "sublabel": "浏览器 WebGL",
+      "pos": [456, 488],
+      "size": [148, 62],
+      "sources": [
+        { "path": "frontend/src/features/client-bake/index.ts", "line": 44, "label": "runClientBake" },
+        { "path": "frontend/src/features/client-bake/attach.ts", "line": 4, "label": "挂在生成任务上" },
+        { "path": "backend/packages/app/src/windup_app/server/orchestrator/executor.py", "line": 563, "label": "下发出帧" }
+      ]
+    },
+    {
+      "id": "postprocess",
+      "type": "backend",
+      "label": "资产后处理",
+      "sublabel": "抽帧 · 抠图 · 对齐",
+      "pos": [860, 488],
+      "size": [132, 62],
+      "sources": [
+        { "path": "backend/packages/ai_engine/src/windup_ai_engine/slicing/extract.py", "line": 35, "label": "抽帧" },
+        { "path": "backend/packages/ai_engine/src/windup_ai_engine/postprocess/__init__.py", "line": 1, "label": "像素化 / 对齐" },
+        { "path": "backend/packages/framework/src/windup_framework/providers/matte.py", "line": 1, "label": "抠图" }
+      ]
+    }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "浏览器", "wraps": ["agent", "workflow", "bake"] },
+    { "kind": "region", "label": "应用机", "wraps": ["quota", "filter", "generation", "aigw", "postprocess"] }
+  ],
+  "connections": [
+    { "id": "open-project", "from": "workbench", "to": "project", "label": "打开项目", "variant": "emphasis" },
+    { "id": "login", "from": "workbench", "to": "auth", "label": "登录 JWT", "fromSide": "top", "toSide": "bottom" },
+    { "id": "project-flow", "from": "project", "to": "workflow", "label": "挂流程", "variant": "emphasis" },
+    { "id": "agent-flow", "from": "agent", "to": "workflow", "label": "代跑节点", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "flow-filter", "from": "workflow", "to": "filter", "label": "先拦", "variant": "emphasis" },
+    { "id": "filter-gen", "from": "filter", "to": "generation", "label": "通过", "variant": "emphasis" },
+    { "id": "gen-gw", "from": "generation", "to": "aigw", "label": "出图 / i2v", "variant": "emphasis" },
+    { "id": "gen-quota", "from": "generation", "to": "quota", "label": "冻结积分", "fromSide": "top", "toSide": "bottom" },
+    { "id": "gen-post", "from": "generation", "to": "postprocess", "label": "视频后处理", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "gen-bake", "from": "generation", "to": "bake", "label": "下发出帧", "fromSide": "left", "toSide": "top" },
+    { "id": "bake-gw", "from": "bake", "to": "aigw", "label": "图生 3D", "fromSide": "bottom", "toSide": "right" },
+    { "id": "bake-post", "from": "bake", "to": "postprocess", "label": "交帧" },
+    { "id": "post-char", "from": "postprocess", "to": "character", "label": "写入角色" },
+    { "id": "agent-filter", "from": "agent", "to": "filter", "label": "对话 /ai", "variant": "dashed", "fromSide": "top", "toSide": "top" },
+    { "id": "filter-chat", "from": "filter", "to": "aigw", "label": "过了才调", "variant": "dashed", "fromSide": "top", "toSide": "top", "via": [[742, 80], [1226, 80]] }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "项目 · 鉴权 · 积分",
+      "items": [
+        "项目是用户名下的工作区：拥有 workflow_run 和角色，并保存朝向/尺寸等生成约束",
+        "JWT 认出用户；敏感词在建任务和冻积分之前拦 prompt，/ai 对话进 Gateway 前同样拦",
+        "积分账户一人一行，提交出图/i2v 时冻结；不按项目扣，Agent 对话也不走这本账"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "为什么 Agent 在前端",
+      "items": [
+        "节点编排由前端感知：Controller 跑图，/workflow-runs 只全量存 nodes，后端不执行",
+        "Agent 代跑的是同一套前端节点，必须和编排状态在同一个浏览器里",
+        "浏览器沙箱隔离工具与对话循环；对话仍经 /ai 进 Gateway，密钥不进前端"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "双出帧路径",
+      "items": [
+        "视频：i2v 经 Gateway 拿回后，抽帧、抠图、像素化、脚线对齐都在应用机 Worker 上做",
+        "编排只调任务调度，不直连出帧。i2v 经 Gateway 后资产后处理；三渲二出帧指向 Gateway 做图生 3D / 绑骨，调度再下发浏览器出帧",
+        "出帧只做 WebGL。两条线都写入角色，成色闸仍在资产后处理"
+      ]
+    }
+  ]
+}
