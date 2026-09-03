@@ -486,13 +486,12 @@ describe('AppHeader', () => {
     )
   })
 
-  it('账号菜单在点击外部、按 Escape 或指针移出账号区域时关闭', async () => {
+  it('账号菜单在点击外部或按 Escape 时关闭', async () => {
     window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
     renderHeader('/workspace')
 
     const trigger = await screen.findByRole('button', { name: '打开账号菜单' })
     const menu = screen.getByTestId('account-menu')
-    const accountRegion = screen.getByLabelText('账号')
 
     fireEvent.click(trigger)
     fireEvent.pointerDown(document.body)
@@ -502,11 +501,22 @@ describe('AppHeader', () => {
     fireEvent.click(trigger)
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(menu.getAttribute('data-state')).toBe('closing')
-    fireEvent.animationEnd(menu)
+  })
+
+  it('指针移出头像所在区域时账号菜单保持打开，否则鼠标够不到菜单项', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    const trigger = await screen.findByRole('button', { name: '打开账号菜单' })
+    const menu = screen.getByTestId('account-menu')
+    const accountRegion = screen.getByLabelText('账号')
 
     fireEvent.click(trigger)
+    expect(menu.getAttribute('data-state')).toBe('open')
+
     fireEvent.pointerLeave(accountRegion)
-    expect(menu.getAttribute('data-state')).toBe('closing')
+    expect(menu.getAttribute('data-state')).toBe('open')
+    expect(screen.getByRole('link', { name: '打开账号中心' })).toBeTruthy()
   })
 
   it('让登录用户从 Header 的账号信息进入账号中心', async () => {
