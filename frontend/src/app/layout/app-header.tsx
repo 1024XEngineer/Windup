@@ -348,10 +348,15 @@ export function AppHeader({
           })}
         </nav>
 
+        {/*
+          不挂 pointerleave 关闭：菜单是点击打开的，而它右对齐、比头像宽，
+          与头像之间还隔着 0.5rem。鼠标从头像走向菜单的任何一条路径都会先离开本区域，
+          于是菜单在指针到达之前就关掉，鼠标用户永远点不到里面的项。
+          关闭交给区域外 pointerdown、Escape 和焦点移出。
+        */}
         <div
           ref={accountRegionRef}
           aria-label="账号"
-          onPointerLeave={accountMenu.close}
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
               accountMenu.close()
