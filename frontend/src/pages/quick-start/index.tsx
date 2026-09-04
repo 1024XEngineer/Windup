@@ -594,10 +594,7 @@ export function QuickStartPage({
   }, [])
 
   return (
-    <div
-      data-layout="quick-start-with-history"
-      className="relative min-h-screen bg-app-canvas lg:pl-72"
-    >
+    <div data-layout="quick-start-with-history" className="relative min-h-screen bg-app-canvas">
       <QuickStartHistorySidebar service={activeService} activeRunId={runId} />
       <div className="min-w-0">
         {runId ? (
