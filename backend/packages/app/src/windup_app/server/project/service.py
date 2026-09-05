@@ -49,16 +49,6 @@ class SqlAlchemyProjectService(ProjectService):
         session.flush()  # 取回自增主键 id 与 Python 侧默认值(create_at/update_at)
         return project
 
-    def project_name_exists(
-        self, session: Session, *, user_id: int, project_name: str
-    ) -> bool:
-        stmt = (
-            select(Project.id)
-            .where(Project.user_id == user_id, Project.project_name == project_name)
-            .limit(1)
-        )
-        return session.scalar(stmt) is not None
-
     def get_project(
         self, session: Session, project_id: int, *, for_update: bool = False
     ) -> Project | None:
