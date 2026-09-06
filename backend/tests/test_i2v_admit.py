@@ -8,11 +8,30 @@ import pytest
 
 from windup_app.server.mq import i2v_admit as admit
 from windup_common.enums.model import ModelErrorType
+from windup_framework.config.provider import AIProviderSettings
 from windup_framework.gateway.context import bind_call_context
 from windup_framework.gateway.errors import RateLimitBackoff
+from windup_framework.gateway.pool_ids import credential_id
+from windup_framework.gateway.pool_registry import RoutableEdge, snapshot_from_settings
 from windup_framework.gateway.types import AdapterResult
 
 from test_gateway_video import FakeVideoAdapter, _video_gw
+
+
+def _test_edge(cred_id: str, *, index: int = 0, legacy: str = "") -> RoutableEdge:
+    return RoutableEdge(
+        route_id=cred_id,
+        credential_id=cred_id,
+        endpoint_id="primary",
+        account_id=cred_id,
+        route_group="character_action",
+        candidate_index=index,
+        provider_name="openai-compatible",
+        base_url="https://example.com/v1",
+        api_key="sk-test",
+        legacy_route_id=legacy or f"primary.key{index}",
+        selectable=True,
+    )
 
 
 class _MemRedis:
@@ -142,18 +161,19 @@ class _MemRedis:
 def _patch_redis(
     monkeypatch,
     mem: _MemRedis | None = None,
-    lanes: tuple[str, ...] = ("primary.key0",),
+    cred_ids: tuple[str, ...] = ("cred-a",),
 ) -> _MemRedis:
     mem = mem or _MemRedis()
+    edges = tuple(_test_edge(cred, index=i) for i, cred in enumerate(cred_ids))
     monkeypatch.setattr("windup_app.server.mq.i2v_admit.get_redis", lambda: mem)
-    monkeypatch.setattr("windup_app.server.mq.i2v_admit.lane_ids", lambda: lanes)
+    monkeypatch.setattr("windup_app.server.mq.i2v_admit._action_edges", lambda: edges)
     return mem
 
 
-def test_claimed_ids_unions_global_and_lane_sets(monkeypatch):
-    mem = _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+def test_claimed_ids_unions_global_cred_and_legacy_sets(monkeypatch):
+    mem = _patch_redis(monkeypatch, cred_ids=("cred-a", "cred-b"))
     mem.sadd("windup:i2v:gate:inflight", "632")
-    mem.sadd("windup:i2v:gate:inflight:primary.key0", "632")
+    mem.sadd("windup:i2v:gate:inflight:cred:cred-a", "632")
     mem.sadd("windup:i2v:gate:inflight:primary.key1", "710")
     assert admit.claimed_ids() == (632, 710)
 
@@ -192,7 +212,7 @@ def test_fallback_key_advances_route_skip(monkeypatch):
 
 
 def test_two_keys_spread_load_and_cap_each(monkeypatch):
-    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    _patch_redis(monkeypatch, cred_ids=("cred-a", "cred-b"))
     assert admit.try_acquire(1)
     assert admit.try_acquire(2)
     skip1, _ = admit.retry_state(1)
@@ -204,7 +224,7 @@ def test_two_keys_spread_load_and_cap_each(monkeypatch):
 
 
 def test_429_on_one_key_does_not_cool_the_other(monkeypatch):
-    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    _patch_redis(monkeypatch, cred_ids=("cred-a", "cred-b"))
     assert admit.try_acquire(1)
     assert admit.try_acquire(2)
     wait = admit.on_rate_limit(wait_s=8, fallback_key=False, task_id=1)
@@ -214,7 +234,7 @@ def test_429_on_one_key_does_not_cool_the_other(monkeypatch):
 
 
 def test_fallback_moves_claim_to_idle_key(monkeypatch):
-    _patch_redis(monkeypatch, lanes=("primary.key0", "primary.key1"))
+    _patch_redis(monkeypatch, cred_ids=("cred-a", "cred-b"))
     assert admit.try_acquire(1)
     skip_before, _ = admit.retry_state(1)
     wait = admit.on_rate_limit(wait_s=16, fallback_key=True, task_id=1)
@@ -223,6 +243,84 @@ def test_fallback_moves_claim_to_idle_key(monkeypatch):
     assert skip_after != skip_before
     assert retry == 0
     assert admit.can_submit(1)
+
+
+def test_insert_key_at_head_keeps_inflight_on_physical_credential(monkeypatch):
+    """配置头部插 key 后，已占坑任务仍绑原 credential，不戴到新钥匙上。"""
+    mem = _MemRedis()
+    original = (
+        _test_edge("cred-a", index=0, legacy="primary.key0"),
+        _test_edge("cred-b", index=1, legacy="primary.key1"),
+    )
+    monkeypatch.setattr("windup_app.server.mq.i2v_admit.get_redis", lambda: mem)
+    monkeypatch.setattr("windup_app.server.mq.i2v_admit._action_edges", lambda: original)
+    assert admit.try_acquire(1)
+    assert admit.try_acquire(2)
+    bound_one = admit.retry_state(1)
+    assert "1" in mem.sets["windup:i2v:gate:inflight:cred:cred-a"]
+    assert "2" in mem.sets["windup:i2v:gate:inflight:cred:cred-b"]
+
+    inserted = (
+        _test_edge("cred-new", index=0, legacy="primary.key0"),
+        _test_edge("cred-a", index=1, legacy="primary.key1"),
+        _test_edge("cred-b", index=2, legacy="primary.key2"),
+    )
+    monkeypatch.setattr("windup_app.server.mq.i2v_admit._action_edges", lambda: inserted)
+    assert admit.has_claim(1)
+    assert admit.try_acquire(1)
+    assert "1" in mem.sets["windup:i2v:gate:inflight:cred:cred-a"]
+    assert "1" not in mem.sets.get("windup:i2v:gate:inflight:cred:cred-new", set())
+    assert admit.retry_state(1) == bound_one
+
+
+def test_env_head_insert_keeps_claim_on_same_physical_key(monkeypatch):
+    mem = _MemRedis()
+    monkeypatch.setattr("windup_app.server.mq.i2v_admit.get_redis", lambda: mem)
+    first = snapshot_from_settings(
+        AIProviderSettings(
+            route_primary_name="primary",
+            route_primary_base_url="https://api.qnaigc.com/v1",
+            route_primary_api_key="key-a",
+            route_primary_api_keys="key-b",
+        ),
+        route_group="character_action",
+    )
+    monkeypatch.setattr(
+        "windup_app.server.mq.i2v_admit._action_edges", lambda: first.edges
+    )
+    assert admit.try_acquire(1)
+    cred_a = credential_id("primary", "key-a")
+    assert "1" in mem.sets[f"windup:i2v:gate:inflight:cred:{cred_a}"]
+
+    inserted = snapshot_from_settings(
+        AIProviderSettings(
+            route_primary_name="primary",
+            route_primary_base_url="https://api.qnaigc.com/v1",
+            route_primary_api_key="key-new",
+            route_primary_api_keys="key-a,key-b",
+        ),
+        route_group="character_action",
+    )
+    monkeypatch.setattr(
+        "windup_app.server.mq.i2v_admit._action_edges", lambda: inserted.edges
+    )
+    assert inserted.edges[0].credential_id != cred_a
+    assert admit.try_acquire(1)
+    assert "1" in mem.sets[f"windup:i2v:gate:inflight:cred:{cred_a}"]
+    cred_new = credential_id("primary", "key-new")
+    assert "1" not in mem.sets.get(
+        f"windup:i2v:gate:inflight:cred:{cred_new}", set()
+    )
+
+
+def test_legacy_primary_key_claim_migrates_to_credential(monkeypatch):
+    mem = _patch_redis(monkeypatch, cred_ids=("cred-a",))
+    mem.hashes["windup:i2v:gate:task:9"] = {"route_id": "primary.key0"}
+    mem.sadd("windup:i2v:gate:inflight", "9")
+    mem.sadd("windup:i2v:gate:inflight:primary.key0", "9")
+    assert admit.try_acquire(9)
+    assert "9" in mem.sets["windup:i2v:gate:inflight:cred:cred-a"]
+    assert "9" not in mem.sets.get("windup:i2v:gate:inflight:primary.key0", set())
 
 
 def test_rebuild_restores_job_holders(monkeypatch):
