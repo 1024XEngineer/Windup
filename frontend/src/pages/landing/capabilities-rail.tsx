@@ -70,7 +70,7 @@ export function CapabilitiesRail() {
       ref={sectionRef}
       id="capabilities"
       aria-labelledby="capabilities-heading"
-      className="relative isolate overflow-visible scroll-mt-28 border-b border-rule pt-16 [background:linear-gradient(180deg,light-dark(rgb(247_246_243/0.82),rgb(28_28_28/0.82)),light-dark(rgb(238_237_232/0.92),rgb(35_35_35/0.92))),light-dark(#f2f1ea,#1c1c1c)]"
+      className="relative isolate overflow-visible scroll-mt-28 border-b border-rule pt-16 [background:linear-gradient(180deg,light-dark(rgb(247_246_240/0.82),rgb(28_28_28/0.82)),light-dark(rgb(237_239_231/0.92),rgb(35_35_35/0.92))),light-dark(#f2f1ea,#1c1c1c)]"
     >
       <div
         className="pointer-events-none absolute inset-x-0 -top-48 z-0 h-[calc(100%+12rem)]"

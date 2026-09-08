@@ -265,7 +265,7 @@ export function CapabilityStory() {
       className="relative h-[calc(100vh_+_2500px)] motion-reduce:h-auto motion-reduce:min-h-[58rem]"
       style={capabilityStoryVariables}
     >
-      <div className="sticky top-[4.5rem] isolate h-[calc(100vh_-_4.5rem)] min-h-[43rem] overflow-hidden [background:radial-gradient(circle_at_16%_24%,light-dark(rgb(202_200_194/0.38),rgb(190_190_190/0.10)),transparent_24%),radial-gradient(circle_at_82%_78%,light-dark(rgb(202_198_189/0.3),rgb(180_180_180/0.08)),transparent_22%),var(--color-paper-sunken)] motion-reduce:relative motion-reduce:top-auto motion-reduce:h-[58rem]">
+      <div className="sticky top-[4.5rem] isolate h-[calc(100vh_-_4.5rem)] min-h-[43rem] overflow-hidden [background:radial-gradient(circle_at_16%_24%,light-dark(rgb(199_207_193/0.38),rgb(190_190_190/0.10)),transparent_24%),radial-gradient(circle_at_82%_78%,light-dark(rgb(204_196_178/0.3),rgb(180_180_180/0.08)),transparent_22%),var(--color-paper-sunken)] motion-reduce:relative motion-reduce:top-auto motion-reduce:h-[58rem]">
         <div
           aria-hidden="true"
           className="absolute inset-0 -z-10 opacity-[0.35] [background-image:radial-gradient(circle,light-dark(rgb(82_92_82/0.22),rgb(150_150_150/0.22))_0.7px,transparent_0.8px)] [background-size:24px_24px] [mask-image:linear-gradient(to_bottom,transparent,black_18%,black_82%,transparent)]"
@@ -513,11 +513,11 @@ export function LandingPage() {
       <main>
         <section
           aria-label="Windup 首屏"
-          className="relative isolate min-h-[100svh] overflow-hidden text-[light-dark(#252520,#e8e8e8)] [background:linear-gradient(180deg,light-dark(rgb(247_246_243/0.82),rgb(28_28_28/0.82)),light-dark(rgb(238_237_232/0.92),rgb(35_35_35/0.92))),light-dark(#f2f1ea,#1c1c1c)] sm:min-h-[180svh]"
+          className="relative isolate min-h-[100svh] overflow-hidden text-[light-dark(#252520,#e8e8e8)] [background:linear-gradient(180deg,light-dark(rgb(247_246_240/0.82),rgb(28_28_28/0.82)),light-dark(rgb(237_239_231/0.92),rgb(35_35_35/0.92))),light-dark(#f2f1ea,#1c1c1c)] sm:min-h-[180svh]"
         >
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 -z-10 [background:radial-gradient(circle_at_14%_58%,light-dark(rgb(202_200_194/0.34),rgb(190_190_190/0.10)),transparent_25%),radial-gradient(circle_at_88%_22%,light-dark(rgb(202_198_189/0.3),rgb(180_180_180/0.08)),transparent_23%)]"
+            className="pointer-events-none absolute inset-0 -z-10 [background:radial-gradient(circle_at_14%_58%,light-dark(rgb(199_207_193/0.34),rgb(190_190_190/0.10)),transparent_25%),radial-gradient(circle_at_88%_22%,light-dark(rgb(204_196_178/0.3),rgb(180_180_180/0.08)),transparent_23%)]"
           />
           <img
             src={gongbiBirdLeft}
