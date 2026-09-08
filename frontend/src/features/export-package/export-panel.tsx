@@ -224,18 +224,21 @@ function useCocosImportAction(
 function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImportAction> }) {
   if (action.state.status === 'working') {
     return (
-      <p role="status" className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800">
+      <p
+        role="status"
+        className="rounded-lg bg-sky-50 dark:bg-app-accent-muted px-3 py-2 text-xs text-sky-800 dark:text-app-ink-soft"
+      >
         {COCOS_PHASE_LABELS[action.state.phase]}
       </p>
     )
   }
   if (action.state.status === 'pairing') {
     return (
-      <div className="space-y-2 rounded-lg bg-sky-50 p-2">
-        <p role="alert" className="text-xs text-sky-900">
+      <div className="space-y-2 rounded-lg bg-sky-50 dark:bg-app-accent-muted p-2">
+        <p role="alert" className="text-xs text-sky-900 dark:text-app-ink">
           {action.state.message}
         </p>
-        <label className="block text-[11px] font-medium text-sky-900">
+        <label className="block text-[11px] font-medium text-sky-900 dark:text-app-ink">
           Creator 连接码
           <input
             aria-label="Creator 连接码"
@@ -243,13 +246,13 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
             maxLength={6}
             value={action.pairingCode}
             onChange={(event) => action.setPairingCode(event.target.value.replace(/\D/g, ''))}
-            className="mt-1 w-full rounded border border-sky-200 bg-white px-2 py-1 text-xs"
+            className="mt-1 w-full rounded border border-sky-200 dark:border-app-line bg-white dark:bg-app-surface-raised px-2 py-1 text-xs"
           />
         </label>
         <button
           type="button"
           onClick={() => void action.pairAndImport()}
-          className="w-full rounded bg-sky-700 px-2 py-1 text-xs font-semibold text-white"
+          className="w-full rounded bg-sky-700 dark:bg-app-accent px-2 py-1 text-xs font-semibold text-white dark:text-app-on-accent"
         >
           连接并导入
         </button>
@@ -291,7 +294,10 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
 function StateBanner({ state }: { state: ExportState }) {
   if (state.status === 'working') {
     return (
-      <p role="status" className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+      <p
+        role="status"
+        className="rounded-lg bg-slate-50 dark:bg-app-surface-muted px-3 py-2 text-xs text-slate-700 dark:text-app-ink-soft"
+      >
         {PHASE_LABELS[state.phase]}
       </p>
     )
@@ -478,27 +484,35 @@ export function ExportPanel({
     <section
       aria-label="资产导出"
       aria-busy={working || cocos.working || cocosImport.working}
-      className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+      className="space-y-4 rounded-xl border border-slate-200 dark:border-app-line bg-white dark:bg-app-surface-raised p-4 shadow-sm"
     >
       <header>
-        <p className="text-[10px] font-semibold tracking-[0.18em] text-slate-400">GAME ASSETS</p>
-        <h2 className="mt-1 text-sm font-semibold text-slate-900">资产导出</h2>
-        <p className="mt-1 text-[11px] text-slate-500">逐帧透明 PNG、Sprite Sheet 与动画 JSON</p>
+        <p className="text-[10px] font-semibold tracking-[0.18em] text-slate-400 dark:text-app-faint">
+          GAME ASSETS
+        </p>
+        <h2 className="mt-1 text-sm font-semibold text-slate-900 dark:text-app-ink">资产导出</h2>
+        <p className="mt-1 text-[11px] text-slate-500 dark:text-app-muted">
+          逐帧透明 PNG、Sprite Sheet 与动画 JSON
+        </p>
       </header>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
-        <dt className="text-slate-500">当前阶段</dt>
-        <dd className="font-medium text-slate-900">{STAGE_LABELS[model.stage]}</dd>
-        <dt className="text-slate-500">已确认首帧</dt>
-        <dd className="font-medium text-slate-900">{model.firstFrames.length} 张</dd>
-        <dt className="text-slate-500">动作方向</dt>
-        <dd className="font-medium text-slate-900">{plan.length} 组</dd>
-        <dt className="text-slate-500">逐帧原图</dt>
-        <dd className="font-medium text-slate-900">
+        <dt className="text-slate-500 dark:text-app-muted">当前阶段</dt>
+        <dd className="font-medium text-slate-900 dark:text-app-ink">
+          {STAGE_LABELS[model.stage]}
+        </dd>
+        <dt className="text-slate-500 dark:text-app-muted">已确认首帧</dt>
+        <dd className="font-medium text-slate-900 dark:text-app-ink">
+          {model.firstFrames.length} 张
+        </dd>
+        <dt className="text-slate-500 dark:text-app-muted">动作方向</dt>
+        <dd className="font-medium text-slate-900 dark:text-app-ink">{plan.length} 组</dd>
+        <dt className="text-slate-500 dark:text-app-muted">逐帧原图</dt>
+        <dd className="font-medium text-slate-900 dark:text-app-ink">
           {plan.reduce((total, item) => total + item.frames.length, 0)} 张
         </dd>
-        <dt className="text-slate-500">每行上限</dt>
-        <dd className="font-medium text-slate-900">8 帧</dd>
+        <dt className="text-slate-500 dark:text-app-muted">每行上限</dt>
+        <dd className="font-medium text-slate-900 dark:text-app-ink">8 帧</dd>
       </dl>
 
       {qualityIssueCount > 0 ? (
@@ -508,7 +522,10 @@ export function ExportPanel({
       ) : null}
 
       {state.status === 'working' ? (
-        <p role="status" className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+        <p
+          role="status"
+          className="rounded-lg bg-slate-50 dark:bg-app-surface-muted px-3 py-2 text-xs text-slate-700 dark:text-app-ink-soft"
+        >
           {PHASE_LABELS[state.phase]}
         </p>
       ) : state.status === 'failure' ? (
@@ -523,21 +540,25 @@ export function ExportPanel({
         type="button"
         disabled={working || cocos.working || cocosImport.working || qualityIssueCount > 0}
         onClick={() => void startExport()}
-        className="w-full rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
+        className="w-full rounded-lg bg-orange-500 dark:bg-app-accent px-3 py-2 text-xs font-semibold text-white dark:text-app-on-accent hover:bg-orange-600 dark:hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
       >
         {state.status === 'failure' ? '重新导出' : '导出游戏资产包'}
       </button>
-      {plan.length === 0 ? <p className="text-xs text-slate-500">当前包含角色母版</p> : null}
+      {plan.length === 0 ? (
+        <p className="text-xs text-slate-500 dark:text-app-muted">当前包含角色母版</p>
+      ) : null}
 
       {enableCocosExport ? (
-        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+        <div className="space-y-2 rounded-lg border border-amber-200 dark:border-app-warning-line bg-amber-50 dark:bg-app-warning-soft p-3">
           <div className="flex items-center gap-2">
-            <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-900">
+            <span className="rounded-full bg-amber-200 dark:bg-app-warning-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-900 dark:text-app-warning">
               一键导入
             </span>
-            <p className="text-xs font-semibold text-amber-900">Cocos Creator 3.8 适配</p>
+            <p className="text-xs font-semibold text-amber-900 dark:text-app-warning">
+              Cocos Creator 3.8 适配
+            </p>
           </div>
-          <p className="text-[11px] leading-4 text-amber-800">
+          <p className="text-[11px] leading-4 text-amber-800 dark:text-app-warning">
             首次安装并配对插件后，可直接写入当前 2D 工程并刷新 Prefab、动画和 SpriteFrame。
           </p>
           <CocosImportFeedback action={cocosImport} />
@@ -545,7 +566,7 @@ export function ExportPanel({
             type="button"
             disabled={working || cocos.working || cocosImport.working || qualityIssueCount > 0}
             onClick={() => void cocosImport.startImport()}
-            className="w-full rounded-lg bg-sky-700 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="w-full rounded-lg bg-sky-700 dark:bg-app-accent px-3 py-2 text-xs font-semibold text-white dark:text-app-on-accent hover:bg-sky-800 dark:hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
           >
             {cocosImport.state.status === 'failure' ? '重新导入 Cocos' : '一键导入 Cocos'}
           </button>
@@ -559,11 +580,11 @@ export function ExportPanel({
                 ? cocos.state.message
                 : '插件不可用时下载 Cocos 适配包'
             }
-            className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+            className="w-full rounded-lg border border-amber-300 dark:border-app-warning-line bg-white dark:bg-app-surface-raised px-3 py-2 text-xs font-semibold text-amber-900 dark:text-app-warning hover:bg-amber-100 dark:hover:bg-app-warning-soft disabled:cursor-not-allowed disabled:opacity-40"
           >
             {cocosButtonLabel}
           </button>
-          <p className="text-[10px] leading-4 text-amber-700">
+          <p className="text-[10px] leading-4 text-amber-700 dark:text-app-warning">
             首次使用需要在 Creator 中安装全局插件并输入连接码。
           </p>
         </div>
@@ -656,7 +677,7 @@ export function ExportButton({
             type="button"
             disabled={working || cocos.working || cocosImport.working}
             onClick={() => void cocosImport.startImport()}
-            className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-sky-500 px-3 py-2 text-xs font-semibold text-sky-800 disabled:opacity-50 ${className}`}
+            className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-sky-500 px-3 py-2 text-xs font-semibold text-sky-800 dark:text-app-ink-soft disabled:opacity-50 ${className}`}
           >
             {cocosImport.state.status === 'failure' ? '重新导入 Cocos' : '一键导入 Cocos'}
           </button>
@@ -670,7 +691,7 @@ export function ExportButton({
                 : '插件不可用时下载 Cocos 适配包'
             }
             onClick={() => void cocos.startExport()}
-            className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-amber-400 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-50 ${className}`}
+            className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-amber-400 dark:border-app-warning-line px-3 py-2 text-xs font-semibold text-amber-800 dark:text-app-warning disabled:opacity-50 ${className}`}
           >
             {cocos.state.status === 'working'
               ? PHASE_LABELS[cocos.state.phase]
