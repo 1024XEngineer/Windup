@@ -686,7 +686,7 @@ function AccountPanelDialog({
           onClick={close}
           disabled={isExiting}
           aria-label="关闭账号面板"
-          className="auth-screen-close fixed z-[3] grid size-11 place-items-center rounded-full border border-transparent text-2xl leading-none text-[#777770]"
+          className="auth-screen-close fixed z-[3] grid size-11 place-items-center rounded-full border border-transparent text-2xl leading-none text-app-muted"
         >
           <X {...AUTH_ICON_PROPS} />
         </button>
@@ -814,7 +814,7 @@ function AccountPanelDialog({
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="auth-screen-submit px-4 text-white disabled:cursor-not-allowed"
+                className="auth-screen-submit px-4 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? '正在设置…' : '设置密码'}
               </button>
@@ -906,7 +906,7 @@ function AccountPanelDialog({
               <button
                 type="submit"
                 disabled={isSubmitting || isSendingCode}
-                className="auth-screen-submit px-4 text-white disabled:cursor-not-allowed"
+                className="auth-screen-submit px-4 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? '正在重置…' : '重置密码'}
               </button>
@@ -1079,7 +1079,7 @@ function AccountPanelDialog({
               <button
                 type="submit"
                 disabled={isSubmitting || isSendingCode}
-                className="auth-screen-submit px-4 text-white disabled:cursor-not-allowed"
+                className="auth-screen-submit px-4 disabled:cursor-not-allowed"
               >
                 <span key={submitContent} className="auth-submit-label">
                   {Array.from(submitContent).map((character, index) => (
