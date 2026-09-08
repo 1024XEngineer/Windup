@@ -20,7 +20,7 @@ const renderToolbar: NonNullable<PlaytestPageProps['renderToolbar']> = ({
       <ExportButton
         model={model}
         enableCocosExport
-        className="border-[#294433] bg-[#294433] text-white hover:bg-[#203828]"
+        className="border-[light-dark(#30302c,#d7d7d7)] bg-[light-dark(#30302c,#d7d7d7)] text-app-on-accent hover:bg-[light-dark(#474640,#eeeeee)]"
       />
     )
   } catch {
