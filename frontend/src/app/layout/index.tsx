@@ -40,7 +40,7 @@ export function AppShell({ children }: AppShellProps) {
 /** 公开页面外壳只提供认证面板与会话提醒，宣传导航由 LandingPage 自己组合。 */
 export function MarketingShell({ children }: AppShellProps) {
   return (
-    <div className="min-h-[100dvh] overflow-x-clip bg-[light-dark(#f7f6f3,#191919)] text-[light-dark(#252522,#e8e8e8)]">
+    <div className="min-h-[100dvh] overflow-x-clip bg-paper text-ink">
       <RouteMotionSurface>{children}</RouteMotionSurface>
       <AccountPanel />
       <SessionExpiredNotice />

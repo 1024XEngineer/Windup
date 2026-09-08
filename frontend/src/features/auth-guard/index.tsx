@@ -47,7 +47,7 @@ export function SessionExpiredNotice() {
       {!accountPanelOpen && (
         <Link
           to={`/?${accountSearch}`}
-          className="inline-flex min-h-11 shrink-0 items-center rounded-lg px-2 font-semibold text-[light-dark(#30302c,#d7d7d7)] underline decoration-[light-dark(#aaa79f,#747474)] underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[light-dark(#30302c,#d7d7d7)]"
+          className="inline-flex min-h-11 shrink-0 items-center rounded-lg px-2 font-semibold text-app-accent underline decoration-app-line-strong underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
         >
           重新登录
         </Link>
