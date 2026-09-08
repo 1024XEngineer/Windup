@@ -44,7 +44,7 @@ html:has(.landing-page) {
 }
 
 .landing-hero-stage {
-  background: #e9e7df;
+  background: light-dark(#e9e7df, #232323);
 }
 .landing-hero-rays {
   background:

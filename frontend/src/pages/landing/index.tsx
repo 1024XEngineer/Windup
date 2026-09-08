@@ -78,13 +78,13 @@ const riseClassName =
   'motion-safe:animate-[landing-rise_560ms_cubic-bezier(0.16,1,0.3,1)_both] motion-reduce:animate-none'
 
 const floatingCardClassName =
-  'absolute top-1/2 left-1/2 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] origin-center will-change-[transform,opacity]'
+  'absolute top-1/2 left-1/2 overflow-hidden rounded-xl border border-[light-dark(#dedfda,#404040)] bg-app-surface-raised shadow-[0_18px_48px_rgb(45_48_44/0.08)] origin-center will-change-[transform,opacity]'
 
 const capabilitySceneClassName =
-  'absolute inset-0 flex min-w-0 flex-col overflow-hidden rounded-[inherit] bg-white will-change-[opacity,transform]'
+  'absolute inset-0 flex min-w-0 flex-col overflow-hidden rounded-[inherit] bg-app-surface-raised will-change-[opacity,transform]'
 
 const capabilityMediaNoteClassName =
-  'absolute bottom-5 left-5 text-[0.64rem] tracking-[0.01em] text-[#a1a39e]'
+  'absolute bottom-5 left-5 text-[0.64rem] tracking-[0.01em] text-[light-dark(#a1a39e,#adadad)]'
 
 const capabilityStoryVariables = {
   '--asset-opacity': 0,
@@ -163,19 +163,19 @@ export function StaticCapabilityStory() {
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
         <article
           data-floating-artifact
-          className="absolute top-[19%] left-[1%] h-36 w-52 -rotate-4 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-4rem]"
+          className="absolute top-[19%] left-[1%] h-36 w-52 -rotate-4 overflow-hidden rounded-xl border border-[light-dark(#dedfda,#404040)] bg-app-surface-raised shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-4rem]"
         />
         <article
           data-floating-artifact
-          className="absolute top-[16%] right-[6%] h-40 w-44 rotate-3 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]"
+          className="absolute top-[16%] right-[6%] h-40 w-44 rotate-3 overflow-hidden rounded-xl border border-[light-dark(#dedfda,#404040)] bg-app-surface-raised shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]"
         />
         <article
           data-floating-artifact
-          className="absolute bottom-[8%] left-[8%] h-28 w-72 rotate-2 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-3rem]"
+          className="absolute bottom-[8%] left-[8%] h-28 w-72 rotate-2 overflow-hidden rounded-xl border border-[light-dark(#dedfda,#404040)] bg-app-surface-raised shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:left-[-3rem]"
         />
         <article
           data-floating-artifact
-          className="absolute right-[7%] bottom-[12%] h-32 w-56 -rotate-3 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]"
+          className="absolute right-[7%] bottom-[12%] h-32 w-56 -rotate-3 overflow-hidden rounded-xl border border-[light-dark(#dedfda,#404040)] bg-app-surface-raised shadow-[0_18px_48px_rgb(45_48_44/0.08)] max-lg:right-[-2rem]"
         />
       </div>
     </div>
@@ -265,10 +265,10 @@ export function CapabilityStory() {
       className="relative h-[calc(100vh_+_2500px)] motion-reduce:h-auto motion-reduce:min-h-[58rem]"
       style={capabilityStoryVariables}
     >
-      <div className="sticky top-[4.5rem] isolate h-[calc(100vh_-_4.5rem)] min-h-[43rem] overflow-hidden [background:radial-gradient(circle_at_16%_24%,rgb(201_207_194/0.38),transparent_24%),radial-gradient(circle_at_82%_78%,rgb(205_195_178/0.3),transparent_22%),var(--color-paper-sunken)] motion-reduce:relative motion-reduce:top-auto motion-reduce:h-[58rem]">
+      <div className="sticky top-[4.5rem] isolate h-[calc(100vh_-_4.5rem)] min-h-[43rem] overflow-hidden [background:radial-gradient(circle_at_16%_24%,light-dark(rgb(202_200_194/0.38),rgb(190_190_190/0.10)),transparent_24%),radial-gradient(circle_at_82%_78%,light-dark(rgb(202_198_189/0.3),rgb(180_180_180/0.08)),transparent_22%),var(--color-paper-sunken)] motion-reduce:relative motion-reduce:top-auto motion-reduce:h-[58rem]">
         <div
           aria-hidden="true"
-          className="absolute inset-0 -z-10 opacity-[0.35] [background-image:radial-gradient(circle,rgb(82_92_82/0.22)_0.7px,transparent_0.8px)] [background-size:24px_24px] [mask-image:linear-gradient(to_bottom,transparent,black_18%,black_82%,transparent)]"
+          className="absolute inset-0 -z-10 opacity-[0.35] [background-image:radial-gradient(circle,light-dark(rgb(82_92_82/0.22),rgb(150_150_150/0.22))_0.7px,transparent_0.8px)] [background-size:24px_24px] [mask-image:linear-gradient(to_bottom,transparent,black_18%,black_82%,transparent)]"
         />
 
         <header className="absolute top-[47%] left-1/2 z-[4] w-[min(90vw,64rem)] origin-center [transform:translate(-50%,-50%)_translateY(var(--story-copy-y))_scale(var(--story-copy-scale))] text-center will-change-transform motion-reduce:top-32 motion-reduce:[transform:translateX(-50%)]">
@@ -298,7 +298,7 @@ export function CapabilityStory() {
             data-rotate="-4"
             className={`${floatingCardClassName} h-36 w-52`}
           >
-            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
+            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[light-dark(#9b9e98,#adadad)]">
               角色档案素材待接入
             </p>
           </article>
@@ -309,7 +309,7 @@ export function CapabilityStory() {
             data-rotate="3"
             className={`${floatingCardClassName} h-40 w-44`}
           >
-            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
+            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[light-dark(#9b9e98,#adadad)]">
               角色母版素材待接入
             </p>
           </article>
@@ -320,7 +320,7 @@ export function CapabilityStory() {
             data-rotate="2"
             className={`${floatingCardClassName} h-28 w-72`}
           >
-            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
+            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[light-dark(#9b9e98,#adadad)]">
               动作序列素材待接入
             </p>
           </article>
@@ -331,32 +331,34 @@ export function CapabilityStory() {
             data-rotate="-3"
             className={`${floatingCardClassName} h-32 w-56`}
           >
-            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
+            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[light-dark(#9b9e98,#adadad)]">
               预览台画面待接入
             </p>
           </article>
         </div>
 
-        <div className="absolute top-[61%] left-1/2 z-[3] h-[min(50vh,32rem)] min-h-[27rem] w-[min(72vw,68rem)] origin-center overflow-hidden rounded-xl bg-white [opacity:var(--story-stage-opacity)] [transform:translate(-50%,-50%)_translateY(var(--story-stage-y))_scale(var(--story-stage-scale))] will-change-[transform,opacity] motion-reduce:opacity-100 motion-reduce:[transform:translate(-50%,-50%)]">
+        <div className="absolute top-[61%] left-1/2 z-[3] h-[min(50vh,32rem)] min-h-[27rem] w-[min(72vw,68rem)] origin-center overflow-hidden rounded-xl bg-app-surface-raised [opacity:var(--story-stage-opacity)] [transform:translate(-50%,-50%)_translateY(var(--story-stage-y))_scale(var(--story-stage-scale))] will-change-[transform,opacity] motion-reduce:opacity-100 motion-reduce:[transform:translate(-50%,-50%)]">
           <AssetLibraryScene />
           <PlayTestScene />
           <WorkflowCanvasScene />
         </div>
 
         <ol
-          className="absolute right-12 bottom-8 left-12 z-[5] grid grid-cols-3 border-t border-[rgb(89_98_89/0.24)]"
+          className="absolute right-12 bottom-8 left-12 z-[5] grid grid-cols-3 border-t border-[light-dark(rgb(89_98_89/0.24),rgb(150_150_150/0.24))]"
           aria-label="角色经过 Windup 的三个阶段"
         >
           {productCapabilities.map((capability, index) => (
             <li
               key={capability.title}
               className={`relative flex gap-[0.7rem] pt-[0.8rem] text-[0.7rem] transition-colors duration-[180ms] ease-out ${
-                index === activeIndex ? 'text-[#273028]' : 'text-[#777e76]'
+                index === activeIndex
+                  ? 'text-[light-dark(#273028,#e8e8e8)]'
+                  : 'text-[light-dark(#777e76,#adadad)]'
               }`}
             >
               <span
                 aria-hidden="true"
-                className={`absolute -top-px inset-x-0 h-px origin-left bg-[#555b54] [transition:opacity_180ms_ease-out,transform_260ms_cubic-bezier(0.16,1,0.3,1)] ${
+                className={`absolute -top-px inset-x-0 h-px origin-left bg-[light-dark(#555b54,#aaaaaa)] [transition:opacity_180ms_ease-out,transform_260ms_cubic-bezier(0.16,1,0.3,1)] ${
                   index === activeIndex ? 'scale-x-100 opacity-100' : 'scale-x-0 opacity-0'
                 }`}
               />
@@ -405,12 +407,12 @@ export function StyleGenerationShowcase() {
           onMouseLeave={() => setIsPaused(false)}
         >
           <div
-            className="relative aspect-[1.32] overflow-hidden rounded-xl bg-white"
+            className="relative aspect-[1.32] overflow-hidden rounded-xl bg-app-surface-raised"
             aria-label={`${activeItem.title}素材展示位`}
           >
             <p
               key={activeItem.title}
-              className="absolute bottom-5 left-5 text-[0.64rem] tracking-[0.01em] text-[#a1a39e] motion-safe:animate-[capability-copy-in_220ms_cubic-bezier(0,0,0.2,1)_both]"
+              className="absolute bottom-5 left-5 text-[0.64rem] tracking-[0.01em] text-[light-dark(#a1a39e,#adadad)] motion-safe:animate-[capability-copy-in_220ms_cubic-bezier(0,0,0.2,1)_both]"
             >
               {activeItem.placeholder}
             </p>
@@ -511,11 +513,11 @@ export function LandingPage() {
       <main>
         <section
           aria-label="Windup 首屏"
-          className="relative isolate min-h-[100svh] overflow-hidden text-[#252520] [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea] sm:min-h-[180svh]"
+          className="relative isolate min-h-[100svh] overflow-hidden text-[light-dark(#252520,#e8e8e8)] [background:linear-gradient(180deg,light-dark(rgb(247_246_243/0.82),rgb(28_28_28/0.82)),light-dark(rgb(238_237_232/0.92),rgb(35_35_35/0.92))),light-dark(#f2f1ea,#1c1c1c)] sm:min-h-[180svh]"
         >
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 -z-10 [background:radial-gradient(circle_at_14%_58%,rgb(199_207_193/0.34),transparent_25%),radial-gradient(circle_at_88%_22%,rgb(204_196_178/0.3),transparent_23%)]"
+            className="pointer-events-none absolute inset-0 -z-10 [background:radial-gradient(circle_at_14%_58%,light-dark(rgb(202_200_194/0.34),rgb(190_190_190/0.10)),transparent_25%),radial-gradient(circle_at_88%_22%,light-dark(rgb(202_198_189/0.3),rgb(180_180_180/0.08)),transparent_23%)]"
           />
           <img
             src={gongbiBirdLeft}
@@ -540,27 +542,27 @@ export function LandingPage() {
 
           <div className="relative z-10 mx-auto flex w-full max-w-[82rem] flex-col items-center px-4 pt-40 text-center sm:px-12 sm:pt-40">
             <p
-              className={`${riseClassName} mx-auto w-full text-[0.875rem] leading-6 font-medium tracking-[0.04em] text-[#696861]`}
+              className={`${riseClassName} mx-auto w-full text-[0.875rem] leading-6 font-medium tracking-[0.04em] text-[light-dark(#696861,#adadad)]`}
               style={riseDelay(0)}
             >
               从角色设定到可玩的 2D 动作资产
             </p>
             <h1
-              className={`${riseClassName} mx-auto mt-5 w-full max-w-[12em] font-serif text-[clamp(3rem,13vw,5.25rem)] leading-[1.08] font-semibold tracking-[-0.055em] text-[#23231f] sm:max-w-[11em] sm:text-[clamp(4rem,5.5vw,5.25rem)] sm:leading-[1.12]`}
+              className={`${riseClassName} mx-auto mt-5 w-full max-w-[12em] font-serif text-[clamp(3rem,13vw,5.25rem)] leading-[1.08] font-semibold tracking-[-0.055em] text-[light-dark(#23231f,#e8e8e8)] sm:max-w-[11em] sm:text-[clamp(4rem,5.5vw,5.25rem)] sm:leading-[1.12]`}
               style={riseDelay(1)}
             >
               <span className="block">让你的角色，</span>
               <span className="block">真正登场。</span>
             </h1>
             <p
-              className={`${riseClassName} mx-auto mt-6 w-full max-w-[31rem] text-[1rem] leading-7 text-[#5d5c56] sm:text-[1.0625rem] sm:leading-8`}
+              className={`${riseClassName} mx-auto mt-6 w-full max-w-[31rem] text-[1rem] leading-7 text-[light-dark(#5d5c56,#b6b6b6)] sm:text-[1.0625rem] sm:leading-8`}
               style={riseDelay(2)}
             >
               用一条可审核的工作流，生成并管理保持一致的 2D 角色动作。
             </p>
             <Link
               to={startPath}
-              className={`${riseClassName} mx-auto mt-8 inline-flex min-h-12 items-center justify-center rounded-lg bg-[#252520] px-7 text-[0.9375rem] font-medium whitespace-nowrap text-[#f7f5ee] transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-[#3a3b36] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#3a3b36] active:translate-y-px`}
+              className={`${riseClassName} mx-auto mt-8 inline-flex min-h-12 items-center justify-center rounded-lg bg-[light-dark(#252520,#e8e8e8)] px-7 text-[0.9375rem] font-medium whitespace-nowrap text-[light-dark(#f7f5ee,#202020)] transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-[light-dark(#3a3b36,#eeeeee)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[light-dark(#3a3b36,#eeeeee)] active:translate-y-px`}
               style={riseDelay(3)}
             >
               开始创作
@@ -573,7 +575,7 @@ export function LandingPage() {
           >
             <div
               data-testid="workflow-editor-placeholder"
-              className="landing-hero-product-window__surface relative aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
+              className="landing-hero-product-window__surface relative aspect-[2/1] overflow-hidden rounded-2xl border border-[light-dark(#c9c8c0,#404040)] bg-[light-dark(#f9f8f3,#282828)] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
             >
               <HeroDitherBackground />
             </div>
