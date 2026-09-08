@@ -481,9 +481,9 @@ describe('AppHeader', () => {
 
     const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
     expect(accountMenu.textContent).toContain('reader@example.com')
-    expect(within(accountMenu).getByTestId('default-account-avatar').getAttribute('src')).toBe(
-      '/windup-mark.svg',
-    )
+    expect(
+      within(accountMenu).getByTestId('default-account-avatar').getAttribute('aria-hidden'),
+    ).toBe('true')
   })
 
   it('账号菜单在点击外部或按 Escape 时关闭', async () => {
