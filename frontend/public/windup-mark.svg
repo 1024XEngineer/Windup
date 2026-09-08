@@ -2,7 +2,7 @@
   <title id="title">Windup</title>
   <desc id="description">侧视机械小鸟标志</desc>
   <style>
-    .mark-fill { fill: #252522; }
+    .mark-fill { fill: #191b18; }
     @media (prefers-color-scheme: dark) {
       .mark-fill { fill: #e8e8e8; }
     }
@@ -18,5 +18,5 @@
       <path d="m53 160-21 22M67 168l-25 20" fill="none" stroke="#000" stroke-width="5" stroke-linecap="round"/>
     </mask>
   </defs>
-  <rect class="mark-fill" width="256" height="256" fill="#252522" mask="url(#bird)"/>
+  <rect class="mark-fill" width="256" height="256" fill="#191b18" mask="url(#bird)"/>
 </svg>
