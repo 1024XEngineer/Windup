@@ -75,17 +75,17 @@ export function PlaytestStage({ frame, x, y, mirrorX, onBoundsChange }: Playtest
         aria-hidden="true"
         className="absolute inset-0 opacity-45"
         style={{
-          backgroundImage: 'radial-gradient(light-dark(#c3c0b8,#606060) 1px, transparent 1px)',
+          backgroundImage: 'radial-gradient(light-dark(#bfc3c0,#606060) 1px, transparent 1px)',
           backgroundSize: '20px 20px',
         }}
       />
       <div
         aria-hidden="true"
-        className="absolute inset-x-0 top-1/2 h-px bg-[light-dark(#a29f97,#747474)]/45"
+        className="absolute inset-x-0 top-1/2 h-px bg-[light-dark(#989e99,#747474)]/45"
       />
 
       {frame === null ? (
-        <p className="absolute inset-0 grid place-items-center text-xs tracking-[0.16em] text-[light-dark(#74726c,#adadad)]">
+        <p className="absolute inset-0 grid place-items-center text-xs tracking-[0.16em] text-[light-dark(#6f746f,#adadad)]">
           暂无可播放帧
         </p>
       ) : frameFailed ? (
