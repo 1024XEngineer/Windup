@@ -197,38 +197,38 @@ body,
   --radius-app-control: 0.75rem;
   --radius-app-surface: 1rem;
 
-  --color-paper: #f5f5f2;
-  --color-paper-raised: #fbfbfa;
-  --color-paper-sunken: #e9eae4;
-  --color-ink: #1c231e;
-  --color-ink-muted: #545a51;
+  --color-paper: #f7f6f3;
+  --color-paper-raised: #fdfcf9;
+  --color-paper-sunken: #eeede8;
+  --color-ink: #252522;
+  --color-ink-muted: #62615b;
   /* 4.7:1，正文级别可用；再浅就只剩装饰用途了。 */
-  --color-ink-faint: #6f746c;
-  --color-rule: #d8d9d2;
-  --color-accent: #284331;
-  --color-accent-deep: #1b2f22;
-  --color-spark: #555b54;
+  --color-ink-faint: #74726c;
+  --color-rule: #d9d7d1;
+  --color-accent: #30302c;
+  --color-accent-deep: #474640;
+  --color-spark: #69675f;
 
   /*
    * 登录后产品界面的共享色彩语义。页面只选择角色，不选择具体色值：这样工作台、
    * 项目资产、创作与预览台共享同一层级，错误/警告/信息仍保留各自含义。
    */
-  --color-app-canvas: #f3f2ec;
-  --color-app-surface: #f7f8f4;
+  --color-app-canvas: #f5f4f0;
+  --color-app-surface: #faf9f6;
   --color-app-surface-raised: #ffffff;
-  --color-app-surface-muted: #e7eae5;
-  --color-app-surface-strong: #dfe3df;
-  --color-app-ink: #1d251f;
-  --color-app-ink-soft: #303a32;
-  --color-app-muted: #687169;
-  --color-app-faint: #778078;
-  --color-app-line: #cbd1ca;
-  --color-app-line-strong: #8fa092;
-  --color-app-accent: #284331;
-  --color-app-accent-hover: #1f3828;
-  --color-app-accent-soft: #dce9df;
-  --color-app-accent-muted: #edf2ec;
-  --color-app-on-accent: #f7f8f4;
+  --color-app-surface-muted: #eeede9;
+  --color-app-surface-strong: #e5e4df;
+  --color-app-ink: #252522;
+  --color-app-ink-soft: #3c3b38;
+  --color-app-muted: #6e6c66;
+  --color-app-faint: #797770;
+  --color-app-line: #d9d7d1;
+  --color-app-line-strong: #aaa79f;
+  --color-app-accent: #30302c;
+  --color-app-accent-hover: #474640;
+  --color-app-accent-soft: #e7e6e1;
+  --color-app-accent-muted: #f0efeb;
+  --color-app-on-accent: #faf9f6;
   --color-app-danger: #6f3928;
   --color-app-danger-hover: #593022;
   --color-app-danger-muted: #7a5548;
