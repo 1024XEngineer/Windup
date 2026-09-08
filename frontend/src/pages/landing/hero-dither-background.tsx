@@ -1,6 +1,9 @@
 import { GodRays, PaperTexture } from '@paper-design/shaders-react'
 
+import { useColorScheme } from '@/shared/hooks'
+
 export function HeroDitherBackground() {
+  const dark = useColorScheme() === 'dark'
   const shaderReady = typeof window !== 'undefined' && typeof WebGLRenderingContext !== 'undefined'
 
   return (
@@ -10,9 +13,13 @@ export function HeroDitherBackground() {
           <GodRays
             className="absolute inset-0 h-full w-full"
             maxPixelCount={1280 * 720}
-            colorBack="#d1d0ca"
-            colorBloom="#fff2d2"
-            colors={['#fff7ddb8', '#dddcd5a3', '#fffdf2a8']}
+            colorBack={dark ? '#1e1e1e' : '#d1d0ca'}
+            colorBloom={dark ? '#717171' : '#fff2d2'}
+            colors={
+              dark
+                ? ['#5a5a5ab8', '#414141a3', '#686868a8']
+                : ['#fff7ddb8', '#dddcd5a3', '#fffdf2a8']
+            }
             bloom={0.66}
             intensity={0.72}
             density={0.07}
@@ -28,8 +35,8 @@ export function HeroDitherBackground() {
           <PaperTexture
             className="absolute inset-0 h-full w-full opacity-40"
             maxPixelCount={768 * 432}
-            colorFront="#b7b3a5"
-            colorBack="#f5f1e6"
+            colorFront={dark ? '#686868' : '#b7b3a5'}
+            colorBack={dark ? '#232323' : '#f5f1e6'}
             contrast={0.22}
             roughness={0.42}
             fiber={0.2}
