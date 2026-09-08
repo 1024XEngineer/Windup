@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
-import { AssetPreviewCard, AssetThumbnailImage } from './asset-preview-card'
+import { AssetPreviewCard, AssetPreviewSurface, AssetThumbnailImage } from './asset-preview-card'
 
 afterEach(cleanup)
 
@@ -201,5 +201,42 @@ describe('AssetThumbnailImage', () => {
     expect(screen.getByRole('img', { name: '造型缩略图' }).getAttribute('src')).toBe(
       'https://cdn.windup.test/media/outfit-preview/outfit-2.card.webp',
     )
+  })
+})
+
+describe('unavailable preview images', () => {
+  it('replaces a failed source with a status and retries a different URL', () => {
+    const { rerender } = render(
+      <AssetPreviewSurface previewUrl="https://media.windup.test/old.png" previewAlt="角色预览" />,
+    )
+    fireEvent.error(screen.getByRole('img', { name: '角色预览' }))
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('无法加载')
+    rerender(
+      <AssetPreviewSurface
+        previewUrl="https://storage.windup.test/new.png"
+        previewAlt="角色预览"
+      />,
+    )
+    expect(screen.getByRole('img').getAttribute('src')).toBe('https://storage.windup.test/new.png')
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('tries the original after thumbnail failure before showing unavailable', () => {
+    render(
+      <AssetPreviewSurface
+        previewUrl="https://media.windup.test/media/outfit-preview/old.source.png"
+        previewAlt="角色预览"
+        thumbnail
+      />,
+    )
+    fireEvent.error(screen.getByRole('img'))
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('img').getAttribute('src')).toBe(
+      'https://media.windup.test/media/outfit-preview/old.source.png',
+    )
+    fireEvent.error(screen.getByRole('img'))
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.getByRole('status')).toBeTruthy()
   })
 })
