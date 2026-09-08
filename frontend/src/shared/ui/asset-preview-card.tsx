@@ -73,14 +73,22 @@ export function AssetPreviewSurface({
   className = '',
   thumbnail = false,
 }: AssetPreviewSurfaceProps) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const unavailable = !!previewUrl && failedUrl === previewUrl
+  const handleError: ImgHTMLAttributes<HTMLImageElement>['onError'] = (event) => {
+    // 缩略图失败仍要尝试原图；只有原图也失败才显示缺图状态。
+    if (event.currentTarget.getAttribute('src') === previewUrl) setFailedUrl(previewUrl)
+  }
+
   return (
     <div
       className={`relative overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-muted ${className}`}
     >
-      {previewUrl ? (
+      {previewUrl && !unavailable ? (
         thumbnail ? (
           <AssetThumbnailImage
             src={previewUrl}
+            onError={handleError}
             alt={previewAlt}
             loading={eager ? 'eager' : 'lazy'}
             decoding="async"
@@ -90,6 +98,7 @@ export function AssetPreviewSurface({
         ) : (
           <img
             src={previewUrl}
+            onError={handleError}
             alt={previewAlt}
             loading={eager ? 'eager' : 'lazy'}
             decoding="async"
@@ -98,7 +107,10 @@ export function AssetPreviewSurface({
           />
         )
       ) : (
-        <div className="relative h-full overflow-hidden bg-app-surface-muted">
+        <div
+          role={unavailable ? 'status' : undefined}
+          className="relative h-full overflow-hidden bg-app-surface-muted"
+        >
           <div
             aria-hidden="true"
             className="absolute inset-0 opacity-55"
@@ -110,7 +122,7 @@ export function AssetPreviewSurface({
             }}
           />
           <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-app-surface/85 px-2 py-1 font-mono text-[10px] tracking-[0.06em] whitespace-nowrap text-app-faint backdrop-blur-sm">
-            暂无造型预览
+            {unavailable ? '预览图片暂时无法加载' : '暂无造型预览'}
           </span>
         </div>
       )}
