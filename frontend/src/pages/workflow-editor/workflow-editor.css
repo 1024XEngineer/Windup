@@ -18,6 +18,17 @@
 
 /* ── 以下都是 React Flow 内部节点，只能靠选择器覆盖 ───────────────────── */
 
+.workflow-editor-canvas .react-flow {
+  --xy-attribution-background-color: var(--color-app-surface-muted);
+  --xy-controls-button-color: var(--color-app-ink);
+  --xy-selection-background-color: color-mix(in srgb, var(--color-app-accent) 8%, transparent);
+  --xy-selection-border: 1px dotted var(--color-app-accent);
+}
+
+.workflow-editor-canvas .react-flow__attribution a {
+  color: var(--color-app-muted);
+}
+
 .workflow-editor-canvas .react-flow__controls {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--color-app-ink) 12%, transparent);

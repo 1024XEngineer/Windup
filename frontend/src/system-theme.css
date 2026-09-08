@@ -1,0 +1,68 @@
+:root {
+  /* 从首帧跟随系统，原生控件与应用使用同一外观。 */
+  color-scheme: light dark;
+  background: var(--color-app-canvas);
+  color: var(--color-app-ink);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: #1c1c1c;
+    --color-paper-raised: #282828;
+    --color-paper-sunken: #232323;
+    --color-ink: #e7e7e7;
+    --color-ink-muted: #b6b6b6;
+    --color-ink-faint: #a0a0a0;
+    --color-rule: #414141;
+    --color-accent: #d7d7d7;
+    --color-accent-deep: #eeeeee;
+    --color-spark: #aaaaaa;
+    --color-app-canvas: #191919;
+    --color-app-surface: #242424;
+    --color-app-surface-raised: #2d2d2d;
+    --color-app-surface-muted: #202020;
+    --color-app-surface-strong: #383838;
+    --color-app-ink: #e8e8e8;
+    --color-app-ink-soft: #cecece;
+    --color-app-muted: #adadad;
+    --color-app-faint: #9d9d9d;
+    --color-app-line: #404040;
+    --color-app-line-strong: #747474;
+    --color-app-accent: #d7d7d7;
+    --color-app-accent-hover: #eeeeee;
+    --color-app-accent-soft: #3b3b3b;
+    --color-app-accent-muted: #2b2b2b;
+    --color-app-on-accent: #202020;
+    --color-app-danger: #e4ab94;
+    --color-app-danger-hover: #f0c4b0;
+    --color-app-danger-muted: #c9a494;
+    --color-app-danger-line: #785044;
+    --color-app-danger-soft: #372822;
+    --color-app-warning: #d8bf8b;
+    --color-app-warning-line: #827044;
+    --color-app-warning-soft: #332f23;
+    --color-app-info: #a2c5ed;
+    --color-app-info-hover: #c0d9f4;
+    --shadow-app-card: 0 18px 45px rgb(0 0 0 / 9%);
+    --shadow-app-panel: 0 22px 60px rgb(0 0 0 / 12%);
+    --shadow-app-composer-focus: 0 18px 48px rgb(0 0 0 / 14%);
+    --shadow-app-page: 0 26px 80px rgb(0 0 0 / 10%);
+    --shadow-app-header: inset 0 1px 0 rgb(255 255 255 / 5%);
+    --shadow-app-menu: 0 8px 24px rgb(0 0 0 / 10%);
+    --shadow-app-stage-panel: 0 12px 32px rgb(0 0 0 / 18%);
+    --shadow-app-float: 0 16px 40px rgb(0 0 0 / 24%);
+    --shadow-app-pulse: 0 0 0 16px rgb(215 215 215 / 5%);
+  }
+
+  .project-preview-message span {
+    background: rgb(36 36 36 / 88%);
+  }
+
+  .project-preview-message-error {
+    background: linear-gradient(
+      145deg,
+      var(--color-app-surface-muted),
+      var(--color-app-danger-soft)
+    );
+  }
+}

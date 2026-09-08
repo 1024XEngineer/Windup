@@ -41,13 +41,13 @@ export function SessionExpiredNotice() {
   return (
     <aside
       role="alert"
-      className="fixed right-4 bottom-4 z-[80] flex max-w-[min(24rem,calc(100vw-2rem))] items-center gap-3 rounded-xl border border-[#8a5a4d]/25 bg-[#fff8f4] px-4 py-3 text-sm text-[#6f352b] shadow-[0_14px_36px_rgba(46,30,24,0.18)]"
+      className="fixed right-4 bottom-4 z-[80] flex max-w-[min(24rem,calc(100vw-2rem))] items-center gap-3 rounded-xl border border-[light-dark(#8a5a4d,#c9a494)]/25 bg-[light-dark(#fff8f4,#372822)] px-4 py-3 text-sm text-[light-dark(#6f352b,#e4ab94)] shadow-[0_14px_36px_rgba(46,30,24,0.18)]"
     >
       <span className="leading-5">登录状态已过期，请重新登录。</span>
       {!accountPanelOpen && (
         <Link
           to={`/?${accountSearch}`}
-          className="inline-flex min-h-11 shrink-0 items-center rounded-lg px-2 font-semibold text-[#284331] underline decoration-[#78927e] underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+          className="inline-flex min-h-11 shrink-0 items-center rounded-lg px-2 font-semibold text-app-accent underline decoration-app-line-strong underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
         >
           重新登录
         </Link>

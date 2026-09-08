@@ -63,10 +63,10 @@ export function PlaytestStage({ frame, x, y, mirrorX, onBoundsChange }: Playtest
       ref={stageRef}
       role="region"
       aria-label="预览舞台"
-      className="relative h-full min-h-[520px] overflow-hidden rounded-[1.8rem] border border-black/5 bg-[#eee] shadow-[0_24px_70px_rgba(22,29,25,0.12)]"
+      className="relative h-full min-h-[520px] overflow-hidden rounded-[1.8rem] border border-app-line bg-[light-dark(#eee,#242424)] shadow-[0_24px_70px_rgba(22,29,25,0.12)]"
       style={{
         backgroundImage:
-          'linear-gradient(45deg, #ddd 25%, transparent 25%), linear-gradient(-45deg, #ddd 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ddd 75%), linear-gradient(-45deg, transparent 75%, #ddd 75%)',
+          'linear-gradient(45deg, light-dark(#ddd,#2d2d2d) 25%, transparent 25%), linear-gradient(-45deg, light-dark(#ddd,#2d2d2d) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, light-dark(#ddd,#2d2d2d) 75%), linear-gradient(-45deg, transparent 75%, light-dark(#ddd,#2d2d2d) 75%)',
         backgroundPosition: '0 0, 0 12px, 12px -12px, -12px 0',
         backgroundSize: '24px 24px',
       }}
@@ -75,14 +75,17 @@ export function PlaytestStage({ frame, x, y, mirrorX, onBoundsChange }: Playtest
         aria-hidden="true"
         className="absolute inset-0 opacity-45"
         style={{
-          backgroundImage: 'radial-gradient(#bfc3c0 1px, transparent 1px)',
+          backgroundImage: 'radial-gradient(light-dark(#bfc3c0,#606060) 1px, transparent 1px)',
           backgroundSize: '20px 20px',
         }}
       />
-      <div aria-hidden="true" className="absolute inset-x-0 top-1/2 h-px bg-[#989e99]/45" />
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-1/2 h-px bg-[light-dark(#989e99,#747474)]/45"
+      />
 
       {frame === null ? (
-        <p className="absolute inset-0 grid place-items-center text-xs tracking-[0.16em] text-[#6f746f]">
+        <p className="absolute inset-0 grid place-items-center text-xs tracking-[0.16em] text-[light-dark(#6f746f,#adadad)]">
           暂无可播放帧
         </p>
       ) : frameFailed ? (

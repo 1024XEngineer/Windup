@@ -6,6 +6,7 @@ import { userApis } from '@/entities'
 import { AuthSessionProvider } from '@/features/auth-session'
 import '@fontsource-variable/noto-serif-sc/wght.css'
 import './index.css'
+import './system-theme.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
