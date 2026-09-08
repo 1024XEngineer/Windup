@@ -1,3 +1,4 @@
+import { WindupMark } from '@/shared/ui/windup-mark'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
@@ -227,7 +228,7 @@ export function AppHeader({
     <header
       data-layout="unified"
       data-surface="frosted-bar"
-      className="fixed inset-x-0 top-0 z-50 border-b border-app-ink/10 bg-transparent text-app-ink shadow-app-header backdrop-blur-xl"
+      className="fixed inset-x-0 top-0 z-50 border-b border-app-ink/10 bg-transparent text-app-ink backdrop-blur-xl"
     >
       <div className="relative mx-auto grid min-h-14 w-full max-w-[90rem] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -240,7 +241,7 @@ export function AppHeader({
               wave.entry === 'brand' ? 'app-header-text-wave' : ''
             }`}
           >
-            <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
+            <WindupMark className="h-7 w-7" />
             <strong className="hidden font-serif text-[1.0625rem] leading-none sm:inline">
               <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
             </strong>
@@ -430,10 +431,9 @@ export function AppHeader({
                     accountMenu.expanded ? 'scale-110' : 'scale-100'
                   }`}
                 >
-                  <img
+                  <WindupMark
                     data-testid="default-account-avatar"
-                    src="/windup-mark.svg"
-                    alt=""
+
                     aria-hidden="true"
                     className="h-5 w-5 object-contain"
                   />
@@ -550,7 +550,7 @@ function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps
             wave.entry === 'brand' ? 'app-header-text-wave' : ''
           }`}
         >
-          <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
+          <WindupMark className="h-7 w-7" />
           <strong className="font-serif text-lg leading-none">
             <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
           </strong>

@@ -1,3 +1,4 @@
+import { WindupMark } from '@/shared/ui/windup-mark'
 import {
   useEffect,
   useId,
@@ -668,7 +669,7 @@ function AccountPanelDialog({
         className="auth-screen-brand fixed z-[2] flex items-center gap-[0.7rem]"
         aria-label="Windup"
       >
-        <img src="/windup-mark.svg" alt="" className="size-[1.65rem]" />
+        <WindupMark className="size-[1.65rem]" />
         <strong className="font-serif text-2xl leading-none tracking-[-0.025em]">Windup</strong>
       </div>
 
