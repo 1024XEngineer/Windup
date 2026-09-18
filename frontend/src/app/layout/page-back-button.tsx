@@ -2,6 +2,8 @@ import { ArrowLeft } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 
+import './page-back-button.css'
+
 const backTransitionDurationMs = 230
 
 function fallbackPath(pathname: string): string {

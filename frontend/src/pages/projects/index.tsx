@@ -14,6 +14,7 @@ import {
 } from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { AssetThumbnailImage, Pagination, PixelMatrix } from '@/shared/ui'
+import './projects.css'
 
 const PROJECT_PAGE_SIZE = 12
 

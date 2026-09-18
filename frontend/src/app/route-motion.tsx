@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { useLocation } from 'react-router'
 
 import { getRouteMotionDirection } from './route-motion-model'
+import './route-motion.css'
 
 function motionPathname(pathname: string): string {
   return /^\/projects\/[^/]+$/.test(pathname) ? `${pathname}/assets` : pathname
