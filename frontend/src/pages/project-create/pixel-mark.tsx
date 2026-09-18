@@ -1,3 +1,5 @@
+import './pixel-mark.css'
+
 const GRID_SIZE = 17
 const CENTER = (GRID_SIZE - 1) / 2
 

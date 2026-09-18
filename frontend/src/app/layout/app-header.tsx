@@ -14,6 +14,7 @@ import {
   useProductPopoverMotion,
 } from '@/shared/ui'
 import { PageBackButton } from './page-back-button'
+import './app-header.css'
 
 interface ProductNavigationItem {
   motionKey: string
