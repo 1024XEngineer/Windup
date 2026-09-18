@@ -4,6 +4,8 @@ import { Link, useOutletContext, useParams } from 'react-router'
 
 import {
   ACTION_DIRECTIONS,
+  ART_STYLE,
+  CHARACTER_PERSPECTIVE,
   characterTemplateImages,
   characterApis,
   getDirectionGridLayout,
@@ -20,6 +22,7 @@ import {
 } from '@/entities'
 import { createCharacterExportModel, ExportButton } from '@/features/export-package'
 import { PixelPerfectWorkbench } from '@/features/pixel-perfect'
+import { productControlClass } from '@/shared/ui'
 
 const ACTION_TYPE_LABELS: Record<string, string> = {
   walk: '行走',
@@ -28,8 +31,15 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   custom: '自定义',
 }
 
-const ASSET_ACTION_SECONDARY =
-  'inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-app-line bg-app-surface-raised px-5 text-xs font-semibold text-app-ink-soft transition-colors hover:border-app-line-strong hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent'
+const ASSET_ACTION_SECONDARY = productControlClass('chrome')
+
+const ASSET_ACTION_PRIMARY =
+  'inline-flex min-h-10 items-center gap-2 rounded-app-control bg-app-accent px-4 text-xs font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent'
+
+/** 方位标签压在格角,不占一条独立的 caption 行。 */
+const SECTION_LABEL = 'text-xs font-medium text-app-muted'
+
+const DIRECTION_TAG = 'absolute left-1.5 top-1 text-[0.6rem] leading-none text-app-faint'
 
 const DIRECTION_LABELS: Record<ActionDirection, string> = {
   east: '东',
@@ -153,21 +163,15 @@ export function CharacterDetailPage() {
 
   return (
     <section aria-labelledby="character-title" className="p-4 lg:px-6 lg:py-5">
-      <header className="relative overflow-hidden border-b border-app-line pb-5">
+      <header className="relative border-b border-app-line pb-4">
         <Link
           to={`/projects/${projectId}/assets`}
           className="text-xs text-app-muted transition-colors hover:text-app-accent"
         >
           ← 返回资产库
         </Link>
-        <div className="mt-5 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div className="relative z-10 min-w-0 shrink-0">
-            <h2
-              id="character-title"
-              className="font-serif text-3xl font-medium tracking-[-0.04em] text-app-ink"
-            >
-              {name}
-            </h2>
+        <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
             {selectedOutfit && titlePreviewUrl ? (
               <img
                 src={titlePreviewUrl}
@@ -175,14 +179,25 @@ export function CharacterDetailPage() {
                 loading="eager"
                 decoding="async"
                 fetchPriority="high"
-                className="pointer-events-none absolute bottom-[-4.5rem] left-[calc(100%+0.5rem)] hidden h-44 w-44 max-w-none object-contain opacity-85 sm:block [image-rendering:pixelated]"
+                className="size-16 shrink-0 rounded-app-control bg-app-surface-muted object-contain p-1.5 [image-rendering:pixelated]"
               />
             ) : null}
+            <div className="min-w-0">
+              <h2
+                id="character-title"
+                className="truncate font-serif text-3xl font-medium tracking-[-0.04em] text-app-ink"
+              >
+                {name}
+              </h2>
+              {selectedOutfit ? (
+                <p className="mt-1 truncate text-xs text-app-muted">{selectedOutfit.name}</p>
+              ) : null}
+            </div>
           </div>
           <div
             role="group"
             aria-label="角色资产操作"
-            className="relative z-10 flex flex-wrap items-center gap-2 sm:justify-end"
+            className="flex flex-wrap items-center gap-1 lg:shrink-0 lg:justify-end"
           >
             {selectedOutfit ? (
               <CharacterExport project={project} character={character} outfit={selectedOutfit} />
@@ -203,7 +218,7 @@ export function CharacterDetailPage() {
               <Link
                 to={`/playtest/${character.id}/${selectedOutfit.id}`}
                 aria-label="在预览台打开当前造型"
-                className="inline-flex min-h-10 items-center gap-2 rounded-full border border-app-accent bg-app-accent px-5 text-xs font-semibold text-app-on-accent transition-colors hover:border-app-accent-hover hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                className={ASSET_ACTION_PRIMARY}
               >
                 <Play size={15} weight="fill" aria-hidden="true" />
                 在预览台打开
@@ -219,14 +234,13 @@ export function CharacterDetailPage() {
         </div>
       ) : (
         <>
-          <CharacterTemplateDirections
-            character={character}
-            movement={project.directionalMovement}
-          />
           {pixelPerfectOpen ? (
             <PixelPerfectWorkbench id="pixel-perfect-workbench" actions={selectedOutfit.actions} />
           ) : null}
-          <ActionList key={selectedOutfit.id} character={character} outfit={selectedOutfit} />
+          <div className="mt-5 grid items-start gap-x-10 gap-y-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
+            <CharacterTemplateDirections character={character} project={project} />
+            <ActionList key={selectedOutfit.id} character={character} outfit={selectedOutfit} />
+          </div>
         </>
       )}
     </section>
@@ -271,6 +285,7 @@ function CharacterExport({
       icon={<DownloadSimple size={15} weight="bold" />}
       pill
       enableCocosExport
+      layout="menu"
       className={ASSET_ACTION_SECONDARY}
     />
   )
@@ -278,50 +293,57 @@ function CharacterExport({
 
 function CharacterTemplateDirections({
   character,
-  movement,
+  project,
 }: {
   character: Character
-  movement: Project['directionalMovement']
+  project: Project
 }) {
   const name = characterName(character)
   const directionalTemplates = resolvedCharacterTemplates(character.templates)
   if (directionalTemplates.length === 0) return null
+  const movement = project.directionalMovement
   const layout = movement === 'single' ? null : getDirectionGridLayout(movement)
   const templatesByDirection = new Map(
     directionalTemplates.map((template) => [template.direction, template]),
   )
   const cells = layout?.cells ?? directionalTemplates.map((template) => template.direction)
-  const columnClass =
-    layout?.columns === 3
-      ? 'grid-cols-3'
-      : layout?.columns === 2
-        ? 'grid-cols-2'
-        : 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-8'
+  const expected = getDirectionProfile(movement).logicalDirections
+  const missing = expected.filter((direction) => !templatesByDirection.has(direction))
+
   return (
-    <section aria-label="角色母版方向" className={`mt-4 grid ${columnClass} gap-2`}>
-      {cells.map((direction, index) => {
-        if (!direction) {
-          return <div key={`empty-${index}`} aria-label="八向宫格中心留空" />
-        }
-        const template = templatesByDirection.get(direction)
-        if (!template) {
+    <section aria-label="角色母版方向" className="min-w-0">
+      <h3 className={SECTION_LABEL}>角色母版</h3>
+      {/*
+       * 方位盘只靠格子自己的位置说话:盘面内不再画格线,空位就是空的,
+       * 方位标签压在格角而不是各挂一条 caption。
+       */}
+      <div
+        data-direction-grid
+        className={`mt-2 grid w-fit gap-1.5 ${
+          layout === null ? 'grid-cols-[repeat(auto-fill,6rem)]' : 'grid-cols-[repeat(3,6rem)]'
+        }`}
+      >
+        {cells.map((direction, index) => {
+          if (!direction) return <div key={`empty-${index}`} aria-hidden="true" />
+          const template = templatesByDirection.get(direction)
+          if (!template) {
+            return (
+              <div
+                key={direction}
+                role="status"
+                aria-label={`${DIRECTION_LABELS[direction]}方向角色母版缺失`}
+                className="relative grid aspect-square place-items-center rounded-app-control bg-app-surface-muted text-[0.65rem] text-app-muted"
+              >
+                <span className={DIRECTION_TAG}>{DIRECTION_LABELS[direction]}</span>
+                缺失
+              </div>
+            )
+          }
           return (
-            <div
-              key={direction}
-              role="status"
-              aria-label={`${DIRECTION_LABELS[direction]}方向角色母版缺失`}
-              className="grid aspect-square place-items-center rounded-xl border border-dashed border-app-line bg-app-surface-muted text-xs text-app-muted"
+            <figure
+              key={template.direction}
+              className="relative aspect-square rounded-app-control bg-app-surface-muted p-1.5"
             >
-              {DIRECTION_LABELS[direction]}方向缺失
-            </div>
-          )
-        }
-        return (
-          <figure
-            key={template.direction}
-            className="overflow-hidden rounded-xl border border-app-line bg-app-surface-raised"
-          >
-            <div className="aspect-square bg-app-surface-muted p-2">
               <img
                 src={template.imageUrl}
                 alt={`${name}${DIRECTION_LABELS[template.direction]}方向母版`}
@@ -330,13 +352,26 @@ function CharacterTemplateDirections({
                 fetchPriority={index === 0 ? 'high' : 'auto'}
                 className={`h-full w-full object-contain [image-rendering:pixelated] ${template.mirrorX ? '-scale-x-100' : ''}`}
               />
-            </div>
-            <figcaption className="border-t border-app-line px-2 py-1.5 text-center text-[0.68rem] font-semibold text-app-muted">
-              {DIRECTION_LABELS[template.direction]}
-            </figcaption>
-          </figure>
-        )
-      })}
+              <figcaption className={DIRECTION_TAG}>
+                {DIRECTION_LABELS[template.direction]}
+              </figcaption>
+            </figure>
+          )
+        })}
+      </div>
+
+      <p className="mt-4 text-xs text-app-muted">
+        {[
+          CHARACTER_PERSPECTIVE[project.perspective],
+          `${project.spriteSize.width} × ${project.spriteSize.height}`,
+          ART_STYLE[project.gameStyle],
+        ].join(' · ')}
+      </p>
+      {missing.length > 0 ? (
+        <p className="mt-1.5 text-xs text-app-danger">
+          缺 {missing.map((direction) => DIRECTION_LABELS[direction]).join('、')} 方向母版
+        </p>
+      ) : null}
     </section>
   )
 }
@@ -360,8 +395,9 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
   const workflowEditorPath = `/workflow-editor/${encodeURIComponent(character.workflowRunId)}`
 
   return (
-    <section aria-label="角色动作" className="mt-3">
-      <div className="flex justify-end">
+    <section aria-label="角色动作" className="min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className={SECTION_LABEL}>动作</h3>
         <div className="flex items-center gap-3">
           <span className="text-[0.7rem] text-app-faint">点击卡片展开完整帧</span>
           <button
@@ -467,7 +503,7 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                 <article
                   key={action.id}
                   aria-label={`动作 ${action.name}`}
-                  className={`group relative shrink-0 overflow-hidden rounded-[1.35rem] border-[1.5px] bg-app-surface-muted transition-[width,transform,margin,border-color] duration-500 ease-[cubic-bezier(.2,.9,.25,1)] motion-reduce:transition-none ${rendersFramePanel ? 'grid grid-cols-1 sm:grid-cols-[11rem_minmax(0,1fr)] lg:grid-cols-[13rem_minmax(0,1fr)]' : ''} ${expanded ? 'order-first w-full -translate-y-1 rotate-0 border-app-accent' : `w-44 border-app-line hover:border-app-line-strong lg:w-52 ${selectedAction ? 'order-last' : ''} ${stackIndex > 0 ? '-ml-4 lg:-ml-8' : ''} ${actionIndex % 2 ? 'translate-y-1 rotate-[1.2deg]' : 'rotate-[-1.2deg]'}`}`}
+                  className={`group relative shrink-0 overflow-hidden rounded-[1.35rem] border bg-app-surface-muted transition-[width,transform,margin,border-color] duration-500 ease-[cubic-bezier(.2,.9,.25,1)] motion-reduce:transition-none ${rendersFramePanel ? 'grid grid-cols-1 sm:grid-cols-[11rem_minmax(0,1fr)] lg:grid-cols-[13rem_minmax(0,1fr)]' : ''} ${expanded ? 'order-first w-full -translate-y-1 rotate-0 border-app-accent' : `w-44 border-app-line hover:border-app-line-strong lg:w-52 ${selectedAction ? 'order-last' : ''} ${stackIndex > 0 ? '-ml-4 lg:-ml-8' : ''} ${actionIndex % 2 ? 'translate-y-1 rotate-[1.2deg]' : 'rotate-[-1.2deg]'}`}`}
                   style={{ zIndex: expanded ? displayedActions.length + 1 : actionIndex + 1 }}
                 >
                   <button
