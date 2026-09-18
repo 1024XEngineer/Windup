@@ -1,5 +1,13 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { ArrowClockwise, Check, CircleNotch, DownloadSimple } from '@phosphor-icons/react'
+import {
+  ArrowClockwise,
+  ArrowSquareIn,
+  CaretDown,
+  Check,
+  CircleNotch,
+  DownloadSimple,
+  FileArrowDown,
+} from '@phosphor-icons/react'
 
 import {
   productMenuItemClass,
@@ -53,6 +61,11 @@ export interface ExportButtonProps {
   cocosImporter?: CocosImporter
   cocosPairer?: CocosPairer
   enableCocosExport?: boolean
+  /**
+   * stack 竖排(卡片内默认);menu 只露一个「导出」按钮,把资产包和 Cocos 两条路径
+   * 收进二级菜单 —— 页面顶部的操作行放不下三个同级导出入口。
+   */
+  layout?: 'stack' | 'menu'
 }
 
 type ExportState =
@@ -86,6 +99,18 @@ const STAGE_LABELS: Readonly<Record<ExportPackageModel['stage'], string>> = {
   'action-assets': '完整动作资产',
   playtest: 'Playtest 运行包',
 }
+
+/**
+ * 导出入口共用的结构类。这里刻意不写 padding、min-height、边框色和字号:
+ * 它们由调用方的 className 给,基础类再写一份会和调用方的同类 utility 撞车,
+ * 谁生效取决于 CSS 产出顺序而不是拼接顺序。
+ */
+function exportActionClass(pill: boolean, className: string): string {
+  return `${pill ? 'rounded-full' : ''} inline-flex items-center justify-center gap-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50 ${className}`
+}
+
+const EXPORT_ALERT_CLASS =
+  'rounded-app-compact border border-app-danger-line bg-app-danger-soft px-3 py-2 text-[11px] font-medium leading-4 text-app-danger'
 
 const defaultExporter: AssetExporter = (model, onPhase) => exportGameAssets(model, { onPhase })
 const defaultCocosExporter: AssetExporter = (model, onPhase) =>
@@ -221,12 +246,20 @@ function useCocosImportAction(
   return { state, working, pairingCode, setPairingCode, startImport, pairAndImport }
 }
 
-function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImportAction> }) {
+function CocosImportFeedback({
+  action,
+  inline = false,
+}: {
+  action: ReturnType<typeof useCocosImportAction>
+  inline?: boolean
+}) {
+  // inline 时反馈块独占一行,不跟按钮抢同一行的横向空间。
+  const block = inline ? 'basis-full' : ''
   if (action.state.status === 'working') {
     return (
       <p
         role="status"
-        className="rounded-lg bg-sky-50 dark:bg-app-accent-muted px-3 py-2 text-xs text-sky-800 dark:text-app-ink-soft"
+        className={`rounded-app-compact border border-app-line bg-app-surface-muted px-3 py-2 text-xs text-app-ink-soft ${block}`}
       >
         {COCOS_PHASE_LABELS[action.state.phase]}
       </p>
@@ -234,11 +267,13 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
   }
   if (action.state.status === 'pairing') {
     return (
-      <div className="space-y-2 rounded-lg bg-sky-50 dark:bg-app-accent-muted p-2">
-        <p role="alert" className="text-xs text-sky-900 dark:text-app-ink">
+      <div
+        className={`space-y-2 rounded-app-compact border border-app-line bg-app-surface-muted p-2 ${block}`}
+      >
+        <p role="alert" className="text-xs text-app-ink-soft">
           {action.state.message}
         </p>
-        <label className="block text-[11px] font-medium text-sky-900 dark:text-app-ink">
+        <label className="block text-[11px] font-medium text-app-ink-soft">
           Creator 连接码
           <input
             aria-label="Creator 连接码"
@@ -246,13 +281,13 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
             maxLength={6}
             value={action.pairingCode}
             onChange={(event) => action.setPairingCode(event.target.value.replace(/\D/g, ''))}
-            className="mt-1 w-full rounded border border-sky-200 dark:border-app-line bg-white dark:bg-app-surface-raised px-2 py-1 text-xs"
+            className="mt-1 w-full rounded border border-app-line bg-app-surface-raised px-2 py-1 text-xs text-app-ink"
           />
         </label>
         <button
           type="button"
           onClick={() => void action.pairAndImport()}
-          className="w-full rounded bg-sky-700 dark:bg-app-accent px-2 py-1 text-xs font-semibold text-white dark:text-app-on-accent"
+          className="w-full rounded bg-app-accent px-2 py-1 text-xs font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover"
         >
           连接并导入
         </button>
@@ -261,7 +296,10 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
   }
   if (action.state.status === 'failure') {
     return (
-      <div role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
+      <div
+        role="alert"
+        className={`rounded-app-compact border border-app-danger-line bg-app-danger-soft px-3 py-2 text-xs text-app-danger ${block}`}
+      >
         <p>导入失败：{action.state.message}</p>
         {action.state.jobCode ? (
           <p className="mt-1 text-[11px]">
@@ -279,7 +317,9 @@ function CocosImportFeedback({ action }: { action: ReturnType<typeof useCocosImp
   }
   if (action.state.status === 'success') {
     return (
-      <div className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+      <div
+        className={`rounded-app-compact border border-app-accent-soft bg-app-accent-muted px-3 py-2 text-xs text-app-accent ${block}`}
+      >
         <p className="font-semibold">已导入到当前 Cocos 工程</p>
         <p className="mt-1">
           {action.state.result.projectName} · {action.state.result.animationCount} 个动作，
@@ -605,6 +645,7 @@ export function ExportButton({
   pill = false,
   iconOnly = false,
   enableCocosExport = false,
+  layout = 'stack',
 }: ExportButtonProps) {
   const { state, working, startExport } = useExportAction(model, exporter)
   const tooltipId = useId()
@@ -612,7 +653,8 @@ export function ExportButton({
   const cocosImport = useCocosImportAction(model, cocosImporter, cocosPairer)
   const showCocosExport =
     enableCocosExport || Boolean(cocosExporter || cocosImporter || cocosPairer)
-  const label =
+  const busy = working || cocos.working || cocosImport.working
+  const packageLabel =
     state.status === 'working'
       ? PHASE_LABELS[state.phase]
       : state.status === 'failure'
@@ -620,39 +662,76 @@ export function ExportButton({
         : state.status === 'success'
           ? '下载完成'
           : (idleLabel ?? `导出${STAGE_LABELS[model.stage]}`)
+  const cocosPackageLabel =
+    cocos.state.status === 'working'
+      ? PHASE_LABELS[cocos.state.phase]
+      : cocos.state.status === 'failure'
+        ? '重新导出 Cocos 包'
+        : cocos.state.status === 'success'
+          ? 'Cocos 包下载完成'
+          : '下载 Cocos 包'
+  const cocosImportLabel =
+    cocosImport.state.status === 'failure' ? '重新导入 Cocos' : '一键导入 Cocos'
+
+  if (layout === 'menu' && showCocosExport && !iconOnly) {
+    return (
+      <ExportMenuButton
+        busy={busy}
+        className={className}
+        pill={pill}
+        packageLabel={packageLabel}
+        packageState={state.status}
+        onExportPackage={() => void startExport()}
+        cocosImportLabel={cocosImportLabel}
+        onImportCocos={() => void cocosImport.startImport()}
+        cocosPackageLabel={cocosPackageLabel}
+        cocosPackageTitle={
+          cocos.state.status === 'failure' ? cocos.state.message : '插件不可用时下载 Cocos 适配包'
+        }
+        onExportCocosPackage={() => void cocos.startExport()}
+        feedback={
+          <>
+            {state.status === 'failure' ? (
+              <span role="alert" className={EXPORT_ALERT_CLASS}>
+                导出失败：{state.message}
+              </span>
+            ) : null}
+            <CocosImportFeedback action={cocosImport} />
+            {cocos.state.status === 'failure' ? (
+              <span role="alert" className={EXPORT_ALERT_CLASS}>
+                Cocos 导出失败：{cocos.state.message}
+              </span>
+            ) : null}
+          </>
+        }
+      />
+    )
+  }
 
   return (
     <div className="grid min-w-0 gap-1">
       <button
         type="button"
-        disabled={working || cocos.working || cocosImport.working}
-        aria-label={iconOnly ? label : undefined}
+        disabled={busy}
+        aria-label={iconOnly ? packageLabel : undefined}
         aria-describedby={iconOnly ? tooltipId : undefined}
         title={state.status === 'failure' ? state.message : undefined}
         onClick={() => void startExport()}
         className={
           iconOnly
             ? `group/export-action relative grid size-10 shrink-0 place-items-center rounded-lg transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50 ${className}`
-            : `${pill ? 'rounded-full' : 'rounded-lg'} inline-flex min-h-10 items-center justify-center gap-2 border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`
+            : exportActionClass(pill, className)
         }
       >
         {iconOnly ? (
           <>
-            {state.status === 'working' ? (
-              <CircleNotch aria-hidden="true" size={18} weight="bold" className="animate-spin" />
-            ) : state.status === 'success' ? (
-              <Check aria-hidden="true" size={18} weight="bold" />
-            ) : state.status === 'failure' ? (
-              <ArrowClockwise aria-hidden="true" size={18} weight="bold" />
-            ) : (
-              <DownloadSimple aria-hidden="true" size={18} weight="bold" />
-            )}
+            <ExportStateIcon status={state.status} size={18} />
             <span
               id={tooltipId}
               role="tooltip"
               className="pointer-events-none invisible absolute top-full left-1/2 z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-app-ink px-2 py-1 text-[11px] font-medium text-app-canvas opacity-0 shadow-app-card transition group-hover/export-action:visible group-hover/export-action:opacity-100 group-focus-within/export-action:visible group-focus-within/export-action:opacity-100"
             >
-              {label}
+              {packageLabel}
             </span>
           </>
         ) : (
@@ -662,12 +741,12 @@ export function ExportButton({
                 {icon}
               </span>
             ) : null}
-            <span>{label}</span>
+            <span>{packageLabel}</span>
           </>
         )}
       </button>
       {state.status === 'failure' ? (
-        <span role="alert" className="max-w-64 text-[11px] font-medium leading-4 text-app-danger">
+        <span role="alert" className={EXPORT_ALERT_CLASS}>
           导出失败：{state.message}
         </span>
       ) : null}
@@ -675,41 +754,177 @@ export function ExportButton({
         <>
           <button
             type="button"
-            disabled={working || cocos.working || cocosImport.working}
+            disabled={busy}
             onClick={() => void cocosImport.startImport()}
-            className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-sky-500 px-3 py-2 text-xs font-semibold text-sky-800 dark:text-app-ink-soft disabled:opacity-50 ${className}`}
+            className={exportActionClass(pill, className)}
           >
-            {cocosImport.state.status === 'failure' ? '重新导入 Cocos' : '一键导入 Cocos'}
+            {cocosImportLabel}
           </button>
           <CocosImportFeedback action={cocosImport} />
           <button
             type="button"
-            disabled={working || cocos.working || cocosImport.working}
+            disabled={busy}
             title={
               cocos.state.status === 'failure'
                 ? cocos.state.message
                 : '插件不可用时下载 Cocos 适配包'
             }
             onClick={() => void cocos.startExport()}
-            className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-amber-400 dark:border-app-warning-line px-3 py-2 text-xs font-semibold text-amber-800 dark:text-app-warning disabled:opacity-50 ${className}`}
+            className={exportActionClass(pill, className)}
           >
-            {cocos.state.status === 'working'
-              ? PHASE_LABELS[cocos.state.phase]
-              : cocos.state.status === 'failure'
-                ? '重新导出 Cocos 包'
-                : cocos.state.status === 'success'
-                  ? 'Cocos 包下载完成'
-                  : '下载 Cocos 包'}
+            {cocosPackageLabel}
           </button>
           {cocos.state.status === 'failure' ? (
-            <span
-              role="alert"
-              className="max-w-64 text-[11px] font-medium leading-4 text-app-danger"
-            >
+            <span role="alert" className={EXPORT_ALERT_CLASS}>
               Cocos 导出失败：{cocos.state.message}
             </span>
           ) : null}
         </>
+      ) : null}
+    </div>
+  )
+}
+
+function ExportStateIcon({ status, size }: { status: ExportState['status']; size: number }) {
+  if (status === 'working') {
+    return <CircleNotch aria-hidden="true" size={size} weight="bold" className="animate-spin" />
+  }
+  if (status === 'success') return <Check aria-hidden="true" size={size} weight="bold" />
+  if (status === 'failure') return <ArrowClockwise aria-hidden="true" size={size} weight="bold" />
+  return <DownloadSimple aria-hidden="true" size={size} weight="bold" />
+}
+
+/**
+ * 顶部操作行里的导出入口:按钮只占一格,资产包与 Cocos 两条路径都在菜单里,
+ * 每一项都是「图标 + 文案」,不让同一行出现有图标和纯文字两种按钮。
+ */
+function ExportMenuButton({
+  busy,
+  className,
+  pill,
+  packageLabel,
+  packageState,
+  onExportPackage,
+  cocosImportLabel,
+  onImportCocos,
+  cocosPackageLabel,
+  cocosPackageTitle,
+  onExportCocosPackage,
+  feedback,
+}: {
+  busy: boolean
+  className: string
+  pill: boolean
+  packageLabel: string
+  packageState: ExportState['status']
+  onExportPackage: () => void
+  cocosImportLabel: string
+  onImportCocos: () => void
+  cocosPackageLabel: string
+  cocosPackageTitle: string
+  onExportCocosPackage: () => void
+  feedback: ReactNode
+}) {
+  const menu = useProductPopoverMotion()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuId = useId()
+
+  useEffect(() => {
+    if (!menu.expanded) return
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    const closeFromOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) menu.close()
+    }
+    const closeFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        menu.close()
+        triggerRef.current?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('keydown', closeFromKeyboard)
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside)
+      document.removeEventListener('keydown', closeFromKeyboard)
+    }
+  }, [menu])
+
+  const choose = (run: () => void) => {
+    menu.close()
+    triggerRef.current?.focus()
+    run()
+  }
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={busy}
+        aria-haspopup="menu"
+        aria-expanded={menu.expanded}
+        aria-controls={menu.mounted ? menuId : undefined}
+        onClick={menu.toggle}
+        className={exportActionClass(pill, className)}
+      >
+        <ExportStateIcon status={packageState} size={15} />
+        导出
+        <CaretDown aria-hidden="true" size={12} weight="bold" />
+      </button>
+
+      {menu.mounted ? (
+        <div
+          ref={menuRef}
+          id={menuId}
+          data-state={menu.state}
+          data-motion="scale-fade"
+          role="menu"
+          aria-label="导出方式"
+          aria-hidden={menu.expanded ? undefined : true}
+          inert={!menu.expanded}
+          onAnimationEnd={menu.finish}
+          className={`${productPopoverClass} absolute top-[calc(100%+0.4rem)] right-0 z-30 grid min-w-52 gap-0.5 overflow-hidden p-1.5 ${productPopoverMotionClass(menu.state)}`}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            disabled={busy}
+            onClick={() => choose(onExportPackage)}
+            className={`${productMenuItemClass} gap-2.5 text-left text-app-ink-soft disabled:opacity-50`}
+          >
+            <DownloadSimple aria-hidden="true" size={15} weight="bold" />
+            {packageLabel}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={busy}
+            onClick={() => choose(onImportCocos)}
+            className={`${productMenuItemClass} gap-2.5 text-left text-app-ink-soft disabled:opacity-50`}
+          >
+            <ArrowSquareIn aria-hidden="true" size={15} weight="bold" />
+            {cocosImportLabel}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={busy}
+            title={cocosPackageTitle}
+            onClick={() => choose(onExportCocosPackage)}
+            className={`${productMenuItemClass} gap-2.5 text-left text-app-muted disabled:opacity-50`}
+          >
+            <FileArrowDown aria-hidden="true" size={15} weight="bold" />
+            {cocosPackageLabel}
+          </button>
+        </div>
+      ) : null}
+
+      {feedback ? (
+        <div className="absolute top-[calc(100%+0.4rem)] right-0 z-20 grid w-72 gap-1">
+          {feedback}
+        </div>
       ) : null}
     </div>
   )
