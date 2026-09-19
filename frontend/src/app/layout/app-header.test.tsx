@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import type { AuthTokens, CreditAccount, QuotaApis, UserApis } from '@/entities'
 import { forgetActiveRun, rememberActiveRun } from '@/features/active-run'
 import { AuthSessionProvider } from '@/features/auth-session'
+import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.png'
 import { AppHeader } from './app-header'
 
 const user = {
@@ -484,6 +485,9 @@ describe('AppHeader', () => {
     expect(
       within(accountMenu).getByTestId('default-account-avatar').getAttribute('aria-hidden'),
     ).toBe('true')
+    expect(within(accountMenu).getByTestId('default-account-avatar').getAttribute('src')).toBe(
+      defaultAccountAvatar,
+    )
   })
 
   it('账号菜单在点击外部或按 Escape 时关闭', async () => {

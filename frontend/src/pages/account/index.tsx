@@ -1,4 +1,3 @@
-import { WindupMark } from '@/shared/ui/windup-mark'
 import { Gift, X } from '@phosphor-icons/react'
 import {
   useEffect,
@@ -13,6 +12,7 @@ import {
 import { useSearchParams } from 'react-router'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
+import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.png'
 import { quotaApis, type CreditRedemptionResult, type User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 import {
@@ -735,11 +735,13 @@ export function AccountPage() {
 
                 <div className="mt-5 flex items-center gap-4 border-b border-app-line pb-5">
                   <span className="grid size-14 shrink-0 place-items-center rounded-full bg-app-accent-soft">
-                    <WindupMark
+                    <img
                       data-testid="account-profile-default-avatar"
-
+                      src={defaultAccountAvatar}
+                      alt=""
                       aria-hidden="true"
                       className="size-9 object-contain"
+                      style={{ imageRendering: 'pixelated' }}
                     />
                   </span>
                   <div className="min-w-0">
