@@ -455,6 +455,21 @@ export function AppHeader({
                   accountMenu.state,
                 )}`}
               >
+                <div className="flex min-h-14 items-center justify-between gap-3 border-b border-app-ink/10 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] font-semibold text-app-ink-soft">Free</p>
+                    <p className="mt-0.5 truncate text-[11px] text-app-muted">
+                      当前订阅 · 标准创作
+                    </p>
+                  </div>
+                  <Link
+                    to="/account/subscription"
+                    onClick={accountMenu.close}
+                    className="shrink-0 rounded-md bg-app-ink px-3 py-1.5 text-[12px] font-medium text-app-canvas transition-opacity hover:opacity-80"
+                  >
+                    升级
+                  </Link>
+                </div>
                 <div
                   aria-label="积分余额"
                   className="flex min-h-11 items-center justify-between gap-4 border-b border-app-ink/10 px-3 pb-1 text-[13px]"

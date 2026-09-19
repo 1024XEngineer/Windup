@@ -10,7 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from 'react'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
 import { quotaApis, type CreditRedemptionResult, type User } from '@/entities'
@@ -712,6 +712,12 @@ export function AccountPage() {
                   {label}
                 </button>
               ))}
+              <Link
+                to="/account/subscription"
+                className="min-h-10 rounded-lg px-3 py-2.5 text-sm text-app-muted hover:bg-app-surface-muted"
+              >
+                订阅与充值 ↗
+              </Link>
             </nav>
 
             <button
