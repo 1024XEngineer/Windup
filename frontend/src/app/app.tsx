@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 
 import { AssetLibraryPage } from '@/pages/asset-library'
+import { SubscriptionPage } from '@/pages/subscription'
 import { AccountPage } from '@/pages/account'
 import { AdminRedemptionCodesPage } from '@/pages/admin-redemption-codes'
 import { CharacterDetailPage } from '@/pages/character-detail'
@@ -73,6 +74,7 @@ export function AppRoutes() {
         <Route element={<AppShellRoute />}>
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/account/subscription" element={<SubscriptionPage />} />
           <Route path="/admin/redemption-codes" element={<AdminRedemptionCodesPage />} />
           <Route path="/quick-start" element={<QuickStartRoute />} />
           <Route path="/quick-start/:runId" element={<QuickStartRoute />} />
