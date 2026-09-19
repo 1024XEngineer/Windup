@@ -1,3 +1,4 @@
+import { WindupMark } from '@/shared/ui/windup-mark'
 import { Gift, X } from '@phosphor-icons/react'
 import {
   useEffect,
@@ -734,10 +735,9 @@ export function AccountPage() {
 
                 <div className="mt-5 flex items-center gap-4 border-b border-app-line pb-5">
                   <span className="grid size-14 shrink-0 place-items-center rounded-full bg-app-accent-soft">
-                    <img
+                    <WindupMark
                       data-testid="account-profile-default-avatar"
-                      src="/windup-mark.svg"
-                      alt=""
+
                       aria-hidden="true"
                       className="size-9 object-contain"
                     />

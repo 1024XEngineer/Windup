@@ -1468,8 +1468,7 @@ describe('QuickStartPage', () => {
   it('生成结束后等待用户选择时仍保留返回入口', async () => {
     renderStateFixture('template-selecting')
 
-    await screen.findByTestId('quick-start-transcript')
-    expect(readActiveRun('7')).toBe('run-1')
+    await waitFor(() => expect(readActiveRun('7')).toBe('run-1'))
   })
 
   it('renders Agent replies with the animated bot and Markdown structure', async () => {

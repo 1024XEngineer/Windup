@@ -1,3 +1,4 @@
+import { WindupMark } from '@/shared/ui/windup-mark'
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router'
@@ -749,7 +750,7 @@ export function LandingPage() {
               aria-label="返回 Windup 宣传页"
               className="inline-flex items-center gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-app-accent"
             >
-              <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
+              <WindupMark className="h-7 w-7" />
               <strong className="font-serif text-xl tracking-[-0.02em] text-ink">Windup</strong>
             </Link>
             <p className="mt-5 text-body leading-7 text-ink-muted">
