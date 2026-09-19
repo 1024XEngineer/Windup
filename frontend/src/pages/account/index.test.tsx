@@ -138,7 +138,9 @@ describe('AccountPage', () => {
     )
     expect(screen.getByRole('heading', { name: '个人资料' })).toBeTruthy()
     expect(screen.getByLabelText('昵称').getAttribute('placeholder')).toBe('输入昵称')
-    expect(screen.getByTestId('account-profile-default-avatar').getAttribute('aria-hidden')).toBe('true')
+    expect(screen.getByTestId('account-profile-default-avatar').getAttribute('aria-hidden')).toBe(
+      'true',
+    )
     expect(screen.getByTestId('account-profile-default-avatar').getAttribute('src')).toBe(
       defaultAccountAvatar,
     )
