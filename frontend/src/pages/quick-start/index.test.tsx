@@ -2877,8 +2877,9 @@ describe('QuickStartPage', () => {
 
     const grid = await screen.findByRole('group', { name: '四向首帧集合' })
     expect(within(grid).getAllByRole('img')).toHaveLength(4)
-    expect(grid.className).toContain('grid-cols-2')
-    expect(within(grid).queryByLabelText('中心留空')).toBeNull()
+    // 四向也按方位排在九宫格上:上北下南左西右东,四角与中心空着。
+    expect(grid.className).toContain('grid-cols-3')
+    expect(grid.children).toHaveLength(9)
   })
 
   it('动作首帧确认完成后仍显示八张独立图片和空中心', async () => {
@@ -2922,7 +2923,7 @@ describe('QuickStartPage', () => {
 
     const grid = await screen.findByRole('group', { name: '八向首帧集合' })
     expect(within(grid).getAllByRole('img')).toHaveLength(8)
-    expect(within(grid).getByLabelText('中心留空')).toBeTruthy()
+    expect(grid.children).toHaveLength(9)
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {

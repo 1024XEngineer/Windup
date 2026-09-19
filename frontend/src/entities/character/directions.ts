@@ -59,9 +59,10 @@ const DIRECTION_PROFILES: Record<DirectionalMovement, DirectionProfile> = {
 
 const DIRECTION_GRID_LAYOUTS: Record<DirectionalMovement, DirectionGridLayout> = {
   single: { columns: 1, cells: ['east'] },
+  /** 四向也走九宫格:方位落在它本来的位置上,四角和中心空着,不挤成 2×2 方阵。 */
   'four-way': {
-    columns: 2,
-    cells: ['north', 'south', 'west', 'east'],
+    columns: 3,
+    cells: [null, 'north', null, 'west', null, 'east', null, 'south', null],
   },
   'eight-way': {
     columns: 3,

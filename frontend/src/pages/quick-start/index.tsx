@@ -2453,11 +2453,12 @@ function DirectionFirstFrameGrid({
     >
       {layout.cells.map((direction, cellIndex) => {
         if (!direction) {
+          // 宫格占位只是盘面的一部分,不进可访问树,也不画成一个个虚线空框。
           return (
             <div
-              key={`center-${cellIndex}`}
-              aria-label="中心留空"
-              className="rounded-xl border border-dashed border-app-line/40 bg-app-canvas/20"
+              key={`empty-${cellIndex}`}
+              aria-hidden="true"
+              className="rounded-app-control bg-app-canvas/20"
             />
           )
         }
