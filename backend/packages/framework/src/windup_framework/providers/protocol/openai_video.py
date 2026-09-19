@@ -62,6 +62,13 @@ def fit_first_frame(
         im = im.convert("RGB")
         pad = im.getpixel((0, 0))     # 不透明输入沿用角点色,补边与画面自身背景连成一片
     scale = min(w/im.width, h/im.height)
+    if scale > 1:
+        # **放大倍数必须取整。** NEAREST 是把一个源像素铺成一块,倍数非整数时那"一块"的
+        # 宽度会在相邻整数之间不规则跳变(×2.8125 → 2px/3px 交替),块边长为 1 的像素母版
+        # 每个像素都是独立信息,硬边因此被打成马赛克 —— 而这张图正是喂给 i2v 的输入。
+        # 选 NEAREST 本就是为了不造出源图没有的中间色,取整是这条意图的另一半(#797)。
+        # 实测:256x256 母版进 1280x720,倍数被横屏的 720 卡在 2.8125。
+        scale = float(int(scale))
     tw, th = max(1, round(im.width*scale)), max(1, round(im.height*scale))
     fitted = im.resize((tw, th), Image.NEAREST if scale > 1 else Image.LANCZOS)
     canvas = Image.new("RGB", (w, h), pad)

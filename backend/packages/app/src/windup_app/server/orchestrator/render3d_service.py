@@ -22,15 +22,18 @@ import logging
 import os
 import pathlib
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from windup_ai_engine.master_check import check_master
 from windup_ai_engine.ports import MasterRejected
 
 from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_media
+from windup_common.models import CharacterStance
 from windup_app.server.orchestrator.render3d_assets import (
+    ACTION_MOTIONS,
     AUTORIG_CREDITS,
+    BUILD_MOTION,
     BUILD_CREDITS,
     MODEL3D_CREDITS,
     RAW_KEY_PREFIX,
@@ -45,11 +48,19 @@ from windup_app.server.orchestrator.render3d_assets import (
 
 logger = logging.getLogger("windup.render3d.service")
 
+# 拒绝文案里用得着的中文名。放这里而不是塞进枚举:枚举是给措辞门禁用的,
+# 这几个字只服务于这一条拒绝理由。
+_STANCE_LABEL = {
+    CharacterStance.QUADRUPED: "四足",
+    CharacterStance.SERPENTINE: "无肢(蛇形)",
+}
+
 __all__ = [
     "PHASE_BUILDING", "PHASE_FAILED", "PHASE_RIGGING",
     "FetchNotAllowed", "MasterPrecheckFailed", "Render3DAssetOperations",
     "SpendNotAuthorized", "default_operations", "precheck_master",
     "precheck_master_bytes",
+    "StanceNotRiggable",
 ]
 
 # 落点里存"绑骨模型的公网 URL"用的键前缀。与模型 bytes 同一个 store,是因为两者的
@@ -96,6 +107,19 @@ def precheck_master(master_url: str, canvas: tuple[int, int] | None = None) -> d
     return precheck_master_bytes(fetch_own_media(master_url), canvas)
 
 
+class StanceNotRiggable(ValueError):
+    """体型不在自动绑骨的能力范围内 —— **在花钱之前**拒。
+
+    为什么按声明拦而不是从模型几何判:实测拿全部归档 GLB 量过,四足与人形的包围盒比例
+    完全重叠(狼 Z/Y=1.47,而混元人形原始产物 3.19~4.47,比狼还大),因为管线不同阶段的
+    模型量纲不一样。几何上判不出来,只能让调用方声明。
+
+    为什么必须拦而不是"建了再说":自动绑骨对非双足**不报错**,它会漏认被遮挡的肢体,
+    那条肢体在每一帧保持同一姿势,而 ``motion_scale``、死帧数、``loop_seam``、帧数时长
+    成色**全部正常**,一道闸都不会红。用户拿到的是"有条腿是根柱子"的动画且不知情。
+    """
+
+
 class MasterPrecheckFailed(ValueError):
     """母版没过预检,拒绝为它花钱建 3D。``report`` 原样带给上层做文案。"""
 
@@ -131,16 +155,37 @@ class Render3DAssetOperations:
         *,
         fetch: Callable[[str], bytes] = fetch_own_media,
         spawn: Callable[[Callable[[], None]], None] = _spawn_thread,
+        image=None,
     ) -> None:
         self._builder = builder
         self._store = store
         self._publish = publish
         self._fetch = fetch
         self._spawn = spawn
+        # 生图网关**懒装配**:没配生图凭证的部署不该因为多了这一步就起不来,
+        # 而绑骨母版转不出来时本来就会退回定妆母版。
+        self._image = image
         self._jobs: dict[str, _Job] = {}
         self._lock = threading.Lock()
 
     # ── 查 ───────────────────────────────────────────────────────────────
+    def _baked_motions(self, outfit_key: str) -> set[str]:
+        """这个造型已经烘好的动作名。判据取**落点**,不取常量。
+
+        取常量的话,常量一改,已经建好的资产就开始声称自己会另一个动作,而渲出来的
+        仍是旧那段 —— 帧数、时长、成色全部正常的静默错(与派单闸同一条理由)。
+        """
+        got: set[str] = set()
+        for action, motion in ACTION_MOTIONS.items():
+            if motion is None:
+                continue
+            if self._store.get(f"{outfit_key}#{motion}") is not None:
+                got.add(action)
+        # 主产物那一份存在裸 key 上,不带 # 后缀。
+        if self._store.get(outfit_key) is not None:
+            got.add(BUILD_MOTION)
+        return got
+
     def view(self, outfit_key: str) -> dict:
         """状态 + 成本。**不花钱、无副作用**,可以随便轮询。
 
@@ -160,6 +205,19 @@ class Render3DAssetOperations:
             "asset_key": outfit_key,
             "state": phase,
             "model_3d_url": rigged_url.decode() if rigged_url else None,
+            # 主产物烘的是哪个动作。**由本层报出**而不是让 web 层去读常量:
+            # web 层 import render3d_assets 会经它连到 ai_engine,破坏
+            # 「入口层不经 ai_engine 直连」那条 import 契约。
+            "primary_motion": BUILD_MOTION,
+            # 这个造型**已经烘好**了哪些动作。界面靠它决定哪些按钮要禁掉 ——
+            # 读不到的话用户会为同一个动作重复付费,而后端那边只是返回缓存、
+            # 不报错也不退钱(它对,但用户以为自己买了新东西)。
+            "baked_motions": sorted(self._baked_motions(outfit_key)),
+            # 还能烘哪些。由本层给而不是让前端硬编码一份 —— 抄一份就会和
+            # ACTION_MOTIONS 各自漂,而漂的方向是「界面上有、点了才发现不支持」。
+            "bakeable_motions": sorted(
+                a for a, m in ACTION_MOTIONS.items() if m is not None
+            ),
             "review_model_url": review_url.decode() if review_url else None,
             "error": error,
             "cost": {
@@ -172,13 +230,22 @@ class Render3DAssetOperations:
         }
 
     # ── 三个动作 ─────────────────────────────────────────────────────────
-    def build(self, outfit_key: str, master_url: str) -> dict:
-        """① 图生 3D。**这一步开始花钱**,所以只在两个前提都成立时才起:
-        该造型确实还什么都没有,且母版过得了零成本预检。
+    def build(self, outfit_key: str, master_url: str, stance: CharacterStance,
+              extra_view_urls: Mapping[str, str] | None = None) -> dict:
+        """① 图生 3D。**这一步开始花钱**,所以只在三个前提都成立时才起:
+        该造型确实还什么都没有、体型能绑骨、且母版过得了零成本预检。
 
         预检不过就在这里拒:母版不合格 → 模型必然不合格,而模型改不动只能重生成。
         警告不拦 —— 它们已经在母版确认闸上给人看过,人点了"就用这张"就是他的决定。
+
+        ``stance`` **无默认值**:替调用方兜成双足的话,"没给"与"明确给了双足"从这里起
+        就分不开,而分不开的代价是四足角色照样被放行去绑骨(见 :class:`StanceNotRiggable`)。
         """
+        if stance is not CharacterStance.BIPED:
+            raise StanceNotRiggable(
+                f"{_STANCE_LABEL.get(stance, stance.value)}角色目前无法绑定骨骼,三渲二这条"
+                "路线只支持双足人形。这一步没有扣费,可以改走视频路线。"
+            )
         if not self._builder.may_build_assets:
             raise SpendNotAuthorized(
                 f"本部署未开启建 3D 资产(需 WINDUP_RENDER3D_ALLOW_SPEND)。建一次 "
@@ -196,8 +263,65 @@ class Render3DAssetOperations:
         if not report["accepted"]:
             raise MasterPrecheckFailed(report)
 
-        self._start(outfit_key, PHASE_BUILDING, master)
+        views = self._resolve_views(extra_view_urls)
+        # 送进图生 3D 的不是定妆母版本身,而是从它转出的 T-Pose 绑骨母版。
+        # 定妆母版对姿势没有任何约束(它的提示词里一个字没提姿势),而自动绑骨要求
+        # 四肢与躯干分得开 —— 让用户自己去写「T-pose」是把绑骨的实现细节漏给用户。
+        rig_master = self._rig_master(master)
+        self._start(outfit_key, PHASE_BUILDING, rig_master, views)
         return self.view(outfit_key)
+
+    def _resolve_views(self, urls: Mapping[str, str] | None) -> dict[str, bytes] | None:
+        """多视图 URL → 字节。**认不出的视角名在花钱之前就拒**,不静默丢掉 ——
+        丢掉的后果是用户按多视图付了钱、拿到的却是单图重建的模型。"""
+        if not urls:
+            return None
+        from windup_framework.providers.render3d import VIEW_TYPES
+
+        bad = sorted(set(urls) - set(VIEW_TYPES))
+        if bad:
+            raise ValueError(
+                f"视角名只能取 {sorted(VIEW_TYPES)},收到 {bad}。正面走母版,不在这里传。"
+            )
+        return {k: self._fetch(v) for k, v in urls.items()}
+    #: 绑骨母版相对定妆母版,主体宽高比至少要涨这么多。
+    #:
+    #: 张开手臂必然让主体变宽,所以这是个**能证伪的**判据:比值没涨说明那一版根本
+    #: 没照做,而没照做的后果只有渲出动作才看得见(手臂被焊在躯干上、一摆手躯干跟着变形)。
+    #: 取 1.15 而不是更高:定妆母版本身可能已经半张开,留出余量,只拦"完全没动"。
+    RIG_MASTER_MIN_WIDEN = 1.15
+
+    def _rig_master(self, master: bytes) -> bytes:
+        """定妆母版 → T-Pose 绑骨母版。转不出来就用原图,不让整条建资产失败。
+
+        **失败要能退回**:绑骨母版是为了把姿势做对,不是必要条件 —— 转不出来时
+        用定妆母版仍然可能绑成(线上实测 0.523 就是这么过的),而在这里硬拒等于
+        把一条本来能走的路堵死。
+        """
+        from windup_ai_engine.prompt import build_rig_master_prompt
+
+        try:
+            posed = self._image_gateway().gen_image(build_rig_master_prompt(), [master])
+            before = precheck_master_bytes(master)["facts"]["subject_ratio"]
+            after = precheck_master_bytes(posed)["facts"]["subject_ratio"]
+            if after < before * self.RIG_MASTER_MIN_WIDEN:
+                logger.info(
+                    "绑骨母版没把手臂张开(主体宽高比 %.3f → %.3f,不足 %.2f 倍),改用定妆母版",
+                    before, after, self.RIG_MASTER_MIN_WIDEN,
+                )
+                return master
+            logger.info("绑骨母版已转出(主体宽高比 %.3f → %.3f)", before, after)
+            return posed
+        except Exception:                              # noqa: BLE001 —— 尽力而为
+            logger.exception("转绑骨母版失败,改用定妆母版")
+            return master
+
+    def _image_gateway(self):
+        if self._image is None:
+            from windup_framework.gateway import build_image_gateway
+
+            self._image = build_image_gateway()
+        return self._image
 
     def approve(self, outfit_key: str, master_url: str) -> dict:
         """人点头 → ② 绑骨。**这道闸不会自己点头**,只有本方法能放行,而它只挂在
@@ -208,6 +332,37 @@ class Render3DAssetOperations:
         self._builder.approve(outfit_key)
         self._start(outfit_key, PHASE_RIGGING, self._fetch(master_url))
         return self.view(outfit_key)
+
+    def add_motion(self, outfit_key: str, motion: str) -> dict:
+        """给已建好的造型再烘一个动作片段。**只花绑骨那一笔**(图生 3D 的产物还在)。
+
+        与 :meth:`build` 的分工:那个是从零建(图生 3D + 绑骨),这个是在已有模型上再绑
+        一次。分开而不是给 build 加个参数:build 的前提是"该造型还什么都没有",
+        而本方法的前提正相反 —— 合成一个方法的话那条前提断言就没法写了。
+        """
+        if not self._builder.may_build_assets:
+            raise SpendNotAuthorized(
+                f"本部署未开启建 3D 资产(需 WINDUP_RENDER3D_ALLOW_SPEND)。"
+                f"追加一个动作 {AUTORIG_CREDITS} 积分。"
+            )
+        state = self._builder.state(outfit_key)
+        if state is not Render3DAssetState.READY:
+            raise ValueError(
+                f"造型 {outfit_key!r} 的 3D 资产处于 {state.value},要先建好并确认才能加动作"
+            )
+        with self._lock:
+            data = self._builder.add_motion(outfit_key, motion, _SilentProgress())
+            # 这一份产物要有**自己的** URL。回 view() 里那个 model_3d_url 是**主产物**的,
+            # 把它记到新动作名下 = 拿走路片段冒充跳跃 —— 而两份都渲得满 32 帧,帧数、
+            # 时长、朝向、成色全部自洽,没有一道会红。
+            url = self._store.get(f"{_URL_PREFIX}{outfit_key}#{motion}")
+            if url is None:
+                url = _publish_model(data).encode()
+                self._store.put(f"{_URL_PREFIX}{outfit_key}#{motion}", url)
+        out = self.view(outfit_key)
+        out["motion"] = motion
+        out["motion_model_url"] = url.decode()
+        return out
 
     def discard(self, outfit_key: str) -> dict:
         """人否掉待审模型 → 回到 ``absent``,下次建会重新生成(再付一次图生 3D)。"""
@@ -221,10 +376,11 @@ class Render3DAssetOperations:
         return self.view(outfit_key)
 
     # ── 内部 ─────────────────────────────────────────────────────────────
-    def _start(self, outfit_key: str, phase: str, master: bytes) -> None:
+    def _start(self, outfit_key: str, phase: str, master: bytes,
+               extra_views: Mapping[str, bytes] | None = None) -> None:
         with self._lock:
             self._jobs[outfit_key] = _Job(phase)
-        self._spawn(lambda: self._run(outfit_key, master))
+        self._spawn(lambda: self._run(outfit_key, master, extra_views))
 
     def _publish_for_review(self, outfit_key: str) -> None:
         """把待审模型也放到对象存储上。
@@ -243,14 +399,15 @@ class Render3DAssetOperations:
         except Exception:                              # noqa: BLE001 - 看不了不等于建失败
             logger.exception("[WINDUP] 待审模型上传失败 | outfit=%s", outfit_key)
 
-    def _run(self, outfit_key: str, master: bytes) -> None:
+    def _run(self, outfit_key: str, master: bytes,
+             extra_views: Mapping[str, bytes] | None = None) -> None:
         """两段付费调用共用这一条:``ensure`` 自己知道该走 ① 还是 ②。
 
         ``ModelAwaitingReview`` 不是失败,是 ① 干完了、停在闸上 —— 把它当失败会让
         用户看到一条红色报错,而实际上该看到的是"去看模型"。
         """
         try:
-            rigged = self._builder.ensure(outfit_key, master, _SilentProgress())
+            rigged = self._builder.ensure(outfit_key, master, _SilentProgress(), extra_views)
         except ModelAwaitingReview:
             self._publish_for_review(outfit_key)
             with self._lock:
@@ -296,12 +453,31 @@ class _LazyModel3D:
     def __init__(self, allow_spend: bool) -> None:
         self._allow_spend = allow_spend
 
-    def image_to_3d(self, master: bytes, *, want: str = "GLB") -> bytes:
+    def image_to_3d(self, master: bytes, *, want: str = "GLB",
+                    extra_views: Mapping[str, bytes] | None = None) -> bytes:
+        return self._provider().image_to_3d(master, want=want, extra_views=extra_views)
+
+    def image_to_3d_with_url(self, master: bytes, *, want: str = "GLB",
+                             extra_views: Mapping[str, bytes] | None = None):
+        """建资产实际走的是这一条(要顺带拿上游产物 URL 做云到云)。
+        多视图必须在这里也接上 —— 只接上面那条的话,生产路径上多视图会被悄悄丢掉。"""
+        return self._provider().image_to_3d_with_url(
+            master, want=want, extra_views=extra_views
+        )
+
+    def _provider(self):
+        """按配置构造。空值一律沿用 provider 的构造默认 —— 没配过的部署行为不变。"""
+        from windup_framework.config.provider import settings as cfg
         from windup_framework.providers.render3d import TencentModel3DProvider
 
-        return TencentModel3DProvider(allow_spend=self._allow_spend).image_to_3d(
-            master, want=want
-        )
+        kw: dict = {"allow_spend": self._allow_spend}
+        if getattr(cfg, "render3d_generate_type", ""):
+            kw["generate_type"] = cfg.render3d_generate_type
+        if int(getattr(cfg, "render3d_face_count", 0) or 0) > 0:
+            kw["face_count"] = int(cfg.render3d_face_count)
+        if getattr(cfg, "render3d_enable_pbr", False):
+            kw["enable_pbr"] = True
+        return TencentModel3DProvider(**kw)
 
 
 class _LazyAutoRig:
@@ -309,29 +485,88 @@ class _LazyAutoRig:
         self._allow_spend = allow_spend
 
     def rig(self, model: bytes, *, want: str = "GLB", motion=None):
-        from windup_framework.providers.render3d import (
-            TencentAutoRigProvider,
-            TencentCosModelUploader,
-        )
+        from windup_framework.providers.render3d import TencentAutoRigProvider
 
         provider = TencentAutoRigProvider(
-            TencentCosModelUploader(), allow_spend=self._allow_spend
+            _MediaModelUploader(), allow_spend=self._allow_spend
         )
         return provider.rig(model, want=want, motion=motion)
 
 
+class _MediaModelUploader:
+    """把模型放到**我们自己的**对象存储,拿绑骨服务器取得到的公网 URL。
+
+    原先走 ``TencentCosModelUploader``(先传腾讯 COS 再提交)。那条路在生产部署机上
+    走不通 —— 2026-08-28 实测:
+
+        部署机 → 腾讯 COS          64KB 通(52MB/s) │ 256KB 超时 │ 1MB BrokenPipe
+        部署机 → 自家对象存储       1MB 0.32s
+        部署机 → 上游 API 网关      1MB 0.23s
+
+    只有 COS 这一条链路超过约 64KB 就断,别的目标 1MB 秒传;18MB 的模型死在
+    ``ssl.sendall``,而失败发生在 ``_upload``,``_submit`` 从没执行(所以没扣费,
+    但也永远建不成资产)。
+
+    换成自家存储还顺带省掉一次 18MB 上传:``_publish_model`` 本来就要把模型传到
+    同一个地方,原先等于同一份文件传两遍、第二遍还传到一条走不通的链路上。
+
+    腾讯认这个 URL —— 同一份模型、同一个接口,实测提交成功
+    (JobId=1484789196060876800,产物 20.4MB FBX、2 个 AnimationStack)。
+    用控制样本区分过错误码:URL 取不到时腾讯报 ``DownloadError: 文件下载失败``,
+    与我们遇到的 ``ServerError`` / ``RequestTimeout`` 是不同的错,后两者重试即过。
+    """
+
+    _NAME = {"model/gltf-binary": "rig-input.glb", "application/x-fbx": "rig-input.fbx"}
+
+    def upload(self, model: bytes, content_type: str) -> str:
+        from windup_app.server.media.model import MediaCategory, MediaUploadInput
+        from windup_app.server.media.service import service as media_service
+
+        # **取 .url**:``media_service.upload`` 返回的是 ``MediaUploadResult`` 对象,
+        # 不是字符串。返回整个对象的话,``_upload`` 那道"必须是 http(s) URL"的断言会拒,
+        # 而那发生在**图生 3D 已经付过 20 积分之后**、绑骨提交之前 ——
+        # 用户卡在"模型建好了但绑不了骨"的中间态(2026-08-28 生产实测踩到)。
+        #
+        # 分类取枚举成员而不是字面量:与 ``_publish_model`` 同一条理由 ——
+        # 字面量打错会在两笔钱都花完之后才炸,而错误文本只说"输入不合法"。
+        return media_service.upload(
+            model,
+            MediaUploadInput(
+                filename=self._NAME.get(content_type, "rig-input.bin"),
+                content_type=content_type,
+                size=len(model),
+                category=MediaCategory.MODEL_3D,
+            ),
+        ).url
+
+
 def _publish_model(data: bytes) -> str:
-    """把绑骨模型放到对象存储,拿到 ``outfits[].model_3d_url`` 要的那个 URL。"""
-    from windup_app.server.media.model import MediaUploadInput
+    """把绑骨模型放到对象存储,拿到 ``outfits[].model_3d_url`` 要的那个 URL。
+
+    后缀按 **magic bytes** 定,不写死 ``.glb``:绑骨接口即便被要求 GLB 也返回 FBX
+    (实测归档里每一份绑骨产物都是 FBX),而两个出帧台宿主都是**按 URL 后缀挑 loader**
+    的 —— FBX 挂成 ``.glb`` 会让它走 GLTFLoader,报一句 "Bad glTF",排查方向整个跑偏到
+    出帧台,而钱早就花完了。``Type`` 是供应商的自述,magic 才是事实。
+    """
+    from windup_framework.providers.render3d import sniff_format
+
+    from windup_app.server.media.model import MediaCategory, MediaUploadInput
     from windup_app.server.media.service import service as media_service
 
+    ext, content_type = (
+        ("fbx", "application/x-fbx")
+        if sniff_format(data) == "FBX"
+        else ("glb", "model/gltf-binary")
+    )
     return media_service.upload(
         data,
         MediaUploadInput(
-            filename="rigged.glb",
-            content_type="model/gltf-binary",
+            filename=f"rigged.{ext}",
+            content_type=content_type,
             size=len(data),
-            category="model-3d",
+            # 取枚举成员而不是字面量:分类是 pydantic 强校验的,字面量打错会在**两笔钱
+            # 都花完之后**才炸,而错误文本只说"输入不合法"。
+            category=MediaCategory.MODEL_3D,
         ),
     ).url
 
@@ -376,11 +611,15 @@ class _LazyOperations:
     def view(self, outfit_key: str) -> dict:
         return self._ops().view(outfit_key)
 
-    def build(self, outfit_key: str, master_url: str) -> dict:
-        return self._ops().build(outfit_key, master_url)
+    def build(self, outfit_key: str, master_url: str, stance: CharacterStance,
+              extra_view_urls: Mapping[str, str] | None = None) -> dict:
+        return self._ops().build(outfit_key, master_url, stance, extra_view_urls)
 
     def approve(self, outfit_key: str, master_url: str) -> dict:
         return self._ops().approve(outfit_key, master_url)
+
+    def add_motion(self, outfit_key: str, motion: str) -> dict:
+        return self._ops().add_motion(outfit_key, motion)
 
     def discard(self, outfit_key: str) -> dict:
         return self._ops().discard(outfit_key)

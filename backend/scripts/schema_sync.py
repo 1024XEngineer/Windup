@@ -48,8 +48,10 @@ def _load_models() -> None:
         pass
 
 
-def plan(engine: Engine, metadata=None) -> tuple[list[tuple[str, str, str]], list[str]]:
-    """返回 (可自动补的列, 需要人处理的项)。
+def plan(
+    engine: Engine, metadata=None,
+) -> tuple[list[tuple[str, str, str]], list[str], list[tuple[str, str]]]:
+    """返回 (可自动补的列, 需要人处理的项, 可放宽为可空的遗留列)。
 
     ``metadata`` 只为测试留:默认走全仓模型,传入时可以在隔离的库上验本函数自己。
     """
@@ -60,6 +62,8 @@ def plan(engine: Engine, metadata=None) -> tuple[list[tuple[str, str, str]], lis
     live_tables = set(insp.get_table_names())
     additive: list[tuple[str, str, str]] = []
     manual: list[str] = []
+    # 库里有、模型没有、且非空无默认 —— 这类会挡住 INSERT,放宽为可空。
+    relaxable: list[tuple[str, str]] = []
 
     for table in metadata.sorted_tables:
         if table.name not in live_tables:
@@ -89,11 +93,24 @@ def plan(engine: Engine, metadata=None) -> tuple[list[tuple[str, str, str]], lis
 
         # 反向:库里有、模型没有。删列会丢数据,本脚本只报不动 —— 不报的话
         # 巡检会在"模型删了一列"时返回干净,而库里那一列还带着数据。
+        #
+        # 但**非空且无默认**的遗留列不能只报:模型不再点名它,INSERT 就少一列,
+        # NOT NULL 直接违约 —— 整张表插不进去。实测 2026-08-28 生产库:
+        # windup_project.character_perspective 是 smallint NOT NULL 无默认,而 #676 把它
+        # 从模型删掉了,于是 INSERT 报 NotNullViolation,再被 project.py 的
+        # `except IntegrityError` 误报成「项目名称已存在」(#859)。
+        #
+        # 放宽为可空是**加法方向**的动作:不丢数据、不改类型、旧代码若还在跑也照样写得进。
+        # 真正的删列仍然交给人(数据要不要留是业务决定),这里只是让它不再挡住写入。
         for name in live.keys() - {c.name for c in table.columns}:
+            col_info = live[name]
+            if not col_info.get("nullable", True) and col_info.get("default") is None:
+                relaxable.append((table.name, name))
+                continue
             manual.append(
                 f"{table.name}.{name} 库里有而模型没有：删列会丢数据，请人工确认后手写 SQL"
             )
-    return additive, manual
+    return additive, manual, relaxable
 
 
 def main() -> int:
@@ -102,26 +119,33 @@ def main() -> int:
                     help="真的执行；缺省只报告，退出码非 0 表示有漂移")
     a = ap.parse_args()
 
-    additive, manual = plan(default_engine)
+    additive, manual, relaxable = plan(default_engine)
     for m in manual:
         print(f"[需人工] {m}")
     for tbl, col, ddl in additive:
         print(f"[可自动] ALTER TABLE {tbl} ADD COLUMN {ddl};")
+    for tbl, col in relaxable:
+        print(f"[可自动] ALTER TABLE {tbl} ALTER COLUMN {col} DROP NOT NULL;  "
+              f"-- 模型已弃用但库里还在,不放宽会挡住整张表的 INSERT")
 
     if manual:
         print(f"\n{len(manual)} 项需要人工处理，本脚本不动它们。")
-    if not additive:
+    if not additive and not relaxable:
         print("没有可自动补的列。")
         return 1 if manual else 0
 
     if not a.apply:
-        print(f"\n{len(additive)} 列待补。加 --apply 执行。")
+        print(f"\n{len(additive)} 列待补、{len(relaxable)} 列待放宽。加 --apply 执行。")
         return 1
 
     with default_engine.begin() as conn:
         for tbl, col, ddl in additive:
             conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {ddl}"))
             print(f"已补 {tbl}.{col}")
+        for tbl, col in relaxable:
+            # 只去掉 NOT NULL,**不删列** —— 数据要不要留是业务决定,而挡住写入不是。
+            conn.execute(text(f'ALTER TABLE {tbl} ALTER COLUMN "{col}" DROP NOT NULL'))
+            print(f"已放宽 {tbl}.{col}（模型已弃用，去掉 NOT NULL 以免挡住 INSERT）")
     return 1 if manual else 0
 
 

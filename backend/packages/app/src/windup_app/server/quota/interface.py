@@ -14,6 +14,7 @@ from windup_app.server.quota.model import (
     CreditTransactionView,
     InviteCode,
     InviteCodeView,
+    InviteRecordView,
 )
 
 
@@ -118,6 +119,16 @@ class QuotaService(ABC):
     @abstractmethod
     def generate_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
         """签发新邀请码：插入新行，仍有效的旧码立即过期但保留。"""
+
+    @abstractmethod
+    def list_invite_records(
+        self,
+        session: Session,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[InviteRecordView], int]:
+        """分页查询当前用户发出的邀请，返回脱敏明细和总数。"""
 
     @abstractmethod
     def require_active_invite(self, session: Session, code: str) -> InviteCode:

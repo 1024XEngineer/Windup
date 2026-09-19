@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
 import { quotaApis as defaultQuotaApis } from '@/entities'
@@ -14,6 +14,7 @@ import {
   useProductPopoverMotion,
 } from '@/shared/ui'
 import { PageBackButton } from './page-back-button'
+import './app-header.css'
 
 interface ProductNavigationItem {
   motionKey: string
@@ -120,6 +121,9 @@ export function AppHeader({
   const navigate = useNavigate()
   const session = useAuthSession()
   const accountMenu = useProductPopoverMotion()
+  const closeAccountMenu = accountMenu.close
+  const accountMenuExpanded = accountMenu.expanded
+  const accountRegionRef = useRef<HTMLDivElement>(null)
   const [inviteHintVisible, setInviteHintVisible] = useState(false)
   const creditBalance = useQuotaBalance(
     accountMenu.mounted && session.state.status === 'authenticated',
@@ -161,6 +165,24 @@ export function AppHeader({
 
     return () => window.clearTimeout(timer)
   }, [pathname, session.state.status])
+
+  useEffect(() => {
+    if (!accountMenuExpanded) return
+
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (!accountRegionRef.current?.contains(event.target as Node)) closeAccountMenu()
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeAccountMenu()
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [accountMenuExpanded, closeAccountMenu])
 
   function signOut() {
     window.sessionStorage.removeItem(inviteHintStorageKey)
@@ -327,7 +349,22 @@ export function AppHeader({
           })}
         </nav>
 
-        <div aria-label="账号" className="relative col-start-3 ml-auto shrink-0">
+        {/*
+          不挂 pointerleave 关闭：菜单是点击打开的，而它右对齐、比头像宽，
+          与头像之间还隔着 0.5rem。鼠标从头像走向菜单的任何一条路径都会先离开本区域，
+          于是菜单在指针到达之前就关掉，鼠标用户永远点不到里面的项。
+          关闭交给区域外 pointerdown、Escape 和焦点移出。
+        */}
+        <div
+          ref={accountRegionRef}
+          aria-label="账号"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              accountMenu.close()
+            }
+          }}
+          className="relative col-start-3 ml-auto shrink-0"
+        >
           {session.state.status === 'booting' ? (
             <span
               aria-label="正在恢复登录状态"
@@ -394,7 +431,13 @@ export function AppHeader({
                     accountMenu.expanded ? 'scale-110' : 'scale-100'
                   }`}
                 >
-                  {(session.state.user.nickname || session.state.user.email).slice(0, 1)}
+                  <img
+                    data-testid="default-account-avatar"
+                    src="/windup-mark.svg"
+                    alt=""
+                    aria-hidden="true"
+                    className="h-5 w-5 object-contain"
+                  />
                 </span>
                 <span className="hidden truncate sm:inline">
                   {session.state.user.nickname || session.state.user.email}
@@ -444,6 +487,13 @@ export function AppHeader({
                   className={`${productMenuItemClass} text-app-ink-soft`}
                 >
                   账号中心
+                </Link>
+                <Link
+                  to="/account?section=security"
+                  onClick={accountMenu.close}
+                  className={`${productMenuItemClass} text-app-ink-soft`}
+                >
+                  修改密码
                 </Link>
                 <button
                   type="button"

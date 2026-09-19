@@ -33,7 +33,8 @@ const RUN_STATUS_LABELS: Readonly<Record<DerivedRunState, string>> = {
 }
 
 const RUN_STATUS_STYLES: Readonly<Record<DerivedRunState, string>> = {
-  active: 'border-sky-200 bg-sky-50 text-sky-800',
+  active:
+    'border-sky-200 dark:border-app-line bg-sky-50 dark:bg-app-accent-muted text-sky-800 dark:text-app-ink-soft',
   failed: 'border-rose-200 bg-rose-50 text-rose-800',
   completed: 'border-emerald-200 bg-emerald-50 text-emerald-800',
 }
@@ -109,16 +110,21 @@ export function HistoryPage({ reader }: HistoryPageProps) {
 
   return (
     <section className="mx-auto w-full max-w-5xl px-6 py-8" aria-labelledby="history-title">
-      <header className="border-b border-slate-200 pb-6">
-        <p className="text-xs font-semibold text-slate-500">HISTORY</p>
-        <h1 id="history-title" className="mt-2 text-3xl font-semibold text-slate-950">
+      <header className="border-b border-slate-200 dark:border-app-line pb-6">
+        <p className="text-xs font-semibold text-slate-500 dark:text-app-muted">HISTORY</p>
+        <h1
+          id="history-title"
+          className="mt-2 text-3xl font-semibold text-slate-950 dark:text-app-ink"
+        >
           创作历史
         </h1>
-        <p className="mt-2 text-sm text-slate-600">查看每条工作流当前保存的节点进度。</p>
+        <p className="mt-2 text-sm text-slate-600 dark:text-app-muted">
+          查看每条工作流当前保存的节点进度。
+        </p>
       </header>
 
       {loading ? (
-        <p role="status" className="py-10 text-sm text-slate-600">
+        <p role="status" className="py-10 text-sm text-slate-600 dark:text-app-muted">
           正在读取历史记录...
         </p>
       ) : error !== null ? (
@@ -129,9 +135,11 @@ export function HistoryPage({ reader }: HistoryPageProps) {
           {error}
         </p>
       ) : runs.length === 0 ? (
-        <div className="mt-8 border border-dashed border-slate-300 p-10 text-center">
-          <h2 className="text-base font-semibold text-slate-900">还没有创作记录</h2>
-          <p className="mt-2 text-sm text-slate-600">
+        <div className="mt-8 border border-dashed border-slate-300 dark:border-app-line-strong p-10 text-center">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-app-ink">
+            还没有创作记录
+          </h2>
+          <p className="mt-2 text-sm text-slate-600 dark:text-app-muted">
             History 暂未接入产品入口；后端列表接口确定后再启用。
           </p>
         </div>
@@ -143,11 +151,13 @@ export function HistoryPage({ reader }: HistoryPageProps) {
                 <div className="mb-3 flex items-center gap-2">
                   <h2
                     id={`history-${section.state}`}
-                    className="text-sm font-semibold text-slate-900"
+                    className="text-sm font-semibold text-slate-900 dark:text-app-ink"
                   >
                     {section.title}
                   </h2>
-                  <span className="text-xs text-slate-500">{section.runs.length}</span>
+                  <span className="text-xs text-slate-500 dark:text-app-muted">
+                    {section.runs.length}
+                  </span>
                 </div>
                 <div className="space-y-3">
                   {section.runs.map((run) => (
@@ -168,20 +178,25 @@ function RunCard({ run }: { run: WorkflowRun }) {
   const passedCount = run.nodes.filter((node) => node.status === 'passed').length
 
   return (
-    <article data-testid="history-run" className="border border-slate-200 bg-white p-5">
+    <article
+      data-testid="history-run"
+      className="border border-slate-200 dark:border-app-line bg-white dark:bg-app-surface-raised p-5"
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <span className={`border px-2 py-0.5 text-xs font-medium ${RUN_STATUS_STYLES[state]}`}>
             {RUN_STATUS_LABELS[state]}
           </span>
-          <h3 className="mt-2 text-base font-semibold text-slate-950">工作流 {shortId(run.id)}</h3>
-          <p className="mt-1 text-xs text-slate-500">
+          <h3 className="mt-2 text-base font-semibold text-slate-950 dark:text-app-ink">
+            工作流 {shortId(run.id)}
+          </h3>
+          <p className="mt-1 text-xs text-slate-500 dark:text-app-muted">
             版本 {run.version} · 节点 {passedCount} / {run.nodes.length}
           </p>
         </div>
         <Link
           to={`/workflow-editor/${encodeURIComponent(run.id)}`}
-          className="border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-800 hover:border-slate-500"
+          className="border border-slate-300 dark:border-app-line-strong px-3 py-2 text-xs font-semibold text-slate-800 dark:text-app-ink-soft hover:border-slate-500 dark:hover:border-app-line-strong"
         >
           {state === 'completed' ? '查看记录' : '继续任务'}
         </Link>
@@ -191,10 +206,14 @@ function RunCard({ run }: { run: WorkflowRun }) {
         {run.nodes.map((node) => (
           <li
             key={node.id}
-            className="flex items-center justify-between gap-3 bg-slate-50 px-3 py-2 text-xs"
+            className="flex items-center justify-between gap-3 bg-slate-50 dark:bg-app-surface-muted px-3 py-2 text-xs"
           >
-            <span className="text-slate-800">{NODE_LABELS[node.type] ?? node.type}</span>
-            <span className="text-slate-500">{NODE_STATUS_LABELS[node.status]}</span>
+            <span className="text-slate-800 dark:text-app-ink-soft">
+              {NODE_LABELS[node.type] ?? node.type}
+            </span>
+            <span className="text-slate-500 dark:text-app-muted">
+              {NODE_STATUS_LABELS[node.status]}
+            </span>
           </li>
         ))}
       </ol>

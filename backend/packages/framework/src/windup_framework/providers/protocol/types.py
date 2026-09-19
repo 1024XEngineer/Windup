@@ -34,6 +34,10 @@ class VideoRequest:
     size: str
     mode: str
     first_frame: bytes
+    #: 首帧的公网地址。**上传是 IO,协议层不做 IO**,所以由 provider 先传好再填进来;
+    #: 只吃 URL 的协议面(veo)拿不到它就必须拒建单,不能退回 base64 —— 那条路是
+    #: status=queued 之后到生成阶段才 failed,而费用可能已经产生。
+    first_frame_url: str | None = None
 
 
 class JobProtocol(Protocol):

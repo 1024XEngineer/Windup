@@ -55,6 +55,29 @@ def test_omitting_cell_h_is_pixel_identical_to_square_cell():
         assert np.array_equal(np.asarray(x), np.asarray(y))
 
 
+def test_resample_defaults_to_nearest_but_accepts_lanczos_for_continuous_art():
+    """最后一公里要按帧的实际像素语义选采样,而不是所有画风一律 NEAREST。"""
+    arr = np.zeros((64, 64, 4), dtype=np.uint8)
+    arr[:, :, 3] = 255
+    arr[:, 1::2, :3] = 255
+    src = [Image.fromarray(arr, "RGBA")]
+
+    default = align_bottom_center(src, cell=32, fill_h=0.5, ref_height=64.0)[0]
+    nearest = align_bottom_center(
+        src, cell=32, fill_h=0.5, ref_height=64.0,
+        resample=Image.Resampling.NEAREST,
+    )[0]
+    lanczos = align_bottom_center(
+        src, cell=32, fill_h=0.5, ref_height=64.0,
+        resample=Image.Resampling.LANCZOS,
+    )[0]
+
+    assert np.array_equal(np.asarray(default), np.asarray(nearest))
+    rgba = np.asarray(lanczos)
+    lanczos_rgb = rgba[:, :, :3][rgba[:, :, 3] > 128]
+    assert any(0 < int(v) < 255 for v in np.unique(lanczos_rgb))
+
+
 def test_doubling_cell_doubles_subject_height():
     """指定 512 时交付帧主体高度翻倍 —— 这正是"交付帧太小"的修法。"""
     src = _frames()

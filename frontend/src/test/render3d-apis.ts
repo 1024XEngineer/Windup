@@ -40,6 +40,10 @@ export function absentAsset(overrides: Partial<Render3DAsset> = {}): Render3DAss
     state: 'absent',
     model3dUrl: null,
     reviewModelUrl: null,
+    // 两个都是必填。替身给 undefined 的话,"面板拿不到动作表"这一类回归在这里
+    // 看不出来 —— 类型对不上才是它该有的样子。
+    bakedMotions: [],
+    bakeableMotions: [],
     error: null,
     cost: RENDER3D_COST,
     ...overrides,
@@ -71,6 +75,8 @@ export function stubRender3DApis(overrides: Partial<Render3DApis> = {}): Render3
     getOutfitAsset: async () => absentAsset(),
     buildOutfitAsset: async () => absentAsset({ state: 'awaiting_review' }),
     approveOutfitAsset: async () => absentAsset({ state: 'ready' }),
+    addOutfitMotion: async (_c, _o, motion) =>
+      absentAsset({ state: 'ready', bakedMotions: [motion] }),
     discardOutfitAsset: async () => absentAsset(),
     getBakeJob: async () => null,
     putBakeFrame: async () => 1,

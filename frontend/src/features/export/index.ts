@@ -1,14 +1,16 @@
-import type {
-  Action,
-  ActionSequence,
-  Character,
-  CharacterApis,
-  DirectionalMovement,
-  Generation,
-  WorkflowNode,
-  WorkflowRun,
+import {
+  assertMultiDirectionAssetPublishable,
+  characterDataVersionForWrite,
+  getDirectionProfile,
+  type Action,
+  type ActionSequence,
+  type Character,
+  type CharacterApis,
+  type DirectionalMovement,
+  type Generation,
+  type WorkflowNode,
+  type WorkflowRun,
 } from '@/entities'
-import { getDirectionProfile } from '@/entities'
 
 export interface PublishReviewedActionInput {
   character: Character
@@ -105,8 +107,21 @@ export function createCharacterAssetPublisher(
 
       const outfits = [...character.outfits]
       outfits[outfitIndex] = { ...targetOutfit, actions }
+      const nextActions = outfits.flatMap((outfit) => outfit.actions)
+      const dataVersion = characterDataVersionForWrite(
+        character.dataVersion,
+        character.templates ?? [],
+        nextActions,
+      )
+      assertMultiDirectionAssetPublishable(
+        dataVersion,
+        directionalMovement,
+        character.templates ?? [],
+        nextActions,
+      )
       return characterApis.update({
         ...character,
+        dataVersion,
         outfits,
       })
     },

@@ -134,3 +134,52 @@ def test_jump_gets_more_headroom_than_attack():
 def test_invalid_ratio_raises(bad: float):
     with pytest.raises(ValueError, match="ratio"):
         add_headroom(_png(32, 32), ratio=bad)
+
+
+def _rgba_png(w: int = 64, h: int = 90) -> bytes:
+    """带透明背景的母版：中间一块不透明主体，四周 alpha=0 且 RGB 为 0。
+
+    RGB 取 0 是刻意的 —— 透明像素的 RGB 本来就是未定义值，PIL 抠图产物实测就是 0。
+    这正是 ``convert("RGB")`` 会把它当真、整幅变黑的那个输入。
+    """
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    im.paste((20, 40, 200, 255), (w // 4, h // 4, w * 3 // 4, h * 3 // 4))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_headroom_keeps_alpha_instead_of_flattening_it_to_black():
+    """带 alpha 的母版补顶空间后必须仍带 alpha。
+
+    曾经这里无条件 ``convert("RGB")``：透明像素的 RGB 是未定义值（实际为 0），
+    整幅底色因此变成纯黑。而 ``add_headroom`` 只被 attack / jump 调用，所以只有这两个
+    动作的 i2v 首帧是黑底 —— 模型会自己画一圈白描边把角色从黑底里分出来，而黑发黑裤
+    这类深色角色与黑底同色，抠图会在角色内部打洞。
+    """
+    out = Image.open(io.BytesIO(add_headroom(_rgba_png(), ratio=0.7)))
+    assert out.mode == "RGBA", f"补顶空间后 mode={out.mode}，alpha 被丢了"
+    assert out.getpixel((2, 2))[3] == 0, "顶部新增区域应保持透明，而不是被填成不透明底色"
+
+
+def test_attack_and_jump_first_frames_do_not_go_out_on_a_black_canvas():
+    """端到端：母版带 alpha 时，三个动作送进 i2v 的画布底色都应是声明的那一个。
+
+    只断言 ``add_headroom`` 保住 alpha 还不够 —— 真正出问题的是它下游那一步：
+    不透明输入会让 ``fit_first_frame`` 沿用角点色补边，黑角点就把整张 1280x720 铺黑。
+    这条把两步接起来测，锁的是用户实际看到的那个量。
+    """
+    from windup_framework.providers.protocol.openai_video import (
+        FIRST_FRAME_BG,
+        fit_first_frame,
+    )
+
+    master = _rgba_png()
+    for action in ("walk", "attack", "jump"):
+        canvas = Image.open(
+            io.BytesIO(fit_first_frame(prepare_master(master, action), "1280x720"))
+        ).convert("RGB")
+        corner = canvas.getpixel((4, 4))
+        assert all(abs(a - b) <= 12 for a, b in zip(corner, FIRST_FRAME_BG)), (
+            f"{action} 送出去的画布角点 {corner}，应为声明的 {FIRST_FRAME_BG}"
+        )

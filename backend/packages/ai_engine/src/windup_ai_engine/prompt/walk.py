@@ -14,7 +14,7 @@ __all__ = ["build_walk_prompt"]
 
 _DOC = "walk.md"
 
-def build_walk_prompt(facing: Facing | str = Facing.SIDE) -> str:
+def build_walk_prompt(facing: Facing | str = Facing.SIDE, *, detail: str = "") -> str:
     """按母版朝向生成走路正文。
 
     Args:
@@ -23,4 +23,4 @@ def build_walk_prompt(facing: Facing | str = Facing.SIDE) -> str:
 
     """
     # 过一遍 Facing() 构造:非法值要炸,不能静默落到某个模板。
-    return with_framing(load_section(_DOC, Facing(facing).value))
+    return with_framing(load_section(_DOC, Facing(facing).value), detail)

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from windup_app.server.orchestrator.model import (
     CharacterActionOutput,
     CharacterDirectionSetOutput,
+    CharacterFirstFrameOutput,
     CharacterImageOutput,
     CharacterViewSheetCandidate,
     CharacterViewSheetCell,
@@ -370,6 +371,7 @@ def _deserialize_result(
     raw: dict | None,
 ) -> (
     CharacterImageOutput
+    | CharacterFirstFrameOutput
     | CharacterDirectionSetOutput
     | CharacterViewSheetOutput
     | CharacterActionOutput
@@ -381,6 +383,13 @@ def _deserialize_result(
     if result_type == "character_image":
         return CharacterImageOutput(
             type=raw.get("type", "character_image"),
+            image_urls=raw.get("image_urls", []),
+            direction=ActionDirection(raw.get("direction", ActionDirection.EAST.value)),
+            quality=raw.get("quality"),
+        )
+    if result_type == GenerationType.CHARACTER_FIRST_FRAME.value:
+        return CharacterFirstFrameOutput(
+            type=raw.get("type", GenerationType.CHARACTER_FIRST_FRAME.value),
             image_urls=raw.get("image_urls", []),
             direction=ActionDirection(raw.get("direction", ActionDirection.EAST.value)),
             quality=raw.get("quality"),
@@ -407,6 +416,8 @@ def _deserialize_result(
             # 落库再读回的这条路上漏掉它，查询接口与断线重连拿到的已完成任务就没有几何，
             # 前端只能回落到自己那份常数 —— 而实时事件那条路是好的，两条路给出不同的导出结果。
             geometry=raw.get("geometry"),
+            rig_facts=raw.get("rig_facts"),
+            root_motion=raw.get("root_motion"),
         )
     if result_type == "character_direction_set":
         return CharacterDirectionSetOutput(

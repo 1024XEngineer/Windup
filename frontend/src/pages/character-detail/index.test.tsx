@@ -55,8 +55,7 @@ describe('CharacterDetailPage', () => {
     expect(screen.queryByText('GIF')).toBeNull()
     expect(screen.getByRole('button', { name: '增加动作' }).hasAttribute('disabled')).toBe(false)
     const assetActions = screen.getByRole('group', { name: '角色资产操作' })
-    const exportEntry = within(assetActions).getByRole('button', { name: '导出资产包' })
-    expect(exportEntry.className).toContain('rounded-full')
+    const exportEntry = within(assetActions).getByRole('button', { name: /^导出/ })
     const pixelPerfectEntry = within(assetActions).getByRole('button', { name: '完美像素化' })
     const playtestEntry = within(assetActions).getByRole('link', {
       name: '在预览台打开当前造型',
@@ -64,7 +63,7 @@ describe('CharacterDetailPage', () => {
     for (const action of [exportEntry, pixelPerfectEntry, playtestEntry]) {
       expect(action.querySelector('svg')).toBeTruthy()
       expect(action.className).toContain('min-h-10')
-      expect(action.className).toContain('rounded-full')
+      expect(action.className).toContain('rounded-app-control')
     }
     expect(screen.queryByRole('button', { name: '完美像素画' })).toBeNull()
     expect(screen.queryByText('当前阶段')).toBeNull()
@@ -74,6 +73,31 @@ describe('CharacterDetailPage', () => {
     expect(screen.queryByText('导出能力待 PR #97 合并并完成资产字段接线')).toBeNull()
     expect(playtestEntry.getAttribute('href')).toBe('/playtest/51/outfit-default')
     expect(playtestEntry.parentElement?.className).toContain('items-center')
+  })
+
+  it('collects both export paths into one menu with icon-labelled items', async () => {
+    renderCharacter('51')
+    await screen.findByRole('heading', { name: '轻装信使' })
+
+    const trigger = within(screen.getByRole('group', { name: '角色资产操作' })).getByRole(
+      'button',
+      {
+        name: /^导出/,
+      },
+    )
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('menu', { name: '导出方式' })).toBeNull()
+
+    fireEvent.click(trigger)
+
+    const menu = screen.getByRole('menu', { name: '导出方式' })
+    const items = within(menu).getAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      '导出资产包',
+      '一键导入 Cocos',
+      '下载 Cocos 包',
+    ])
+    for (const item of items) expect(item.querySelector('svg')).toBeTruthy()
   })
 
   it('routes both add-action choices to the character existing WorkflowRun', async () => {
@@ -301,9 +325,9 @@ describe('CharacterDetailPage', () => {
 
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
     const templates = screen.getByRole('region', { name: '角色母版方向' })
-    expect(templates.className).toContain('grid-cols-3')
-    expect(templates.children).toHaveLength(9)
-    expect(within(templates).getByLabelText('八向宫格中心留空')).toBeTruthy()
+    const grid = templates.querySelector('[data-direction-grid]')
+    expect(grid?.className).toContain('grid-cols-[repeat(3,6rem)]')
+    expect(grid?.children).toHaveLength(9)
     expect(
       within(templates)
         .getAllByRole('img')

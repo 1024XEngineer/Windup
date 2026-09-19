@@ -42,6 +42,9 @@ export interface AuthSessionValue {
     options?: { keepSession?: boolean },
   ): Promise<void>
   changePassword(input: Parameters<UserApis['changePassword']>[0]): Promise<void>
+  resetPassword(input: Parameters<UserApis['resetPassword']>[0]): Promise<void>
+  sendPasswordChangeCode(): Promise<void>
+  changePasswordWithCode(input: Parameters<UserApis['changePasswordWithCode']>[0]): Promise<void>
   logout(): Promise<void>
 }
 
@@ -368,6 +371,18 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
     },
     [apis, clearSession],
   )
+  const resetPassword = useCallback(
+    (input: Parameters<UserApis['resetPassword']>[0]) => apis.resetPassword(input),
+    [apis],
+  )
+  const sendPasswordChangeCode = useCallback(() => apis.sendPasswordChangeCode(), [apis])
+  const changePasswordWithCode = useCallback(
+    async (input: Parameters<UserApis['changePasswordWithCode']>[0]) => {
+      await apis.changePasswordWithCode(input)
+      clearSession('password-changed')
+    },
+    [apis, clearSession],
+  )
   const logout = useCallback(async () => {
     const refreshToken = refreshTokenRef.current
     clearSession('logged-out')
@@ -385,15 +400,21 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
       updateNickname,
       setPassword,
       changePassword,
+      resetPassword,
+      sendPasswordChangeCode,
+      changePasswordWithCode,
       logout,
     }),
     [
-      changePassword,
       login,
       loginByCode,
       logout,
       refreshCurrentUser,
       register,
+      changePassword,
+      resetPassword,
+      changePasswordWithCode,
+      sendPasswordChangeCode,
       sendCode,
       setPassword,
       state,

@@ -17,11 +17,11 @@ _DOC = "jump.md"
 JUMP_PHASES = ("crouch", "rise", "apex", "fall", "land")
 
 
-def build_jump_prompt(facing: Facing | str = Facing.SIDE) -> str:
+def build_jump_prompt(facing: Facing | str = Facing.SIDE, *, detail: str = "") -> str:
     """按母版朝向生成跳跃正文。
 
     Args:
         facing: :class:`Facing` 成员(或其等价字符串),**必须与母版朝向一致**。
 
     """
-    return with_framing(load_section(_DOC, Facing(facing).value))
+    return with_framing(load_section(_DOC, Facing(facing).value), detail)

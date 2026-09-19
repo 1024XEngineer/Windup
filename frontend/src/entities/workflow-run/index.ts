@@ -165,6 +165,8 @@ export interface CreateWorkflowRunInput {
 
 export interface WorkflowRunApis {
   create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
+  /** 当前用户跨项目的最近运行记录，供 Quick Start 历史侧栏使用。 */
+  listRecent?(query?: PageQuery): Promise<Paged<WorkflowRun>>
   /** 后端只返回未软删除的运行记录。 */
   listByProject?(projectId: string, query?: PageQuery): Promise<Paged<WorkflowRun>>
   get(id: WorkflowRun['id']): Promise<WorkflowRun>

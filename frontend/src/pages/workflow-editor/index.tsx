@@ -7,10 +7,12 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useParams } from 'react-router'
+import { UploadSimple } from '@phosphor-icons/react'
 
 import {
+  characterApis,
   projectApis,
   type ArtStyle,
   type ActionPreset,
@@ -42,7 +44,15 @@ import {
   ExportButton,
   type ExportPackageModel,
 } from '@/features/export-package'
-import { FrameAnimationPlayer, GenerationPreviewCard, GenerationProgressCopy } from '@/shared/ui'
+import {
+  FrameAnimationPlayer,
+  GenerationPreviewCard,
+  GenerationProgressCopy,
+  IMAGE_UPLOAD_ACCEPT,
+  IMAGE_UPLOAD_HINT,
+  useImageDropTarget,
+} from '@/shared/ui'
+import { Render3DAssetPanel } from './render3d-panel'
 import { loadDefaultActionPresets, type WorkflowEditorSession } from './runtime'
 import { useWorkflowEditorSession } from './use-workflow-editor-session'
 import { WorkflowEditorView, type WorkflowCardNode } from './workflow-editor-view'
@@ -639,6 +649,7 @@ function CharacterSetupContent({
   const [uploadingReference, setUploadingReference] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const uploadAbortRef = useRef<AbortController | null>(null)
+  const referenceInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => () => uploadAbortRef.current?.abort(), [])
 
@@ -667,6 +678,12 @@ function CharacterSetupContent({
       })
   }
 
+  const referenceDropTarget = useImageDropTarget({
+    disabled: branchBusy || uploadingReference,
+    onFile: uploadReferenceImage,
+    onError: setUploadError,
+  })
+
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.status === 'passed') return <p className={CARD_SUMMARY}>角色描述已确认</p>
   return (
@@ -692,18 +709,49 @@ function CharacterSetupContent({
       </label>
       <div className="grid gap-[7px]">
         <span className="text-[9px] font-[750] text-app-muted">角色参考图（选填）</span>
-        <input
-          type="file"
-          accept="image/*"
-          aria-label="角色参考图"
-          className="block w-full rounded-lg border border-[var(--color-app-line)] bg-app-surface text-[10px] text-[var(--color-app-muted)] file:mr-3 file:border-0 file:border-r file:border-[var(--color-app-line)] file:bg-transparent file:px-3 file:py-2 file:text-[10px] file:font-[700] file:text-[var(--color-app-ink)]"
-          disabled={branchBusy || uploadingReference}
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0]
-            event.currentTarget.value = ''
-            if (file) uploadReferenceImage(file)
-          }}
-        />
+        <div
+          role="group"
+          aria-label="角色参考图上传区"
+          data-drag-active={referenceDropTarget.isDragging}
+          {...referenceDropTarget.dropTargetProps}
+          className={`rounded-xl border border-dashed transition-[border-color,background-color,box-shadow] duration-150 ${
+            referenceDropTarget.isDragging
+              ? 'border-app-accent bg-app-accent-soft shadow-[0_0_0_2px_var(--color-app-accent-soft)]'
+              : 'border-app-line-strong bg-app-surface hover:border-app-accent hover:bg-app-surface-raised'
+          }`}
+        >
+          <input
+            ref={referenceInputRef}
+            type="file"
+            accept={IMAGE_UPLOAD_ACCEPT}
+            aria-label="角色参考图"
+            className="sr-only"
+            disabled={branchBusy || uploadingReference}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0]
+              event.currentTarget.value = ''
+              if (file) referenceDropTarget.selectFile(file)
+            }}
+          />
+          <button
+            type="button"
+            disabled={branchBusy || uploadingReference}
+            onClick={() => referenceInputRef.current?.click()}
+            className="flex min-h-24 w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-app-accent-muted text-app-accent">
+              <UploadSimple aria-hidden="true" size={18} weight="bold" />
+            </span>
+            <span className="grid min-w-0 gap-1">
+              <strong className="text-[10px] font-[750] text-app-ink-soft">
+                {referenceDropTarget.isDragging ? '松开以上传参考图' : '拖入图片，或点击选择'}
+              </strong>
+              <small className="text-[9px] leading-[1.45] text-app-faint">
+                {IMAGE_UPLOAD_HINT}
+              </small>
+            </span>
+          </button>
+        </div>
         {uploadingReference ? (
           <small role="status" className="text-[9px] font-[750] text-app-muted">
             正在上传参考图…
@@ -832,7 +880,18 @@ function CharacterTemplateContent({
       }
     })
     if (!masterConfirmed) {
-      const images = groups[0]?.images ?? []
+      const generated = groups[0]?.images ?? []
+      // 用户上传的参考图也是一个候选。他手上已经有成品图时，再生成一遍只会更差 ——
+      // 而「直接用我这张」此前是个不存在的选项，只能眼看着系统拿它去重画。
+      const setupNode = findDependency(input.run, node, 'character-setup')
+      const uploaded = setupNode?.input.referenceMedia?.[0]
+      const uploadedUrl = uploaded ? String(uploaded) : null
+      const images = uploadedUrl
+        ? [
+            { url: uploadedUrl, uploaded: true },
+            ...generated.map((i) => ({ ...i, uploaded: false })),
+          ]
+        : generated.map((i) => ({ ...i, uploaded: false }))
       const selectedImageUrl =
         images.find(
           (image) => image.url === input.selectedImages[selectionKey(node.id, anchorDirection)],
@@ -845,7 +904,7 @@ function CharacterTemplateContent({
                 type="button"
                 key={image.url}
                 className={THUMB_BUTTON}
-                aria-label={`选择角色候选 ${index + 1}`}
+                aria-label={image.uploaded ? '选择我上传的参考图' : `选择角色候选 ${index + 1}`}
                 aria-pressed={
                   input.selectedImages[selectionKey(node.id, anchorDirection)] === image.url
                 }
@@ -856,7 +915,16 @@ function CharacterTemplateContent({
                   }))
                 }
               >
-                <WorkflowImage src={image.url} alt={`角色候选 ${index + 1}`} variant="thumbnail" />
+                <WorkflowImage
+                  src={image.url}
+                  alt={image.uploaded ? '我上传的参考图' : `角色候选 ${index + 1}`}
+                  variant="thumbnail"
+                />
+                {image.uploaded ? (
+                  <small className="mt-[3px] block text-[9px] font-[750] text-app-accent">
+                    我上传的图
+                  </small>
+                ) : null}
               </button>
             ))}
           </div>
@@ -869,7 +937,9 @@ function CharacterTemplateContent({
               branchBusy={branchBusy}
             />
           ) : (
-            <p className={CARD_TEXT}>先选一张候选，再决定是否把它定为母版。</p>
+            <p className={CARD_TEXT}>
+              先选一张，再决定是否把它定为母版。已上传的参考图也可以直接选。
+            </p>
           )}
         </div>
       )
@@ -951,6 +1021,14 @@ function CharacterTemplateContent({
         <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
         <div className="grid gap-2" role="group" aria-label="角色母版操作">
           {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
+          {outfit ? (
+            <Render3DAssetPanelHost
+              input={input}
+              outfitId={outfit.id}
+              masterUrl={node.selectedImageUrl}
+              disabled={branchBusy}
+            />
+          ) : null}
           <div className="grid grid-cols-2 gap-2" role="group" aria-label="调整角色母版">
             <button
               type="button"
@@ -1164,6 +1242,46 @@ function useMasterPrecheck(input: ProjectionInput, imageUrl: string): MasterPrec
   }, [height, imageUrl, render3d, width])
 
   return state
+}
+
+/** 把母版预检接到面板上。面板只吃结果，不知道预检怎么来的。 */
+function Render3DAssetPanelHost({
+  input,
+  outfitId,
+  masterUrl,
+  disabled,
+}: {
+  input: ProjectionInput
+  outfitId: string
+  masterUrl: string
+  disabled: boolean
+}) {
+  const precheck = useMasterPrecheck(input, masterUrl)
+  const characterId = input.character?.id
+  // 角色数据上挂着 model_3d_url 与 rigged_motions,而「生产方式」等节点读的是这份数据。
+  // 建资产不在角色数据的更新路径上,所以建完必须把它重取一遍 —— 不重取的话,
+  // 用户刚在这里看到「3D 资产已就绪」,走到下游却被告知「该造型暂无绑骨 3D 模型」。
+  const refreshCharacter = useCallback(() => {
+    if (!characterId) return
+    void characterApis
+      .get(characterId)
+      .then((fresh) => input.setCharacter(fresh))
+      .catch(() => {
+        // 重取失败不该打断建资产那条主线:资产本身已经建成了,这里只是同步一份视图。
+        // 下游最坏退回到"需要刷新页面",与修这条之前一样,不会更糟。
+      })
+  }, [characterId, input])
+  if (!characterId) return null
+  return (
+    <Render3DAssetPanel
+      render3d={input.render3d}
+      characterId={characterId}
+      outfitId={outfitId}
+      precheck={precheck.status === 'done' ? precheck.report : null}
+      disabled={disabled}
+      onAssetChanged={refreshCharacter}
+    />
+  )
 }
 
 const WARNING_TITLE: Record<MasterWarning['code'], string> = {
@@ -2048,19 +2166,32 @@ function WorkflowCard({ data, selected }: NodeProps<WorkflowCardNode>) {
 function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInput }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const generationRole =
+  const viewSheetRole =
     node.type === 'character-template'
+      ? (node.generations.find(
+          (reference) =>
+            reference.role === 'character_four_view' || reference.role === 'character_eight_view',
+        )?.role ?? null)
+      : null
+  const generationRole =
+    viewSheetRole ??
+    (node.type === 'character-template'
       ? 'character_template'
       : node.type === 'action-first-frame'
         ? 'first_frame'
         : node.type === 'action-full-frame'
           ? 'complete_animation'
-          : null
+          : null)
   const failedDirections = generationRole
-    ? getDirectionProfile(input.project.directionalMovement).generationDirections.filter(
-        (direction) =>
-          input.generations[generationKey(node.id, generationRole, direction)]?.status === 'failed',
-      )
+    ? viewSheetRole
+      ? input.generations[generationKey(node.id, viewSheetRole, 'east')]?.status === 'failed'
+        ? (['east'] as const)
+        : []
+      : getDirectionProfile(input.project.directionalMovement).generationDirections.filter(
+          (direction) =>
+            input.generations[generationKey(node.id, generationRole, direction)]?.status ===
+            'failed',
+        )
     : []
   const resumeBlocked =
     input.resumeBlocked && node.status === 'active' && node.phase === 'generating'
@@ -2070,7 +2201,23 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
         <p className={CARD_SUMMARY}>
           {node.status === 'failed' ? (node.error ?? '生成失败') : '生成任务恢复失败'}
         </p>
-        {failedDirections.length > 0 ? (
+        {viewSheetRole && failedDirections.length > 0 ? (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, () =>
+                input.controller.retryGenerationDirection(node.id, 'east', {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                }),
+              )
+            }
+          >
+            重新生成整张方向立绘
+          </button>
+        ) : failedDirections.length > 0 ? (
           failedDirections.map((direction) => (
             <button
               type="button"
@@ -2106,8 +2253,15 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
     )
   }
   if (node.phase === 'generating') {
-    const feedback =
-      node.type === 'character-template'
+    const generatingViewSheet =
+      node.type === 'character-template' &&
+      node.generations.some(
+        (reference) =>
+          reference.role === 'character_four_view' || reference.role === 'character_eight_view',
+      )
+    const feedback = generatingViewSheet
+      ? (['character-view-sheet', '方向立绘生成进度', '方向立绘生成预览'] as const)
+      : node.type === 'character-template'
         ? (['character-template', '身份母版生成进度', '身份母版生成预览'] as const)
         : node.type === 'action-first-frame'
           ? (['action-first-frame', '动作首帧生成进度', '动作首帧生成预览'] as const)

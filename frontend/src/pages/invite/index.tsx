@@ -3,8 +3,11 @@ import { Copy } from '@phosphor-icons/react'
 
 import inviteCharacterArtwork from '@/assets/account/illustrations/invite-character.webp'
 import { quotaApis as defaultQuotaApis } from '@/entities'
-import type { InviteCode, QuotaApis } from '@/entities'
+import type { InviteCode, InviteRecord, QuotaApis } from '@/entities'
 import { useQuotaBalance } from '@/features/quota'
+import { Pagination } from '@/shared/ui'
+
+const INVITE_RECORD_PAGE_SIZE = 5
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -30,6 +33,17 @@ function invitationUrl(code: string): string {
   return `${window.location.origin}/?${query}`
 }
 
+function formatInviteDate(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(date)
+}
+
 export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis }) {
   const balance = useQuotaBalance(true, apis)
   const [invite, setInvite] = useState<InviteCode | null>(null)
@@ -38,6 +52,12 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
   const [inviteRequestVersion, setInviteRequestVersion] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [records, setRecords] = useState<InviteRecord[]>([])
+  const [recordsTotal, setRecordsTotal] = useState<number | null>(null)
+  const [recordsPage, setRecordsPage] = useState(1)
+  const [recordsLoading, setRecordsLoading] = useState(true)
+  const [recordsError, setRecordsError] = useState<string | null>(null)
+  const [recordsRequestVersion, setRecordsRequestVersion] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -60,6 +80,28 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
       active = false
     }
   }, [apis, inviteRequestVersion])
+
+  useEffect(() => {
+    let active = true
+    setRecordsLoading(true)
+    setRecordsError(null)
+    void apis.listInviteRecords({ page: recordsPage, pageSize: INVITE_RECORD_PAGE_SIZE }).then(
+      (result) => {
+        if (!active) return
+        setRecords(result.items)
+        setRecordsTotal(result.total)
+        setRecordsLoading(false)
+      },
+      (error: unknown) => {
+        if (!active) return
+        setRecordsError(errorMessage(error))
+        setRecordsLoading(false)
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [apis, recordsPage, recordsRequestVersion])
 
   const shareLink = useMemo(() => (invite ? invitationUrl(invite.code) : ''), [invite])
 
@@ -85,6 +127,12 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
         </div>
 
         <dl className="flex items-center gap-5 text-right">
+          <div>
+            <dt className="text-xs text-app-faint">累计邀请</dt>
+            <dd className="mt-1 font-mono text-2xl font-semibold text-app-ink">
+              {recordsTotal ?? '—'}
+            </dd>
+          </div>
           <div>
             <dt className="text-xs text-app-faint">当前码注册</dt>
             <dd className="mt-1 font-mono text-2xl font-semibold text-app-ink">
@@ -179,6 +227,84 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
             style={{ imageRendering: 'pixelated' }}
           />
         </div>
+      </section>
+
+      <section
+        className="mt-8 border-t border-app-line pt-6"
+        aria-labelledby="invite-records-title"
+      >
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h3 id="invite-records-title" className="text-base font-semibold text-app-ink-soft">
+              邀请记录
+            </h3>
+            <p className="mt-1 text-sm text-app-muted">仅展示脱敏身份和你的奖励到账状态。</p>
+          </div>
+          {recordsTotal !== null && (
+            <span className="text-xs tabular-nums text-app-faint">共 {recordsTotal} 条</span>
+          )}
+        </div>
+
+        <div className="mt-4 min-h-24">
+          {recordsLoading ? (
+            <p role="status" className="py-6 text-sm text-app-muted">
+              正在加载邀请记录…
+            </p>
+          ) : recordsError ? (
+            <div className="flex flex-wrap items-center gap-3 py-4">
+              <p role="alert" className="text-sm text-app-danger">
+                {recordsError}
+              </p>
+              <button
+                type="button"
+                onClick={() => setRecordsRequestVersion((version) => version + 1)}
+                className="min-h-9 rounded-lg border border-app-line bg-app-surface-raised px-3 text-sm font-semibold text-app-ink-soft hover:border-app-accent/30"
+              >
+                重新加载邀请记录
+              </button>
+            </div>
+          ) : records.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-app-line px-4 py-7 text-center text-sm text-app-muted">
+              还没有邀请记录
+            </p>
+          ) : (
+            <ul className="divide-y divide-app-line rounded-xl border border-app-line">
+              {records.map((record) => (
+                <li
+                  key={record.id}
+                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-app-ink-soft">
+                      {record.invitee}
+                    </p>
+                    <p className="mt-1 text-xs text-app-faint">
+                      {formatInviteDate(record.createdAt)} · 邀请码 {record.code}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                      record.rewarded
+                        ? 'bg-app-accent-soft text-app-accent'
+                        : 'bg-app-surface-muted text-app-muted'
+                    }`}
+                  >
+                    {record.rewarded ? '已获得奖励' : '未获得奖励'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <Pagination
+          page={recordsPage}
+          pageSize={INVITE_RECORD_PAGE_SIZE}
+          total={recordsTotal ?? 0}
+          disabled={recordsLoading}
+          showPageNumbers
+          onPageChange={setRecordsPage}
+        />
       </section>
 
       <div className="mt-4 min-h-6" aria-live="polite">

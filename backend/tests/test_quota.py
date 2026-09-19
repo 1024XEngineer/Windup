@@ -52,9 +52,10 @@ def user_with_account(db_session: Session):
 
 
 @pytest.fixture()
-def auth_quota_client(engine, user_with_account):
+def auth_quota_client(engine, db_session, user_with_account):
     """带认证且预置积分账户的 TestClient。"""
     from fastapi.testclient import TestClient
+    from contextlib import nullcontext
     from sqlalchemy.orm import sessionmaker
 
     from windup_app.bootstrap.app import create_app
@@ -75,6 +76,7 @@ def auth_quota_client(engine, user_with_account):
             session.close()
 
     app = create_app()
+    app.state.auth_session_factory = lambda: nullcontext(db_session)
     app.dependency_overrides[get_session] = override_get_session
 
     token = create_access_token(1, "quota_test@example.com")
@@ -853,6 +855,79 @@ class TestInviteCode:
         assert second != first
         assert len(second) == 8
         assert auth_quota_client.get("/quota/invite/code").json()["data"]["code"] == second
+
+    def test_list_invite_records_is_private_paginated_and_reports_reward(
+        self, auth_quota_client, db_session, user_with_account
+    ):
+        from datetime import timedelta
+
+        from windup_app.server.quota.model import InviteRecord
+        from windup_app.server.user.model import User
+
+        older = User(email="older@example.com", password_hash="x", nickname="小明")
+        newer = User(email="newer@example.com", password_hash="x")
+        outsider = User(email="outsider@example.com", password_hash="x")
+        outsider_guest = User(email="hidden@example.com", password_hash="x")
+        db_session.add_all([older, newer, outsider, outsider_guest])
+        db_session.flush()
+
+        now = datetime.now(timezone.utc)
+        newer_record = InviteRecord(
+            inviter_id=user_with_account.id,
+            invitee_id=newer.id,
+            code="NEW2CODE",
+            create_at=now,
+        )
+        db_session.add_all(
+            [
+                InviteRecord(
+                    inviter_id=user_with_account.id,
+                    invitee_id=older.id,
+                    code="OLD2CODE",
+                    create_at=now - timedelta(days=1),
+                ),
+                newer_record,
+                InviteRecord(
+                    inviter_id=outsider.id,
+                    invitee_id=outsider_guest.id,
+                    code="HIDDEN22",
+                    create_at=now,
+                ),
+                CreditTransaction(
+                    user_id=user_with_account.id,
+                    delta=quota_settings.invite_reward_amount,
+                    reason=int(CreditReason.INVITE_REWARD),
+                    billing_mode=0,
+                    ref_id=f"invite:{newer.id}:inviter",
+                    balance_after=quota_settings.register_gift_amount
+                    + quota_settings.invite_reward_amount,
+                    create_at=now,
+                ),
+            ]
+        )
+        db_session.commit()
+
+        first_page = auth_quota_client.get(
+            "/quota/invite/records", params={"page": 1, "page_size": 1}
+        ).json()
+        second_page = auth_quota_client.get(
+            "/quota/invite/records", params={"page": 2, "page_size": 1}
+        ).json()
+
+        assert first_page["code"] == 200
+        assert first_page["total"] == 2
+        assert first_page["page"] == 1
+        assert first_page["page_size"] == 1
+        assert first_page["data"][0]["id"] == newer_record.id
+        assert first_page["data"][0]["invitee"] == "n***@example.com"
+        assert first_page["data"][0]["code"] == "NEW2CODE"
+        assert first_page["data"][0]["rewarded"] is True
+        assert first_page["data"][0]["create_at"].startswith(
+            now.replace(tzinfo=None).isoformat()
+        )
+        assert second_page["data"][0]["invitee"] == "小*"
+        assert second_page["data"][0]["rewarded"] is False
+        assert "hidden@example.com" not in str(first_page) + str(second_page)
 
     def test_generate_invite_code_locks_existing_row(
         self, db_session, quota_service, monkeypatch

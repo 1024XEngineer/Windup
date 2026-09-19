@@ -35,6 +35,7 @@ import {
 import Markdown, { compiler } from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { InlineArrowAction } from './inline-arrow-action'
+import { QuickStartHistorySidebar } from './history-sidebar'
 import { PixelPerfectVersionSwitch, type PixelPerfectVersion } from './pixel-perfect-version-switch'
 
 import {
@@ -80,9 +81,12 @@ import {
   FrameAnimationPlayer,
   GenerationPreviewCard,
   GenerationProgressCopy,
+  IMAGE_UPLOAD_ACCEPT,
+  IMAGE_UPLOAD_HINT,
   KineticCopyCycle,
   productPopoverClass,
   productPopoverMotionClass,
+  useImageDropTarget,
   useProductPopoverMotion,
   type KineticCopyMessage,
 } from '@/shared/ui'
@@ -589,26 +593,33 @@ export function QuickStartPage({
     setCreatedSession((current) => (current === consumed ? null : current))
   }, [])
 
-  return runId ? (
-    <QuickStartRun
-      key={runId}
-      service={activeService}
-      runId={runId}
-      initialSession={createdSession?.runId === runId ? createdSession : null}
-      onSessionCreated={setCreatedSession}
-      onInitialSessionConsumed={consumeCreatedSession}
-      activeRunUserId={activeRunUserId}
-      agent={agent}
-    />
-  ) : (
-    <QuickStartInput
-      key={`${location.key}:${activeRunUserId ?? 'local'}`}
-      service={activeService}
-      agent={agent}
-      activeRunUserId={activeRunUserId}
-      projectApis={projectApis}
-      characterApis={characterApis}
-    />
+  return (
+    <div data-layout="quick-start-with-history" className="relative min-h-screen bg-app-canvas">
+      <QuickStartHistorySidebar service={activeService} activeRunId={runId} />
+      <div className="min-w-0">
+        {runId ? (
+          <QuickStartRun
+            key={runId}
+            service={activeService}
+            runId={runId}
+            initialSession={createdSession?.runId === runId ? createdSession : null}
+            onSessionCreated={setCreatedSession}
+            onInitialSessionConsumed={consumeCreatedSession}
+            activeRunUserId={activeRunUserId}
+            agent={agent}
+          />
+        ) : (
+          <QuickStartInput
+            key={`${location.key}:${activeRunUserId ?? 'local'}`}
+            service={activeService}
+            agent={agent}
+            activeRunUserId={activeRunUserId}
+            projectApis={projectApis}
+            characterApis={characterApis}
+          />
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1185,14 +1196,23 @@ function QuickStartInput({
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
     if (entryBusy) return
     const selected = event.target.files?.[0] ?? null
-    setTemplateFile(selected)
-    setError(null)
+    event.target.value = ''
+    if (selected) templateDropTarget.selectFile(selected)
   }
 
   function removeTemplateFile() {
     setTemplateFile(null)
     if (fileInput.current) fileInput.current.value = ''
   }
+
+  const templateDropTarget = useImageDropTarget({
+    disabled: entryBusy || hasConversation,
+    onFile(file) {
+      setTemplateFile(file)
+      setError(null)
+    },
+    onError: setError,
+  })
 
   function chooseGameStyle(next: ArtStyle) {
     gameStyleRef.current = next
@@ -1514,13 +1534,21 @@ function QuickStartInput({
           <form
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
+            aria-label="角色母版图片上传区"
             data-prompt-state={promptState}
+            data-drag-active={templateDropTarget.isDragging}
+            {...templateDropTarget.dropTargetProps}
             className={`quick-start-agent-composer relative flex flex-col ${
               hasConversation
                 ? 'mt-12 rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
                 : ''
             }`}
           >
+            {templateDropTarget.isDragging ? (
+              <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center rounded-app-surface border-2 border-dashed border-app-accent bg-app-surface-raised/95 text-sm font-semibold text-app-accent shadow-app-panel backdrop-blur-sm">
+                松开以添加角色母版
+              </div>
+            ) : null}
             <label
               className={`relative block min-h-[52px] min-w-0 overflow-hidden ${
                 hasConversation
@@ -1594,7 +1622,7 @@ function QuickStartInput({
             <input
               ref={fileInput}
               type="file"
-              accept="image/*"
+              accept={IMAGE_UPLOAD_ACCEPT}
               aria-label="上传角色母版"
               disabled={entryBusy || hasConversation}
               className="sr-only"
@@ -1957,6 +1985,11 @@ function QuickStartInput({
                 </div>
               </div>
             </div>
+            {!hasConversation ? (
+              <p className="order-first mb-1 px-2 text-[11px] leading-4 text-app-faint">
+                拖入角色母版，或点击添加 · {IMAGE_UPLOAD_HINT}
+              </p>
+            ) : null}
           </form>
 
           {unavailableReason ? (
@@ -2420,11 +2453,12 @@ function DirectionFirstFrameGrid({
     >
       {layout.cells.map((direction, cellIndex) => {
         if (!direction) {
+          // 宫格占位只是盘面的一部分,不进可访问树,也不画成一个个虚线空框。
           return (
             <div
-              key={`center-${cellIndex}`}
-              aria-label="中心留空"
-              className="rounded-xl border border-dashed border-app-line/40 bg-app-canvas/20"
+              key={`empty-${cellIndex}`}
+              aria-hidden="true"
+              className="rounded-app-control bg-app-canvas/20"
             />
           )
         }
@@ -2879,6 +2913,7 @@ function QuickStartRun({
       return
     }
     const requestActionId = currentActionId
+    if (!requestActionId) return
     const sources = pixelPerfectSources(exportModel, requestActionId, actionFrames)
     setPixelPerfectStatus('working')
     setActionVersion('original')
@@ -2894,6 +2929,7 @@ function QuickStartRun({
         setPixelPerfectStatus('idle')
         return
       }
+      await target.persistPixelPerfectActionFrames?.(requestActionId, reconstructed)
       const urls = reconstructed.map((frame) => URL.createObjectURL(frame.blob))
       pixelPerfectUrlsRef.current = urls
       const replacements = reconstructed.map(
@@ -2917,6 +2953,7 @@ function QuickStartRun({
         }),
       )
       setPixelPerfectStatus('ready')
+      setActionVersion('pixel-perfect')
     } catch (cause) {
       releasePixelPerfectUrls()
       if (!mountedRef.current || activeSessionRef.current !== target) return
@@ -3954,7 +3991,11 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         tone="danger"
-                        lines={['动作首帧生成失败', '已完成的方向会保留，点击下方可重试失败方向。']}
+                        lines={[
+                          '动作首帧生成失败',
+                          firstFrameStep.error?.trim() ||
+                            '已完成的方向会保留，点击下方可重试失败方向。',
+                        ]}
                       />
                       <DirectionRetryButtons nodeId={firstFrameStep.id} />
                     </>
@@ -4062,7 +4103,13 @@ function QuickStartRun({
                       {pixelPerfectReady ? (
                         <PixelPerfectVersionSwitch
                           value={actionVersion}
-                          onChange={setActionVersion}
+                          onChange={(version) => {
+                            setActionVersion(version)
+                            if (!session || !currentActionId) return
+                            void session
+                              .setActionAssetVersion?.(currentActionId, version)
+                              .catch((cause) => reportWorkflowError(cause, '保存资产版本失败'))
+                          }}
                         />
                       ) : null}
                     </>
@@ -4070,7 +4117,11 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         tone="danger"
-                        lines={['动作生成失败', '已完成的方向会保留，点击下方可重试失败方向。']}
+                        lines={[
+                          '动作生成失败',
+                          actionStep.error?.trim() ||
+                            '已完成的方向会保留，点击下方可重试失败方向。',
+                        ]}
                       />
                       <DirectionRetryButtons nodeId={actionStep.id} />
                     </>

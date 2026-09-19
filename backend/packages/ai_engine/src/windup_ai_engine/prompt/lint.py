@@ -141,10 +141,19 @@ def _hits(text: str, name: str) -> list[str]:
     return list(seen)
 
 
-def lint(text: str, *, kind: Kind = "i2v") -> list[LintIssue]:
+def lint(
+    text: str, *, kind: Kind = "i2v", on_template: bool = False
+) -> list[LintIssue]:
     """按目标模型类型查一段提示词。
 
     ``kind`` 只影响 2a / 2b 两条:它们的机制都是帧与帧之间的,静态图没有帧间。
+
+    ``on_template`` = 这段话是叠在写死动作模板之上的细节句,不是整个动作(#838)。
+    它关掉 subthreshold 与 unanchored_prop 两条 —— 这两条查的正是模板已经提供的
+    东西(可见幅度、身体整体怎么动),而它们的机制都要求"这句话是画面里唯一的运动"。
+    对细节句照查 = 把"走路时手臂轻微摆动"判成弱指令,而模板明明已经给了大幅度的步态。
+    其余各条与是否叠加无关:没有 negative_prompt、特效名词盖轮廓、断言母版里没有的
+    装备形状,叠不叠都成立。
     """
     issues: list[LintIssue] = []
 
@@ -181,6 +190,8 @@ def lint(text: str, *, kind: Kind = "i2v") -> list[LintIssue]:
         ))
 
     for term in _hits(text, "subthreshold"):
+        if on_template:
+            continue  # 幅度由模板给,见本函数 docstring
         # 静态图没有帧间,抖不起来;但"轻微"对单张图同样给不出可执行的幅度,故仍报。
         level: Level = "error" if kind == "i2v" else "warn"
         issues.append(LintIssue(
@@ -191,7 +202,7 @@ def lint(text: str, *, kind: Kind = "i2v") -> list[LintIssue]:
             + "给一个看得见的幅度(动到哪儿、动多远)。",
         ))
 
-    if kind == "i2v":
+    if kind == "i2v" and not on_template:
         props = _hits(text, "prop")
         if props and not _hits(text, "body"):
             issues.append(LintIssue(

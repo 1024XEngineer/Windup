@@ -729,6 +729,59 @@ function renderStateFixture(
 }
 
 describe('QuickStartPage', () => {
+  it('从左侧历史栏回到所选 run 的原 Quick Start 会话', async () => {
+    const run = workflow(setupAndTemplate(), 'run-current')
+    const service = serviceFor(run, {
+      listHistory: vi.fn(async () => [
+        { runId: 'run-old', title: '森林里的蓝发弓箭手' },
+        { runId: 'run-current', title: '像素骑士' },
+      ]),
+    })
+    window.localStorage.setItem(
+      'windup.quick-start.agent-chat.v2:run:7:run-old',
+      JSON.stringify({
+        turns: [
+          { role: 'user', content: '保留蓝色斗篷' },
+          { role: 'assistant', content: '上次保留的对话', kind: 'reply' },
+        ],
+      }),
+    )
+
+    renderAt('/quick-start/run-current', service)
+
+    const history = await screen.findByRole('navigation', { name: '创作历史' })
+    expect(
+      within(history).getByRole('link', { name: '像素骑士' }).getAttribute('aria-current'),
+    ).toBe('page')
+    fireEvent.click(within(history).getByRole('link', { name: '森林里的蓝发弓箭手' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location-probe').textContent).toBe('/quick-start/run-old'),
+    )
+    expect(await screen.findByText('上次保留的对话')).toBeTruthy()
+    expect(service.open).toHaveBeenLastCalledWith('run-old')
+  })
+
+  it('让超长历史标题占用剩余宽度并稳定省略', async () => {
+    const longTitle = '披白羽斗篷、戴月牙面具并携带星盘的占星师'
+    renderAt(
+      '/quick-start/run-current',
+      serviceFor(workflow(setupAndTemplate(), 'run-current'), {
+        listHistory: vi.fn(async () => [{ runId: 'run-current', title: longTitle }]),
+      }),
+    )
+
+    const history = await screen.findByRole('navigation', { name: '创作历史' })
+    const link = within(history).getByRole('link', { name: longTitle })
+    const title = within(link).getByText(longTitle)
+
+    expect(link.getAttribute('title')).toBe(longTitle)
+    expect(title.className).toContain('min-w-0')
+    expect(title.className).toContain('flex-1')
+    expect(title.className).toContain('truncate')
+    expect(link.querySelector('svg')?.getAttribute('data-icon')).toBe('history-entry')
+  })
+
   it('keeps the main export capability available in the conversation UI', async () => {
     const run = workflow(setupAndTemplate({ selectedImageUrl: '/master.png' }))
     const model: ExportPackageModel = {
@@ -2824,8 +2877,9 @@ describe('QuickStartPage', () => {
 
     const grid = await screen.findByRole('group', { name: '四向首帧集合' })
     expect(within(grid).getAllByRole('img')).toHaveLength(4)
-    expect(grid.className).toContain('grid-cols-2')
-    expect(within(grid).queryByLabelText('中心留空')).toBeNull()
+    // 四向也按方位排在九宫格上:上北下南左西右东,四角与中心空着。
+    expect(grid.className).toContain('grid-cols-3')
+    expect(grid.children).toHaveLength(9)
   })
 
   it('动作首帧确认完成后仍显示八张独立图片和空中心', async () => {
@@ -2869,7 +2923,7 @@ describe('QuickStartPage', () => {
 
     const grid = await screen.findByRole('group', { name: '八向首帧集合' })
     expect(within(grid).getAllByRole('img')).toHaveLength(8)
-    expect(within(grid).getByLabelText('中心留空')).toBeTruthy()
+    expect(grid.children).toHaveLength(9)
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {
@@ -3120,6 +3174,38 @@ describe('QuickStartPage', () => {
 
     view.unmount()
     await waitFor(() => expect(service.dispose).toHaveBeenCalledTimes(2))
+  })
+
+  it('accepts a supported role template dropped anywhere on the entry composer', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const dropzone = screen.getByRole('form', { name: '角色母版图片上传区' })
+    const file = new File(['pixels'], 'hero.webp', { type: 'image/webp' })
+
+    expect(dropzone.textContent).toContain('PNG、JPG、GIF、WEBP')
+    expect(dropzone.textContent).toContain('10 MB')
+
+    fireEvent.dragEnter(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    expect(screen.getByText('松开以添加角色母版')).toBeTruthy()
+
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    expect(screen.getByText('hero.webp')).toBeTruthy()
+  })
+
+  it('rejects unsupported files dropped on the entry composer', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const dropzone = screen.getByRole('form', { name: '角色母版图片上传区' })
+    const file = new File(['not-an-image'], 'notes.txt', { type: 'text/plain' })
+
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+
+    expect(screen.getByRole('alert').textContent).toContain('仅支持 PNG、JPG、GIF、WEBP')
+    expect(screen.queryByText('notes.txt')).toBeNull()
   })
 
   it('shows entry errors and supports removing an uploaded template', async () => {
@@ -3824,6 +3910,12 @@ describe('QuickStartPage', () => {
     for (const [run, label] of states) {
       const view = renderAt('/quick-start/run-1', serviceFor(run))
       expect(await screen.findByLabelText(new RegExp(label, 'u'))).toBeTruthy()
+      if (label === '动作首帧生成失败') {
+        expect(screen.getByLabelText(/动作首帧生成失败 首帧服务失败/u)).toBeTruthy()
+      }
+      if (label === '动作生成失败') {
+        expect(screen.getByLabelText(/动作生成失败 动作服务失败/u)).toBeTruthy()
+      }
       view.unmount()
     }
   })
@@ -3880,9 +3972,7 @@ describe('QuickStartPage', () => {
     })
     renderAt('/quick-start/run-1', service)
 
-    expect(
-      await screen.findByLabelText('动作生成失败 已完成的方向会保留，点击下方可重试失败方向。'),
-    ).toBeTruthy()
+    expect(await screen.findByLabelText('动作生成失败 多个方向失败')).toBeTruthy()
     const retry = await screen.findByRole('button', { name: '重试失败方向' })
     fireEvent.click(retry)
 

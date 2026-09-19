@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { BakeCompletion } from '@/entities'
 import { bakeJob, stubRender3DApis } from '@/test/render3d-apis'
 
 const stage = vi.hoisted(() => ({
   clips: { walk: 1.0667 } as Record<string, number>,
   coverage: 0.01,
+  luma: 148,
   setups: [] as Array<[string, number, number]>,
   yaw: null as number | null,
   disposed: 0,
@@ -35,6 +37,21 @@ vi.mock('./stage', async () => {
             return i * 0.1
           },
           coverage: () => stage.coverage,
+          subjectLuma: () => stage.luma,
+          rigInfo: () => ({
+            loader: 'gltf',
+            rootBone: 'Hips',
+            bones: 28,
+            boneNames: ['Hips', 'Spine'],
+            skinned: 1,
+            verts: 51388,
+            orthoH: 5.95,
+            material: 'cel',
+          }),
+          rootMotionOf: () => [
+            [0, 0],
+            [0.1, 0],
+          ],
           grab: async () => {
             if (stage.grabError) throw stage.grabError
             return new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' })
@@ -53,6 +70,7 @@ const { runClientBake, BakeAborted } = await import('.')
 beforeEach(() => {
   stage.clips = { walk: 1.0667 }
   stage.coverage = 0.01
+  stage.luma = 148
   stage.setups = []
   stage.yaw = null
   stage.disposed = 0
@@ -64,14 +82,16 @@ beforeEach(() => {
 describe('浏览器出帧驱动', () => {
   it('按 plan 的朝向与帧数逐帧交付,最后报交齐', async () => {
     const uploaded: number[] = []
-    let completed: { clip: string; sampleTimes: number[] } | null = null
+    // 用数组收而不是可空变量：赋值发生在异步回调里，TS 的控制流分析会把
+    // 可空变量在断言处窄化成 null，读它的字段就报 never。
+    const completed: BakeCompletion[] = []
     const apis = stubRender3DApis({
       putBakeFrame: async (_taskId, index) => {
         uploaded.push(index)
         return uploaded.length
       },
       completeBake: async (_taskId, completion) => {
-        completed = completion
+        completed.push(completion)
       },
     })
     const job = bakeJob({ frames: 3, cameraYaw: 90, direction: 'n' })
@@ -84,8 +104,39 @@ describe('浏览器出帧驱动', () => {
       ['walk', 2, 3],
     ])
     expect(uploaded).toEqual([0, 1, 2])
-    expect(completed).toEqual({ clip: 'walk', sampleTimes: [0, 0.1, 0.2] })
+    // 骨架事实与位移轨随交齐一起回传（#774）——服务端渲那条会带上来，这条也必须带。
+    expect(completed).toHaveLength(1)
+    const done = completed[0]!
+    expect(done.clip).toBe('walk')
+    expect(done.sampleTimes).toEqual([0, 0.1, 0.2])
+    expect(done.rig?.bones).toBe(28)
+    expect(done.rig?.boneNames).toEqual(['Hips', 'Spine'])
+    expect(done.rootMotion).toEqual([
+      [0, 0],
+      [0.1, 0],
+    ])
     expect(stage.disposed).toBe(1)
+  })
+
+  it('主体是纯黑时当场失败 —— 覆盖率那道闸拦不住它', async () => {
+    // 贴图还没传上 GPU 就渲的话,模型是个纯黑剪影,而它的 alpha 占比与正常帧
+    // **一模一样**(线上实测 0.101 对 0.101)—— 只数 alpha 的闸放它过去。
+    stage.luma = 0
+    const uploaded: number[] = []
+    let failed = ''
+    const apis = stubRender3DApis({
+      putBakeFrame: async (_t, index) => {
+        uploaded.push(index)
+        return 1
+      },
+      completeBake: async () => expect.unreachable('纯黑帧却报了交齐'),
+      failBake: async (_t, reason) => {
+        failed = reason
+      },
+    })
+    await expect(runClientBake({ job: bakeJob(), apis })).rejects.toThrow('纯黑')
+    expect(uploaded).toEqual([])
+    expect(failed).toContain('纯黑')
   })
 
   it('覆盖率不足当场失败,并且不把那一帧传上去', async () => {
@@ -120,6 +171,26 @@ describe('浏览器出帧驱动', () => {
       /没有片段/,
     )
     expect(failed).toContain('idle')
+  })
+
+  it('片段名是绑骨任务哈希、对不上动作名时,用模型里唯一那一个', async () => {
+    // 拦的坏例:片段名由绑骨接口的动作库自己起(实测两次任务拿到的都是
+    // `Armature|32795ddb244644eac67ccfd8b84060c3_remap`),永远等不上产品动作名 'walk'。
+    // 按名字硬匹配的话**每一份真实绑骨产物**都会被判成"模型里没有片段 walk",
+    // 三渲二一帧都出不来 —— 而这条报错听上去像模型坏了。
+    const HASHED = 'Armature|32795ddb244644eac67ccfd8b84060c3_remap'
+    stage.clips = { [HASHED]: 1.0667 }
+    let completed: { clip: string; sampleTimes: number[] } | null = null
+    const apis = stubRender3DApis({
+      completeBake: async (_taskId, completion) => {
+        completed = completion
+      },
+    })
+    await runClientBake({ job: bakeJob({ frames: 2 }), apis })
+
+    expect(stage.setups.map(([clip]) => clip)).toEqual([HASHED, HASHED])
+    // 交回的仍是**登记的那个名字** —— 后端按它对账,换成真实片段名会被判成交错了片段。
+    expect(completed).toMatchObject({ clip: 'walk', sampleTimes: [0, 0.1] })
   })
 
   it('一个片段都没有时说清是绑骨没带动作', async () => {

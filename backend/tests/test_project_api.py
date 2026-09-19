@@ -42,7 +42,6 @@ def _payload(**overrides):
     """构造合法的创建请求体(对齐 ``ProjectCreate``)。"""
     base = {
         "project_name": "像素游戏",
-        "character_perspective": 1,
         "directional_movement": 2,
         "sprite_width": 64,
         "sprite_height": 64,
@@ -64,8 +63,37 @@ def test_create_success(auth_client):
     assert body["data"]["id"] is not None
     assert "user_id" not in body["data"]
     assert body["data"]["project_name"] == "新建"
+    assert body["data"]["directional_movement"] == 2
+    assert body["data"]["character_perspective"] == 2
     assert body["data"]["create_at"]
     assert "timestamp" not in body
+
+
+def test_create_does_not_require_character_perspective(auth_client):
+    """#664: 朝向是唯一方向规格,创建不再要求游戏视角。"""
+    resp = auth_client.post("/projects", json=_payload(project_name="只传朝向"))
+
+    assert resp.json()["code"] == 200
+    data = resp.json()["data"]
+    assert "character_perspective" in data
+    assert data["character_perspective"] == data["directional_movement"]
+
+
+def test_create_ignores_legacy_character_perspective(auth_client):
+    """旧客户端仍可能多传 character_perspective;不能当第二真相源写入。"""
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(
+            project_name="旧字段",
+            directional_movement=3,
+            character_perspective=1,
+        ),
+    )
+
+    data = resp.json()["data"]
+    assert resp.json()["code"] == 200
+    assert data["directional_movement"] == 3
+    assert data["character_perspective"] == 3
 
 
 def test_create_without_name_extracts_project_title(auth_client):

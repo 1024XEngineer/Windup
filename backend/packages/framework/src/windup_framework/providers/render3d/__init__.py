@@ -41,6 +41,7 @@ from .interfaces import (
 from .sprite import DIRECTIONS_4, DIRECTIONS_8, MATERIALS, LocalSpriteRenderProvider
 from .tencent import (
     PRESET_MOTIONS,
+    VIEW_TYPES,
     SpendNotAuthorizedError,
     TencentAutoRigProvider,
     TencentCosModelUploader,
@@ -57,7 +58,8 @@ __all__ = [
     "TencentModel3DProvider", "TencentAutoRigProvider", "TencentCosModelUploader",
     "LocalSpriteRenderProvider",
     # 预检 / 常量
-    "check_model", "sniff_format", "PRESET_MOTIONS", "DIRECTIONS_4", "DIRECTIONS_8",
+    "check_model", "sniff_format", "PRESET_MOTIONS", "VIEW_TYPES",
+    "DIRECTIONS_4", "DIRECTIONS_8",
     "MATERIALS", "TencentCredentials", "redact",
     # 出错形态
     "ModelRejected", "ArtifactFormatError", "ModelNotPublicError", "JobFailedError",

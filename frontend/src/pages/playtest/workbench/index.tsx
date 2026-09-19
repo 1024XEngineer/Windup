@@ -477,9 +477,12 @@ function PlaytestExperience({
                 )
               })}
             </div>
-            <div className="hidden min-w-[116px] px-3 sm:block">
+            <div className="hidden w-56 min-w-0 px-3 sm:block lg:w-80">
               <p className="text-[10px] text-app-faint">当前动作</p>
-              <p className="mt-0.5 truncate text-xs font-semibold">
+              <p
+                className="mt-0.5 truncate text-xs font-semibold"
+                title={runtime.action?.name ?? '无'}
+              >
                 {runtime.action?.name ?? '无'}
               </p>
             </div>

@@ -21,6 +21,8 @@ import {
 import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/shared/api'
 
 const REQUEST_ID_HEADER = 'x-request-id'
+const CONTENT_POLICY_GUIDANCE =
+  '内容已被安全检查拦截。请去掉违规或试图绕过规则的内容，只保留角色外观或一个明确动作后重试。'
 
 interface CreateAgentProxyFetchOptions {
   fetchFn?: typeof globalThis.fetch
@@ -47,6 +49,38 @@ export function resolveAgentProxyBaseUrl(
   return new URL(`${normalizedApiBase}/ai`, `${origin}/`).toString().replace(/\/+$/u, '')
 }
 
+async function withContentPolicyGuidance(response: Response): Promise<Response> {
+  if (response.status !== 400) return response
+  let body: unknown
+  try {
+    body = await response.clone().json()
+  } catch {
+    return response
+  }
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !('error' in body) ||
+    typeof body.error !== 'object' ||
+    body.error === null ||
+    !('code' in body.error) ||
+    body.error.code !== 'content_policy_violation'
+  ) {
+    return response
+  }
+  return new Response(
+    JSON.stringify({
+      ...body,
+      error: { ...body.error, message: CONTENT_POLICY_GUIDANCE },
+    }),
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    },
+  )
+}
+
 /** AI SDK 负责协议；此适配器补 Windup JWT 并把固定 SDK 路径接到既有 /ai/chat。 */
 export function createAgentProxyFetch({
   fetchFn = globalThis.fetch,
@@ -64,7 +98,7 @@ export function createAgentProxyFetch({
         original.method === 'GET' || original.method === 'HEAD'
           ? undefined
           : await original.clone().arrayBuffer()
-      return fetchFn(
+      const response = await fetchFn(
         new Request(rewriteAgentProxyUrl(original.url), {
           method: original.method,
           headers,
@@ -73,6 +107,7 @@ export function createAgentProxyFetch({
           credentials: 'include',
         }),
       )
+      return withContentPolicyGuidance(response)
     }
 
     const response = await send()

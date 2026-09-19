@@ -8,12 +8,20 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.concurrency import run_in_threadpool
 
 from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
 from windup_common.result import Response as Resp
 
-from windup_app.server.user.service import decode_token
+from windup_app.server.user.service import decode_token, service
+from windup_framework.db import SessionLocal
+
+
+def _validate_access_token(session_factory, token: str):
+    """在线程池中使用独立会话校验 token 与账号版本。"""
+    with session_factory() as session:
+        return service.validate_access_token(session, token)
 
 
 def _biz_error(msg: str, code: int) -> JSONResponse:
@@ -85,18 +93,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         token = auth_header[7:]  # 去掉 "Bearer " 前缀
 
-        # 解码 + 验证
+        # 先保留既有的明确错误信息，再校验账号会话版本。
         try:
             payload = decode_token(token)
-        except BizException as e:
-            return _auth_error(request, e.message, e.code)
-
+        except BizException as exc:
+            return _auth_error(request, exc.message, exc.code)
         if payload.get("type") != "access":
             return _auth_error(request, "token 类型错误", BizCode.UNAUTHORIZED)
 
+        session_factory = getattr(
+            request.app.state, "auth_session_factory", SessionLocal
+        )
+        current_user = await run_in_threadpool(
+            _validate_access_token, session_factory, token
+        )
+        if current_user is None:
+            return _auth_error(request, "token 无效或已失效", BizCode.UNAUTHORIZED)
+
         # 注入当前用户到 request.state
         request.state.current_user = type(
-            "CurrentUser", (), {"id": int(payload["sub"]), "email": payload.get("email", "")}
+            "CurrentUser",
+            (),
+            {"id": current_user.id, "email": current_user.email or ""},
         )()
 
         return await call_next(request)

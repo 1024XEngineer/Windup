@@ -112,8 +112,8 @@ class Facing(str, Enum):
     - ``FRONT``:身体正对观者(俯视与 2.5D 都归此)。
 
     与 :class:`CharacterView` 的对应关系:SIDE→SIDE;TOP_DOWN / ISOMETRIC→FRONT。
-    两者不合并成一个枚举:view 是项目级美术视角(对应 ``Project.character_perspective``,
-    决定母版怎么画),facing 是提示词模板的二选一(只区分"看得到侧面"和"正对镜头")。
+    两者不合并成一个枚举:view 是项目级美术视角(由 ``Project.directional_movement``
+    派生,决定母版怎么画),facing 是提示词模板的二选一(只区分"看得到侧面"和"正对镜头")。
     """
 
     SIDE = "side"
@@ -121,15 +121,15 @@ class Facing(str, Enum):
 
 
 class CharacterView(str, Enum):
-    """角色美术视角 —— 与 ``Project.character_perspective``(1/2/3)一一对应。
+    """角色美术视角 —— 与 ``Project.directional_movement``(1/2/3)一一对应。
 
     映射固定为 1→side、2→top-down、3→isometric。字符串取值必须逐字一致,
     免得调用方再造一套别名(如 topdown / top_down / top-down 三写)。
     """
 
-    SIDE = "side"  # perspective=1 横版
-    TOP_DOWN = "top-down"  # perspective=2 俯视
-    ISOMETRIC = "isometric"  # perspective=3 2.5D
+    SIDE = "side"  # directional_movement=1 单向/横版
+    TOP_DOWN = "top-down"  # directional_movement=2 四向/俯视
+    ISOMETRIC = "isometric"  # directional_movement=3 八向/2.5D
 
 
 class Stylize(str, Enum):
@@ -216,7 +216,7 @@ class ActionSpec(BaseModel):
     #   于是"我要 1 色"拿到 2 色且无任何提示 —— 正是本项目最忌讳的静默纠正。
     pixel_h: int = Field(default=100, ge=1)  # 像素化目标高(角色像素行数)
     palette_size: int = Field(default=32, ge=2)  # 色板色数(1 色的像素画不存在)
-    # 生成提示词的朝向,**必须与母版朝向一致**(对应 Project.perspective)。
+    # 生成提示词的朝向,**必须与母版朝向一致**(由 Project.directional_movement 派生)。
     facing: Facing = Facing.SIDE
     # 项目方向集合中的一个真实源方向。镜像方向不会进入 ActionSpec，因为它不应
     # 调用模型；前端/编排层会为每个源方向创建独立 GenerationTask。
@@ -231,6 +231,12 @@ class ActionSpec(BaseModel):
     # 用户自述的动作内容。**只写"做什么动作"**,不复述角色外观:身份由母版承载,
     # 身份描述再写一遍会和母版打架(见 ports.CharacterGeneratorPort)。
     custom_action: str | None = None
+
+    # 用户写的那句动作细节,叠在写死动作的模板之上(#838)。
+    # 与 ``custom_action`` 的分工:那个是**整个**动作的内容(action=custom 时必填,
+    # 此时没有模板);这个是对模板动作的补充说明,模板仍然定运动拓扑。
+    # 前端两半一起发:action_type 选管线、custom_prompt 说这次具体要什么。
+    detail: str | None = None
 
     # 必须显式给,不按描述关键词猜:猜错会把一次性动作强行首尾闭环,末帧接回首帧抽搐,
     # 而帧数、时长、成色全正常。名字不叫 loop 是因为它有真实消费方——决定 slicing 走
@@ -270,6 +276,11 @@ class ActionSpec(BaseModel):
                 raise ValueError(
                     "action=custom 必须显式给 cyclic(是否循环播放)。不猜 —— "
                     "猜错会把一次性动作强行首尾闭环,而帧数/时长/成色全部正常、没有任何一道会红"
+                )
+            if self.detail is not None:
+                raise ValueError(
+                    "action=custom 不该带 detail;custom 没有模板可叠,动作内容整条走 "
+                    "custom_action。两个字段都填会让同一段描述进两次提示词"
                 )
         else:
             if self.custom_action is not None:

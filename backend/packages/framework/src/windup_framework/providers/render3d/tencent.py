@@ -25,7 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from ._tc3 import TencentApiError, TencentCredentials, call, cos_request, cos_sign, redact
 from .checks import check_model, sniff_format
@@ -81,6 +81,64 @@ MOTION_TYPE_RANGE = range(1, 49)
 _MAGIC = {"GLB": b"glTF", "FBX": b"Kaydara FBX Binary"}
 
 
+def _submit_with_backoff(submit, *, attempts: int = 8, base: float = 30.0):
+    """撞上游并发上限时退避重试。**只重试 UpstreamBusyError** —— 别的错重试等于重复扣费。
+
+    绑骨接口同时只允许 1 个任务,而且上一个 DONE 之后位子也不立刻释放。
+
+    **窗口比一开始记的长得多。** 首次实测是"单发等约 30 秒即过",据此把参数定成
+    5 轮 × 20 秒基数(总计约 5 分钟)。2026-08-28 生产端到端里连着退了 20/40/60/80 秒
+    共 200 秒仍然排不上,而占位的那个任务此时**早已 DONE** —— 印证了限的是时间窗、
+    不是"在跑的任务数",而那个窗口远超 30 秒。
+
+    改成 8 轮 × 30 秒基数(30+60+90+…+240,总计约 18 分钟)。为什么敢等这么久:
+    这一步发生在图生 3D **已经付过 20 积分之后**,等 18 分钟换一次成功,
+    比当场失败、让那 20 积分白花划算得多;而它是后台线程,不占用户的等待。
+
+    不重试的话,两个用户同时建资产,第二个直接失败 —— 而他的图生 3D 已经付过钱了。
+
+    提交本身不计费(计费在上游受理之后),所以重试不会重复扣钱;真正危险的是**成功之后**
+    再重试,那由 submit 只被调一次成功路径保证。
+    """
+    import time
+
+    last = None
+    for i in range(attempts):
+        try:
+            return submit()
+        except UpstreamBusyError as exc:
+            last = exc
+            if i + 1 >= attempts:
+                break
+            wait = base * (i + 1)
+            # **把上游的原始 code 打出来。** 写死一句"并发已满"会让所有可重试的故障
+            # 长成同一个样子 —— 2026-08-28 实测:五轮退避的日志全是"并发已满",
+            # 而最后一次的真实错误是 RequestTimeout(上游持续超时),完全是另一回事。
+            # 我照着那句日志排查了整整五轮"位子被谁占了",方向从一开始就是错的。
+            logger.info(
+                "上游暂时不可用(%s),%ds 后重试(%d/%d)",
+                getattr(exc, "code", "?"), int(wait), i + 1, attempts,
+            )
+            time.sleep(wait)
+    raise RuntimeError(
+        # 同理:结论里不预设原因。它可能是并发上限,也可能是上游超时或算法服务异常,
+        # 而这三种的下一步动作不同(等一等 vs 查上游状态 vs 换个时间再来)。
+        f"上游连续 {attempts} 轮不可用,最后一次:{last}"
+    ) from last
+
+
+class UpstreamBusyError(RuntimeError):
+    """上游并发/频率上限,**可重试**。与"参数错""余额不足"分开。
+
+    绑骨接口同时只允许 1 个任务(实测),撞上时报 ``RequestLimitExceeded.JobNumExceed``。
+    把它和别的错混在一个类型里,调用方就只能一律当永久失败 —— 而它退避几十秒就能过。
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+
+
 class SpendNotAuthorizedError(RuntimeError):
     """provider 构造时没有 ``allow_spend=True``,拒绝提交计费任务。异常文本里带报价。"""
 
@@ -99,6 +157,30 @@ def _raise_for_error(response: Mapping) -> Mapping:
         raise InsufficientCreditsError(
             f"积分不足({code}: {msg})。这是充值问题,不是接口坏了 —— "
             "别照着接口文档排查参数。")
+    # 上游自己的瞬时故障。**都可重试** —— 2026-08-28 一次端到端里三种都撞到过,
+    # 而每一次都是「同一个请求原样再发一遍就过」:
+    #
+    #   FailedOperation.ServerError      算法服务异常     重试即过
+    #   FailedOperation.RequestTimeout   后端服务超时     重试即过
+    #   FailedOperation.DownloadError    文件下载失败     ← 这个最误导
+    #
+    # DownloadError 字面看像"我们的 URL 取不到",实测不是:同一个 18MB URL 在报了
+    # DownloadError 之后原样重发就成功了(JobId=1484843892775575552),而那个 URL
+    # 我们自己 HEAD 过 —— 206、18366000 字节、content-type 正确。
+    # 它照字面排查会把人引到"是不是对象存储坏了",而真因在上游那一侧。
+    #
+    # 不重试的代价:这三种都发生在**图生 3D 已经付过 20 积分之后**,用户卡在
+    # 「模型建好了但绑不了骨」,钱花了、资产建不成。
+    if any(x in code for x in ("ServerError", "RequestTimeout", "DownloadError")):
+        raise UpstreamBusyError(code or "FailedOperation", msg)
+    if "JobNumExceed" in code or "RequestLimitExceeded" in code:
+        # 上游**同时只允许 1 个绑骨任务**,而且上一个已经 DONE 位子也不立刻释放
+        # (实测 2026-08-28:连续三次被拒,等约 30 秒后即过)—— 所以限的是时间窗,
+        # 不是"在跑的任务数"。单列一个类型,让调用方能退避重试而不是当场把错抛给用户。
+        #
+        # 这一条尤其不能当成永久失败:它发生在图生 3D 已经付过钱之后、绑骨提交之前,
+        # 用户会卡在"模型建好了但绑不了骨"的中间态,而钱已经花了。
+        raise UpstreamBusyError(code or "RequestLimitExceeded", msg)
     raise TencentApiError(code or "UnknownError", msg)
 
 
@@ -317,25 +399,68 @@ class TencentModel3DProvider:
             # 发一个没验证过的参数只增加被网关拒的风险,换不到任何保证 —— 所以留成开关,
             # 等谁真的实测过再默认打开。
             params["ResultFormat"] = want
-        job = self._submit(params)
-        files = self._wait(job)
-        picked, _ = _pick_artifact(files, want, job_id=job)
-        data = _download(str(picked["Url"]))
-        _verify_magic(data, want)
+        data, _url = self.image_to_3d_with_url(
+            master, want=want, extra_views=extra_views, _params=params
+        )
         return data
 
+    def image_to_3d_with_url(
+        self, master: bytes, *, want: str = "GLB",
+        extra_views: Mapping[str, bytes] | None = None, _params: dict | None = None,
+    ) -> tuple[bytes, str]:
+        """同 :meth:`image_to_3d`,但**同时给出上游那个产物 URL**。
+
+        为什么要它:绑骨的 ``File3D.Url`` 只要一个取得到的 URL,而上游返回的这个 URL
+        本身就是公网可取的(实测有效期 24 小时,``q-key-time`` 是 86398 秒)。把它直接
+        交给绑骨,就是**同厂同区的云到云** —— 我们一个字节都不用中转。
+
+        原先每建一个资产要让约 76MB 穿过应用机(下 18 + 上 18 + 下 20 + 上 20),
+        而部署机出网上行实测只有 5.5–5.8 MB/s(#713)。
+
+        仍然把 bytes 一并返回:人工确认闸要拿它渲给人看,而那个闸的 URL 必须在整个
+        审核期内稳定 —— 上游那个 24 小时会过期(#860)。两个用途、两个 URL,不合并。
+        """
+        if _params is None:
+            if want not in MODEL_FORMATS:
+                raise ArtifactFormatError(f"want 只能是 {MODEL_FORMATS},收到 {want!r}")
+            _params = self.build_params(master, extra_views)
+            if not self._allow_spend:
+                raise SpendNotAuthorizedError(
+                    f"图生 3D 会消耗 {self.quote(1 + len(extra_views or {}))} 积分。"
+                )
+            if self._ask_format:
+                _params["ResultFormat"] = want
+        job = self._submit(_params)
+        files = self._wait(job)
+        picked, _ = _pick_artifact(files, want, job_id=job)
+        url = str(picked["Url"])
+        data = _download(url)
+        _verify_magic(data, want)
+        return data, url
+
     def _submit(self, params: dict) -> str:
-        r = _raise_for_error(call("SubmitHunyuanTo3DProJob", params, service=SERVICE,
-                                  version=VERSION, creds=self._creds))
+        # 与绑骨提交同一条理由:上游那三种瞬时故障重发就过,而这里失败虽然还没扣钱,
+        # 却会让用户在"点了建资产、什么都没发生"之间反复试(#874 评审指出本处遗漏)。
+        r = _submit_with_backoff(lambda: _raise_for_error(
+            call("SubmitHunyuanTo3DProJob", params, service=SERVICE,
+                 version=VERSION, creds=self._creds)))
         if "JobId" not in r:
             raise JobFailedError(redact(f"提交图生 3D 没拿到 JobId: {r}"))
         return str(r["JobId"])
 
     def _wait(self, job_id: str) -> list:
         for _ in range(max(1, int(self._max_min * 60 // self._poll))):
-            r = _raise_for_error(call("QueryHunyuanTo3DProJob", {"JobId": job_id},
-                                      service=SERVICE, version=VERSION, creds=self._creds,
-                                      idempotent=True))
+            # 轮询撞上游瞬时故障时**继续下一轮**,不抛 —— 任务在云上还在跑,
+            # JobId 也还在,抛出去等于把一次已经付过钱的图生 3D作废
+            # (#874 评审指出本处遗漏)。真正的终态由下面的 Status 判定。
+            try:
+                r = _raise_for_error(call("QueryHunyuanTo3DProJob", {"JobId": job_id},
+                                          service=SERVICE, version=VERSION, creds=self._creds,
+                                          idempotent=True))
+            except UpstreamBusyError as exc:
+                logger.info("轮询撞上游瞬时故障,继续等 JobId=%s(%s)", job_id, exc)
+                time.sleep(self._poll)
+                continue
             status = str(r.get("Status") or "")
             if status == "DONE":
                 files = r.get("ResultFile3Ds") or r.get("ResultFile3D") or []
@@ -413,8 +538,43 @@ class TencentAutoRigProvider:
         known = next((p for p in PRESET_MOTIONS.values() if p.motion_type == mt), None)
         return known or PresetMotion(f"motion_{mt}", mt)
 
+    def rig_from_url(self, model_url: str, src_fmt: str, *, want: str = "GLB",
+                     motion: str | int | None = None,
+                     on_submitted: Callable[[str], None] | None = None) -> RiggedModel:
+        """绑骨,输入是一个**已经在上游那边**的 URL。**云到云,我们不中转字节。**
+
+        与 :meth:`rig` 的分工:那个吃 bytes(先上传再提交),这个吃 URL(直接提交)。
+        上游返回的产物 URL 本身就是公网可取的,交回给同一个上游就是同厂同区的下载 ——
+        实测 2026-08-28 提交成功(JobId=1484794020202692608),我们传输 0 字节。
+
+        省掉的是每资产约 36MB 的中转(下 18 + 上 18),而部署机出网上行只有
+        5.5–5.8 MB/s(#713)。
+
+        ``src_fmt`` 由调用方给,**不嗅探** —— 嗅探要先把文件拉下来,那正是本方法要省的
+        那一跳。给错的代价是上游拒单(不扣费),而不是错产物。
+        """
+        preset = self.resolve_motion(motion)      # 先把认不出的动作名炸掉
+        credits = self.quote()
+        if not self._allow_spend:
+            raise SpendNotAuthorizedError(
+                f"绑骨会消耗 {credits} 积分。"
+                "确认要花这笔钱后,用 TencentAutoRigProvider(..., allow_spend=True) 构造。")
+        if not model_url.startswith(("http://", "https://")):
+            raise ModelNotPublicError(
+                f"绑骨服务器要能取到这个 URL,收到 {redact(model_url)[:80]!r}")
+        job = _submit_with_backoff(lambda: self._submit(model_url, src_fmt, preset))
+        logger.info("绑骨已提交并计费(云到云) JobId=%s —— 后续任何失败都用它重取", job)
+        if on_submitted is not None:
+            on_submitted(job)      # 计费已发生:先落盘再取件,取件失败才有得续
+        files = self._wait(job)
+        picked, got = _pick_artifact(files, want, strict=False, job_id=job)
+        data = _download(str(picked["Url"]))
+        _verify_magic(data, got)
+        return RiggedModel(data=data, fmt=got, motion=preset)
+
     def rig(self, model: bytes, *, want: str = "GLB",
-            motion: str | int | None = None) -> RiggedModel:
+            motion: str | int | None = None,
+            on_submitted: Callable[[str], None] | None = None) -> RiggedModel:
         if want not in MODEL_FORMATS:
             raise ArtifactFormatError(f"want 只能是 {MODEL_FORMATS},收到 {want!r}")
         src_fmt = sniff_format(model)                  # 嗅探,不信调用方声明
@@ -430,23 +590,30 @@ class TencentAutoRigProvider:
                 "确认要花这笔钱后,用 TencentAutoRigProvider(..., allow_spend=True) 构造。")
 
         url = self._upload(model, src_fmt)
-        job = self._submit(url, src_fmt, preset)
+        job = _submit_with_backoff(lambda: self._submit(url, src_fmt, preset))
         logger.info("绑骨已提交并计费 JobId=%s —— 后续任何失败都用它重取,别重新提交", job)
+        if on_submitted is not None:
+            on_submitted(job)      # 同上:先落盘,后面每一步都可能失败
         files = self._wait(job)
         picked, got = _pick_artifact(files, want, strict=False, job_id=job)
         data = _download(str(picked["Url"]))
         _verify_magic(data, got)
         return RiggedModel(data=data, fmt=got, motion=preset)
 
-    def fetch(self, job_id: str, *, want: str = "GLB") -> RiggedModel:
+    def fetch(self, job_id: str, *, want: str = "GLB",
+              motion: str | int | None = None) -> RiggedModel:
         """取一个**已完成**任务的产物。零成本,不重新提交。
 
         存在的理由:提交之后的任何失败(格式、下载、进程被杀)都不该让已经扣过的费作废。
+
+        ``motion`` 要由调用方给,接口不回述这个任务当初请求了什么动作。缺了它返回的
+        ``RiggedModel.motion`` 恒为 ``None``,而下游把它当"绑骨产物没有动画片段"的
+        致命错 —— 于是续取回来的好产物会被当废品扔掉,续取等于没有。
         """
         picked, got = _pick_artifact(self._wait(job_id), want, strict=False, job_id=job_id)
         data = _download(str(picked["Url"]))
         _verify_magic(data, got)
-        return RiggedModel(data=data, fmt=got, motion=None)
+        return RiggedModel(data=data, fmt=got, motion=self.resolve_motion(motion))
 
     def _upload(self, model: bytes, fmt: str) -> str:
         ct = "model/gltf-binary" if fmt == "GLB" else "application/x-fbx"
@@ -471,9 +638,17 @@ class TencentAutoRigProvider:
 
     def _wait(self, job_id: str) -> list:
         for _ in range(max(1, int(self._max_min * 60 // self._poll))):
-            r = _raise_for_error(call("DescribeAutoRiggingJob", {"JobId": job_id},
-                                      service=SERVICE, version=VERSION, creds=self._creds,
-                                      idempotent=True))
+            # 轮询撞上游瞬时故障时**继续下一轮**,不抛 —— 任务在云上还在跑,
+            # JobId 也还在,抛出去等于把一次已经付过钱的绑骨作废
+            # (#874 评审指出本处遗漏)。真正的终态由下面的 Status 判定。
+            try:
+                r = _raise_for_error(call("DescribeAutoRiggingJob", {"JobId": job_id},
+                                          service=SERVICE, version=VERSION, creds=self._creds,
+                                          idempotent=True))
+            except UpstreamBusyError as exc:
+                logger.info("轮询撞上游瞬时故障,继续等 JobId=%s(%s)", job_id, exc)
+                time.sleep(self._poll)
+                continue
             status = str(r.get("Status") or "")
             if status == "DONE":
                 files = r.get("ResultFile3Ds") or []

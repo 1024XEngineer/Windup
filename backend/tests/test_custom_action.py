@@ -236,8 +236,10 @@ def test_only_the_opened_models_are_accepted():
     from windup_framework.gateway.registry import ModelRegistry
     from windup_framework.gateway.types import Scene
 
-    r = ModelRegistry.from_settings(AIProviderSettings(video_fallbacks="kling-v2-6"))
-    assert set(r.chain(Scene.CHARACTER_ACTION)) == {"kling-v2-5-turbo", "kling-v2-6"}
+    cfg = AIProviderSettings(video_fallbacks="kling-v2-6")
+    r = ModelRegistry.from_settings(cfg)
+    # 主力从配置推:这条断言的是"链 = 主力 + 兜底",不是"默认型号叫什么"。
+    assert set(r.chain(Scene.CHARACTER_ACTION)) == {cfg.video_model, "kling-v2-6"}
 
 
 def test_unknown_model_fails_at_entry_not_at_the_paid_call():
@@ -246,7 +248,9 @@ def test_unknown_model_fails_at_entry_not_at_the_paid_call():
 
     with pytest.raises(ValueError) as e:
         _resolve_video_model("sora-2")
-    assert "kling-v2-5-turbo" in str(e.value), "报错要带上可选值,否则调用方无从改"
+    from windup_framework.config.provider import AIProviderSettings
+
+    assert AIProviderSettings().video_model in str(e.value), "报错要带上可选值,否则调用方无从改"
 
 
 def test_start_from_model_reuses_one_generator():
@@ -264,7 +268,6 @@ def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
     选哪个 kling 是 Gateway 的事,不同 video_model 仍共用同一个 generator。
     """
     import windup_framework.gateway as gateway
-    from windup_framework import providers
 
     from windup_app.server.orchestrator.executor import ActionTaskExecutor
 
@@ -279,7 +282,13 @@ def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
             return object()
         return _factory
 
-    monkeypatch.setattr(providers, "OnnxU2NetMatteProvider", _counting("matte"))
+    # 桩在**工厂**上并清掉单例:生产已改走 get_matte_provider()(它内部调工厂)。
+    # 桩 get_matte_provider 本身会把"单例只建一份"那层绕过去,而那正是这条要守的东西 ——
+    # 现在这条断言的是"连工厂都只被调一次"，比之前更强。
+    from windup_framework.providers import matte_factory as _mf
+
+    monkeypatch.setattr(_mf, "make_matte_provider", _counting("matte"))
+    _mf.reset_matte_provider()
     monkeypatch.setattr(gateway, "build_image_gateway", _counting("image"))
     monkeypatch.setattr(gateway, "build_video_gateway", _counting("video"))
 
@@ -319,9 +328,9 @@ def test_injected_matte_is_not_replaced_on_assemble(monkeypatch):
     sent = object()
 
     def _boom(*_a, **_k):
-        raise AssertionError("不该再构造 OnnxU2NetMatteProvider")
+        raise AssertionError("不该再构造抠图 provider")
 
-    monkeypatch.setattr(providers, "OnnxU2NetMatteProvider", _boom)
+    monkeypatch.setattr(providers, "make_matte_provider", _boom)
     monkeypatch.setattr(gateway, "build_image_gateway", lambda **_k: object())
     monkeypatch.setattr(gateway, "build_video_gateway", lambda **_k: object())
 

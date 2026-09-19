@@ -3,9 +3,41 @@ import type { DirectionalMovement } from '../project'
 import type { Action, CharacterTemplate } from '.'
 import { getDirectionProfile, type ActionDirection } from './directions'
 
+/** 可发布的多方向资产结构版本；east/west 旧镜像合同为 1。 */
+export const MULTI_DIRECTION_CHARACTER_DATA_VERSION = 2
+
+const SINGLE_CONTRACT_DIRECTIONS = new Set<ActionDirection>(['east', 'west'])
+
 export interface DirectionalAssetValidation {
   readonly complete: boolean
   readonly problems: readonly string[]
+}
+
+export function characterDataVersionForWrite(
+  dataVersion: number,
+  templates: readonly CharacterTemplate[],
+  actions: readonly Action[],
+): number {
+  const current = dataVersion >= 1 ? dataVersion : 1
+  const directions = [
+    ...templates.map((template) => template.direction),
+    ...actions.flatMap((action) => (action.sequences ?? []).map((sequence) => sequence.direction)),
+  ]
+  if (directions.every((direction) => SINGLE_CONTRACT_DIRECTIONS.has(direction))) return current
+  return Math.max(current, MULTI_DIRECTION_CHARACTER_DATA_VERSION)
+}
+
+export function assertMultiDirectionAssetPublishable(
+  version: number,
+  movement: DirectionalMovement,
+  templates: readonly CharacterTemplate[],
+  actions: readonly Action[],
+): void {
+  if (movement === 'single') return
+  const validation = validateDirectionalAsset(version, movement, templates, actions)
+  if (!validation.complete) {
+    throw new Error(validation.problems[0] ?? '多方向资产不完整')
+  }
 }
 
 function realDirections(

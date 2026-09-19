@@ -33,6 +33,9 @@ export function createAuthenticatedTestApis(): UserApis {
     updateNickname: async () => testUser,
     setPassword: async () => undefined,
     changePassword: async () => undefined,
+    resetPassword: async () => undefined,
+    sendPasswordChangeCode: async () => undefined,
+    changePasswordWithCode: async () => undefined,
   }
 }
 
@@ -47,6 +50,11 @@ const guestApis: UserApis = {
   updateNickname: async () => Promise.reject(new Error('guest test session cannot update profile')),
   setPassword: async () => Promise.reject(new Error('guest test session cannot set password')),
   changePassword: async () =>
+    Promise.reject(new Error('guest test session cannot change password')),
+  resetPassword: async () => Promise.reject(new Error('guest test session cannot reset password')),
+  sendPasswordChangeCode: async () =>
+    Promise.reject(new Error('guest test session cannot send password change code')),
+  changePasswordWithCode: async () =>
     Promise.reject(new Error('guest test session cannot change password')),
 }
 

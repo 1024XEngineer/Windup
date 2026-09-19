@@ -16,11 +16,23 @@ export type {
   CreditRedemptionResult,
   CreditTransaction,
   InviteCode,
+  InviteRecord,
   CreditTransactionDirection,
   QuotaApis,
   QuotaTransactionFilters,
   QuotaTransactionPageQuery,
 } from './quota'
+
+/* 管理员积分兑换码 —— 生成明文仅在内存中交付，核验严格只读 */
+export { adminRedemptionApis, createAdminRedemptionApis } from './admin-redemption'
+export type {
+  AdminRedemptionApis,
+  CodeValidation,
+  CreateAdminRedemptionApisOptions,
+  GeneratedCodes,
+  GenerateCodesInput,
+  RedemptionCodeStatus,
+} from './admin-redemption'
 
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
 export {
@@ -50,6 +62,7 @@ export type {
   ActionDirection,
   ActionSequence,
   ActionType,
+  CharacterAssetVersion,
   Character,
   CharacterApis,
   CharacterSummaryApis,
@@ -64,10 +77,14 @@ export type {
 } from './character'
 export {
   CHARACTER_STATUS,
+  assertMultiDirectionAssetPublishable,
   characterApis,
+  characterDataVersionForWrite,
   characterTemplateImages,
   characterTemplatesFromImages,
   characterTemplatesFromViewSheetCells,
+  resolvedFrameImageUrl,
+  validateDirectionalAsset,
 } from './character'
 export {
   ACTION_DIRECTIONS,
@@ -127,9 +144,13 @@ export type { GenerationApiConfig, GenerationTransport } from './generation/api'
 
 /* 三渲二资产 —— 母版预检结果与造型级 3D 模型的建造状态 */
 export { createRender3DApis, render3DApis, Render3DContractError } from './render3d/api'
+// 运行时常量要单独导 —— 上面那个 `export type` 块只带类型,
+// 常量混进去在运行时会是 undefined(实测:面板整个白屏)。
+export { RENDER3D_MOTION_LABELS } from './render3d'
 export type {
   BakeCompletion,
   BakeJob,
+  CharacterStance,
   MasterFacts,
   MasterPrecheckReport,
   MasterRejectCode,
@@ -139,6 +160,7 @@ export type {
   Render3DAsset,
   Render3DAssetCost,
   Render3DAssetState,
+  Render3DMotion,
 } from './render3d'
 
 /* 媒体上传 —— 页面只依赖公开工厂与不透明引用，不处理 multipart 协议。 */

@@ -20,8 +20,9 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'partial' | 'fail
 
 /**
  * 生成对应的三个前端可见异步步骤。
- * 它是前端工作流粒度，不等于后端 task_type——后端只有 character_image 与
- * character_action 两种，character_template 和 first_frame 都落在 character_image 上。
+ * 它是前端工作流粒度，不等于后端 task_type——后端有 character_image、
+ * character_first_frame、character_action 等；character_template 仍落在
+ * character_image 上，四向/八向动作首帧落在 character_first_frame 上。
  * 完整动画内部可含视频生成、截帧和多次图像处理，但对前端仍是一次 Generation。
  */
 export type ViewSheetGenerationType = 'character_four_view' | 'character_eight_view'
@@ -81,6 +82,12 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
   spriteHeight: number
   /** 首帧必须与角色母版使用同一个真实源方向。 */
   direction?: ActionDirection
+  /**
+   * 四向 / 八向锁定朝向时必填。后端走 `/generation/first-frame`，
+   * 任务类型为 `character_first_frame`，参考图仍是该朝向立绘。
+   * 单向首帧不传，仍走 `/generation/image`。
+   */
+  characterId?: string
   /** 每个方向生成的候选数；缺省为 3，后端允许 1–4。 */
   candidateCount?: ImageCandidateCount
 }

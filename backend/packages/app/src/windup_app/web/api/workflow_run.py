@@ -17,6 +17,7 @@ nodes 字段由前端自定义，后端只做全量读写，不校验 nodes 内�
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -73,6 +74,7 @@ class WorkflowRunOut(BaseModel):
     nodes: list = Field(default_factory=list, description="节点树")
     status: str
     version: int
+    created_at: datetime
 
 
 # ── 归属校验 ─────────────────────────────────────────────────────────────────
@@ -119,18 +121,23 @@ def create_run(
 
 @router.get("", response_model=ListResponse[WorkflowRunOut])
 def list_runs(
-    project_id: int = Query(..., gt=0),
+    project_id: int | None = Query(None, gt=0),
     request: Request = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     session: Session = Depends(get_session),
 ) -> ListResponse[WorkflowRunOut]:
-    """分页查询项目下的执行记录。"""
+    """分页查询项目记录；未指定项目时返回当前用户的跨项目历史。"""
     user_id = request.state.current_user.id
-    _get_project_or_raise(session, project_id, user_id)
-    items, total = service.list_runs(
-        session, project_id=project_id, page=page, page_size=page_size,
-    )
+    if project_id is None:
+        items, total = service.list_user_runs(
+            session, user_id=user_id, page=page, page_size=page_size,
+        )
+    else:
+        _get_project_or_raise(session, project_id, user_id)
+        items, total = service.list_runs(
+            session, project_id=project_id, page=page, page_size=page_size,
+        )
     return ListResponse.success(
         [WorkflowRunOut.model_validate(r) for r in items],
         total=total,

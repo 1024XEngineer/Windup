@@ -30,6 +30,7 @@ from windup_app.server.user.interface import UserService
 from windup_app.server.mq.catalog import EMAIL_STREAM, MSG_TYPE_VERIFICATION_CODE
 from windup_app.server.user.model import (
     ChangePasswordInput,
+    EmailChangePasswordInput,
     LoginByCodeInput,
     LoginByPasswordInput,
     LoginResult,
@@ -78,11 +79,13 @@ def _verify_password(password: str, hashed: str) -> bool:
 
 VERIFY_COOLDOWN_KEY = "verify:cooldown:{email}"
 VERIFY_CODE_KEY = "verify:{purpose}:{email}"
+VERIFY_ATTEMPT_KEY = "verify:attempt:{purpose}:{email}"
 REFRESH_TOKEN_KEY = "refresh:{token_hash}"
 LOGIN_FAIL_KEY = "login:fail:{email}"
 LOGIN_LOCK_KEY = "login:lock:{email}"
 
 VERIFY_CODE_TTL = 300  # 5 分钟
+VERIFY_ATTEMPT_LIMIT = 5
 COOLDOWN_TTL = 60  # 60 秒
 
 LOGIN_FAIL_LIMIT = 5  # 连续错误密码上限
@@ -121,20 +124,23 @@ def _to_view(user: User) -> UserView:
 # -- JWT 工具函数 ---------------------------------------------------------
 
 
-def create_access_token(user_id: int, email: str) -> str:
+def create_access_token(user_id: int, email: str, auth_version: int = 0) -> str:
     """签发 access_token。"""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
         "email": email,
         "type": "access",
+        "av": auth_version,
         "iat": now,
         "exp": now.timestamp() + ACCESS_TOKEN_EXPIRE_SECONDS,
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: int, email: str = "") -> tuple[str, str]:
+def create_refresh_token(
+    user_id: int, email: str = "", auth_version: int = 0
+) -> tuple[str, str]:
     """签发 refresh_token，返回 (token, jti)。"""
     now = datetime.now(timezone.utc)
     jti = str(uuid.uuid4())
@@ -142,6 +148,7 @@ def create_refresh_token(user_id: int, email: str = "") -> tuple[str, str]:
         "sub": str(user_id),
         "email": email,
         "type": "refresh",
+        "av": auth_version,
         "jti": jti,
         "iat": now,
         "exp": now.timestamp() + REFRESH_TOKEN_EXPIRE_SECONDS,
@@ -215,8 +222,9 @@ class SqlAlchemyUserService(UserService):
             quota_service.redeem_invite_code(session, user.id, invite_code)
 
         # 注册即登录，签发 token
-        access_token = create_access_token(user.id, user.email)
-        refresh_token, jti = create_refresh_token(user.id, user.email)
+        auth_version = user.auth_version
+        access_token = create_access_token(user.id, user.email, auth_version)
+        refresh_token, jti = create_refresh_token(user.id, user.email, auth_version)
         self._store_refresh_token(jti, user.id)
 
         logger.info("[WINDUP] 用户注册成功 | user_id=%s email=%s", user.id, user.email)
@@ -284,8 +292,9 @@ class SqlAlchemyUserService(UserService):
         user.last_login_at = datetime.now(timezone.utc)
         session.flush()
 
-        access_token = create_access_token(user.id, user.email)
-        refresh_token, jti = create_refresh_token(user.id, user.email)
+        auth_version = user.auth_version
+        access_token = create_access_token(user.id, user.email, auth_version)
+        refresh_token, jti = create_refresh_token(user.id, user.email, auth_version)
         self._store_refresh_token(jti, user.id)
 
         logger.info("[WINDUP] 用户登录成功 | user_id=%s email=%s", user.id, user.email)
@@ -308,9 +317,11 @@ class SqlAlchemyUserService(UserService):
 
         code = _generate_code()
         code_key = VERIFY_CODE_KEY.format(purpose=purpose, email=email)
+        attempt_key = VERIFY_ATTEMPT_KEY.format(purpose=purpose, email=email)
 
         # 存储验证码 + 设置冷却
         pipe = self.redis.pipeline()
+        pipe.delete(attempt_key)
         pipe.setex(code_key, VERIFY_CODE_TTL, code)
         pipe.setex(cooldown_key, COOLDOWN_TTL, "1")
         pipe.execute()
@@ -331,23 +342,55 @@ class SqlAlchemyUserService(UserService):
                 dedupe_key=dedupe_key,
             )
         except Exception as exc:
-            logger.exception("[WINDUP] 验证码邮件入队失败 | email=%s purpose=%s", email, purpose)
-            raise BizException("验证码发送失败，请稍后重试", code=BizCode.INTERNAL_ERROR) from exc
+            logger.exception(
+                "[WINDUP] 验证码邮件入队失败 | email=%s purpose=%s", email, purpose
+            )
+            raise BizException(
+                "验证码发送失败，请稍后重试", code=BizCode.INTERNAL_ERROR
+            ) from exc
         finally:
             session.close()
 
         logger.info("[WINDUP] 验证码已入队 | email=%s purpose=%s", email, purpose)
 
+    # verify-code-atomic: 比较、失败计数和成功消费必须在同一个 Redis 操作中完成。
+    _VERIFY_CODE_SCRIPT = """
+    -- verify-code-atomic
+    local stored = redis.call('GET', KEYS[1])
+    if stored == false then
+        return 0
+    end
+    if stored == ARGV[1] then
+        redis.call('DEL', KEYS[1])
+        redis.call('DEL', KEYS[2])
+        return 1
+    end
+    local attempts = redis.call('INCR', KEYS[2])
+    if attempts == 1 then
+        redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))
+    end
+    if attempts >= tonumber(ARGV[3]) then
+        redis.call('DEL', KEYS[1])
+        return -1
+    end
+    return -2
+    """
+
     def _verify_code(self, email: str, code: str, purpose: str) -> None:
-        """校验验证码，失败抛 BizException。"""
+        """原子校验并消费验证码，失败信息统一且最多允许五次尝试。"""
         code_key = VERIFY_CODE_KEY.format(purpose=purpose, email=email)
-        stored_code = self.redis.get(code_key)
-        if stored_code is None:
-            raise BizException("验证码已过期", code=BizCode.BAD_REQUEST)
-        if stored_code != code:
-            raise BizException("验证码错误", code=BizCode.BAD_REQUEST)
-        # 验证通过，删除验证码
-        self.redis.delete(code_key)
+        attempt_key = VERIFY_ATTEMPT_KEY.format(purpose=purpose, email=email)
+        result = self.redis.eval(
+            self._VERIFY_CODE_SCRIPT,
+            2,
+            code_key,
+            attempt_key,
+            code,
+            VERIFY_CODE_TTL,
+            VERIFY_ATTEMPT_LIMIT,
+        )
+        if int(result or 0) != 1:
+            raise BizException("验证码无效或已过期", code=BizCode.BAD_REQUEST)
 
     def login_by_code(self, session: Session, input: LoginByCodeInput) -> LoginResult:
         """邮箱+验证码登录。未知邮箱自动建号并赠送注册积分。"""
@@ -373,8 +416,9 @@ class SqlAlchemyUserService(UserService):
         user.last_login_at = datetime.now(timezone.utc)
         session.flush()
 
-        access_token = create_access_token(user.id, user.email)
-        refresh_token, jti = create_refresh_token(user.id, user.email)
+        auth_version = user.auth_version
+        access_token = create_access_token(user.id, user.email, auth_version)
+        refresh_token, jti = create_refresh_token(user.id, user.email, auth_version)
         self._store_refresh_token(jti, user.id)
 
         return LoginResult(
@@ -400,7 +444,7 @@ class SqlAlchemyUserService(UserService):
 
     # -- Token 验证 ------------------------------------------------------
 
-    def validate_access_token(self, token: str) -> UserView | None:
+    def validate_access_token(self, session: Session, token: str) -> UserView | None:
         """校验 access_token，返回 UserView 或 None。"""
         try:
             payload = decode_token(token)
@@ -410,10 +454,14 @@ class SqlAlchemyUserService(UserService):
         if payload.get("type") != "access":
             return None
 
-        return UserView(
-            id=int(payload["sub"]),
-            email=payload.get("email", ""),
-        )
+        user_id = int(payload["sub"])
+        user = session.get(User, user_id)
+        if user is None or user.status == UserStatus.BANNED:
+            return None
+        if int(payload.get("av", 0)) != user.auth_version:
+            return None
+
+        return _to_view(user)
 
     # -- Lua: 原子 检查-删除-存储 refresh token --------------------------------
     # KEYS[1] = old_token_key, KEYS[2] = new_token_key
@@ -433,7 +481,7 @@ class SqlAlchemyUserService(UserService):
     return cur
     """
 
-    def refresh_tokens(self, refresh_token: str) -> LoginResult:
+    def refresh_tokens(self, session: Session, refresh_token: str) -> LoginResult:
         """刷新 token。"""
         payload = decode_token(refresh_token)
         if payload.get("type") != "refresh":
@@ -445,11 +493,17 @@ class SqlAlchemyUserService(UserService):
 
         # user_id 来自已验签的 JWT，可信
         user_id = int(payload["sub"])
-        email = payload.get("email", "")
+        user = session.get(User, user_id)
+        if user is None or user.status == UserStatus.BANNED:
+            raise BizException("refresh token 已失效", code=BizCode.UNAUTHORIZED)
+        email = user.email
+        auth_version = user.auth_version
+        if int(payload.get("av", 0)) != auth_version:
+            raise BizException("refresh token 已失效", code=BizCode.UNAUTHORIZED)
 
         # 签发新 token
-        new_access = create_access_token(user_id, email)
-        new_refresh, new_jti = create_refresh_token(user_id, email)
+        new_access = create_access_token(user_id, email, auth_version)
+        new_refresh, new_jti = create_refresh_token(user_id, email, auth_version)
 
         # Lua 原子操作：GET old → 存在则 DEL old + SETEX new → 返回 user_id
         token_hash = _hash_token(jti)
@@ -471,7 +525,7 @@ class SqlAlchemyUserService(UserService):
 
         logger.info("[WINDUP] token 已刷新 | user_id=%s", user_id)
         return LoginResult(
-            user=UserView(id=user_id, email=email),
+            user=_to_view(user),
             access_token=new_access,
             refresh_token=new_refresh,
         )
@@ -482,7 +536,7 @@ class SqlAlchemyUserService(UserService):
         self, session: Session, user_id: int, input: ChangePasswordInput
     ) -> None:
         """修改密码。"""
-        user = session.get(User, user_id)
+        user = session.get(User, user_id, with_for_update=True)
         if user is None:
             raise BizException("用户不存在", code=BizCode.NOT_FOUND)
 
@@ -493,6 +547,7 @@ class SqlAlchemyUserService(UserService):
             raise BizException("旧密码错误", code=BizCode.BAD_REQUEST)
 
         user.password_hash = _hash_password(input.new_password)
+        user.auth_version += 1
         session.flush()
 
         # 修改密码后撤销该用户所有 refresh_token
@@ -503,7 +558,7 @@ class SqlAlchemyUserService(UserService):
         self, session: Session, user_id: int, input: SetPasswordInput
     ) -> None:
         """设置初始密码（仅未设密码用户）。"""
-        user = session.get(User, user_id)
+        user = session.get(User, user_id, with_for_update=True)
         if user is None:
             raise BizException("用户不存在", code=BizCode.NOT_FOUND)
 
@@ -511,17 +566,38 @@ class SqlAlchemyUserService(UserService):
             raise BizException("密码已设置，请使用修改密码", code=BizCode.BAD_REQUEST)
 
         user.password_hash = _hash_password(input.new_password)
+        user.auth_version += 1
         session.flush()
 
         self._revoke_all_user_tokens(user_id)
         logger.info("[WINDUP] 密码已设置 | user_id=%s", user_id)
+
+    def change_password_by_email(
+        self, session: Session, user_id: int, input: EmailChangePasswordInput
+    ) -> None:
+        """验证当前登录账号的邮箱后修改密码。"""
+        user = session.get(User, user_id, with_for_update=True)
+        if user is None:
+            raise BizException("用户不存在", code=BizCode.NOT_FOUND)
+        if user.status == UserStatus.BANNED:
+            raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
+
+        self._verify_code(user.email, input.code, "change_password")
+        user.password_hash = _hash_password(input.new_password)
+        user.auth_version += 1
+        session.flush()
+
+        self._revoke_all_user_tokens(user_id)
+        logger.info("[WINDUP] 邮箱核验改密成功 | user_id=%s", user_id)
 
     def reset_password(self, session: Session, input: ResetPasswordInput) -> None:
         """邮箱+验证码重置密码（忘记密码场景）。"""
         # 校验验证码（purpose 必须为 reset_password）
         self._verify_code(input.email, input.code, "reset_password")
 
-        user = session.scalar(select(User).where(User.email == input.email))
+        user = session.scalar(
+            select(User).where(User.email == input.email).with_for_update()
+        )
         if user is None:
             raise BizException("用户不存在", code=BizCode.NOT_FOUND)
 
@@ -529,6 +605,7 @@ class SqlAlchemyUserService(UserService):
             raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
 
         user.password_hash = _hash_password(input.new_password)
+        user.auth_version += 1
         session.flush()
 
         # 重置密码后撤销该用户所有 refresh_token

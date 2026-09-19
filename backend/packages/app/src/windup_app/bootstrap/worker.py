@@ -7,7 +7,13 @@ import signal
 import threading
 import time
 
-from windup_app.server.mq.catalog import all_stream_specs, email_stream_spec, generation_stream_spec
+from windup_app.server.mq.catalog import (
+    all_stream_specs,
+    email_stream_spec,
+    generation_action_stream_spec,
+    generation_image_stream_spec,
+    generation_stream_spec,
+)
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.executor import (
     bind_matte,
@@ -18,6 +24,7 @@ from windup_app.server.orchestrator.executor import (
     run_direction_set_task,
 )
 from windup_app.server.orchestrator.view_sheet_executor import run_view_sheet_task
+from windup_app.server.orchestrator.first_frame_executor import run_first_frame_task
 from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 from windup_app.worker.consumer import StreamConsumer, start_delayed_loop, start_relay_loop
 from windup_app.worker.pending_timeout import release_stale_pending_tasks
@@ -67,6 +74,19 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
+    def _generation_consumer(spec):
+        return StreamConsumer(
+            spec,
+            run_image_task=run_image_task,
+            run_action_task=run_action_task,
+            run_direction_set_task=run_direction_set_task,
+            run_view_sheet_task=run_view_sheet_task,
+            run_first_frame_task=run_first_frame_task,
+            stop_event=stop_event,
+            resume_action_poll=resume_action_poll,
+            resume_action_client_bake=resume_action_client_bake,
+        )
+
     consumers = [
         StreamConsumer(
             email_stream_spec(),
@@ -74,18 +94,13 @@ def main() -> None:
             run_action_task=run_action_task,
             run_direction_set_task=run_direction_set_task,
             run_view_sheet_task=run_view_sheet_task,
+            run_first_frame_task=run_first_frame_task,
             stop_event=stop_event,
         ),
-        StreamConsumer(
-            generation_stream_spec(),
-            run_image_task=run_image_task,
-            run_action_task=run_action_task,
-            run_direction_set_task=run_direction_set_task,
-            run_view_sheet_task=run_view_sheet_task,
-            stop_event=stop_event,
-            resume_action_poll=resume_action_poll,
-            resume_action_client_bake=resume_action_client_bake,
-        ),
+        _generation_consumer(generation_image_stream_spec()),
+        _generation_consumer(generation_action_stream_spec()),
+        # 过渡 drain：切流前已进旧 generation Stream 的消息还要被消费。
+        _generation_consumer(generation_stream_spec()),
     ]
     threads = [consumer.start() for consumer in consumers]
     relay_thread = start_relay_loop(stop_event)
@@ -99,7 +114,10 @@ def main() -> None:
     )
     pending_thread.start()
 
-    logger.info("windup worker 已启动 | streams=%s", [s.stream for s in all_stream_specs()])
+    logger.info(
+        "windup worker 已启动 | streams=%s",
+        [s.stream for s in (*all_stream_specs(), generation_stream_spec())],
+    )
 
     try:
         while not stop_event.is_set():
@@ -128,9 +146,11 @@ def _warmup_local_inference() -> None:
     except Exception:
         logger.warning("抽帧后端预热失败", exc_info=True)
     try:
-        from windup_framework.providers import OnnxU2NetMatteProvider
+        from windup_framework.providers import get_matte_provider
 
-        matte = OnnxU2NetMatteProvider()
+        # 取进程里那唯一一份 —— 三个 executor 的惰性兜底取到的是同一个对象,
+        # 所以就算下面 warmup() 抛了、bind_matte 没跑成,也不会各建一份。
+        matte = get_matte_provider()
         matte.warmup()
         bind_matte(matte)
         logger.info("ONNX 抠图会话已预热")

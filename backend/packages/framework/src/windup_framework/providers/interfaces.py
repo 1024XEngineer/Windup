@@ -37,6 +37,20 @@ class VideoProvider(Protocol):
 
 
 @runtime_checkable
+class FirstFrameUploader(Protocol):
+    """首帧 bytes → **公网可取的 URL**(给只吃 URL 的 i2v 接口用,如 veo)。
+
+    与 :class:`~windup_framework.providers.render3d.interfaces.ModelUploader` 形状相同、
+    契约不同,故单列:这里是一张几十 KB 的 JPG,而 URL 只需要活到建单被上游取走为止。
+
+    实现住在组装层(它要碰对象存储凭证),framework 只认这个 port —— 于是
+    "换哪个厂商" 不会改 ai_engine 的一行代码。
+    """
+
+    def upload(self, first_frame: bytes, content_type: str) -> str: ...
+
+
+@runtime_checkable
 class MatteProvider(Protocol):
     """主体抠图(rembg / u2net)—— 按主体抠,不抠颜色(浅色角色撞背景会抠穿)。"""
 

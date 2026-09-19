@@ -1,6 +1,7 @@
 import { createApiClient, getApiAccessToken, type ApiClient } from '@/shared/api'
 
 import type {
+  Render3DMotion,
   BakeJob,
   MasterFacts,
   MasterPrecheckReport,
@@ -135,6 +136,14 @@ function parseCost(value: unknown): Render3DAssetCost {
   }
 }
 
+const KNOWN_MOTIONS: ReadonlySet<string> = new Set(['walk', 'idle', 'jump'])
+
+/** 认不出的动作名跳过,不带进界面 —— 界面上多一个点不动的按钮比少一个更糟。 */
+function parseMotions(value: unknown): Render3DMotion[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((m): m is Render3DMotion => typeof m === 'string' && KNOWN_MOTIONS.has(m))
+}
+
 function parseAsset(value: unknown): Render3DAsset {
   const raw = requireRecord(value, '3D 资产状态')
   const state = requireString(raw.state, 'state')
@@ -145,6 +154,10 @@ function parseAsset(value: unknown): Render3DAsset {
     state: state as Render3DAssetState,
     model3dUrl: nullableString(raw.model_3d_url, 'model_3d_url'),
     reviewModelUrl: nullableString(raw.review_model_url, 'review_model_url'),
+    // 后端没给（旧版本）时给空数组，不猜 —— 猜成 ['walk'] 会让界面声称一个
+    // 可能并不存在的动作已经烘好，用户点不了也不知道为什么。
+    bakedMotions: parseMotions(raw.baked_motions),
+    bakeableMotions: parseMotions(raw.bakeable_motions),
     error: nullableString(raw.error, 'error'),
     cost: parseCost(raw.cost),
   }
@@ -202,10 +215,11 @@ export function createRender3DApis(client: ApiClient = defaultClient()): Render3
       return parseAsset(await client.request<unknown>(outfitPath(characterId, outfitId)))
     },
 
-    async buildOutfitAsset(characterId, outfitId) {
+    async buildOutfitAsset(characterId, outfitId, stance) {
       return parseAsset(
         await client.request<unknown>(`${outfitPath(characterId, outfitId)}/build`, {
           method: 'POST',
+          json: { stance },
         }),
       )
     },
@@ -214,6 +228,15 @@ export function createRender3DApis(client: ApiClient = defaultClient()): Render3
       return parseAsset(
         await client.request<unknown>(`${outfitPath(characterId, outfitId)}/approve`, {
           method: 'POST',
+        }),
+      )
+    },
+
+    async addOutfitMotion(characterId, outfitId, motion) {
+      return parseAsset(
+        await client.request<unknown>(`${outfitPath(characterId, outfitId)}/motions`, {
+          method: 'POST',
+          json: { motion },
         }),
       )
     },
@@ -253,7 +276,21 @@ export function createRender3DApis(client: ApiClient = defaultClient()): Render3
     async completeBake(taskId, completion) {
       await client.request<unknown>(`/render3d/bake/${taskId}/complete`, {
         method: 'POST',
-        json: { clip: completion.clip, sample_times: completion.sampleTimes },
+        json: {
+          clip: completion.clip,
+          sample_times: completion.sampleTimes,
+          rig: completion.rig
+            ? {
+                bones: completion.rig.bones,
+                root_bone: completion.rig.rootBone,
+                bone_names: completion.rig.boneNames,
+                skinned_meshes: completion.rig.skinnedMeshes,
+                vertices: completion.rig.vertices,
+                available_clips: completion.rig.availableClips,
+              }
+            : null,
+          root_motion: completion.rootMotion ?? null,
+        },
       })
     },
 
@@ -274,10 +311,12 @@ export const render3DApis: Render3DApis = {
   precheckMaster: (imageUrl, canvas) => createRender3DApis().precheckMaster(imageUrl, canvas),
   getOutfitAsset: (characterId, outfitId) =>
     createRender3DApis().getOutfitAsset(characterId, outfitId),
-  buildOutfitAsset: (characterId, outfitId) =>
-    createRender3DApis().buildOutfitAsset(characterId, outfitId),
+  buildOutfitAsset: (characterId, outfitId, stance) =>
+    createRender3DApis().buildOutfitAsset(characterId, outfitId, stance),
   approveOutfitAsset: (characterId, outfitId) =>
     createRender3DApis().approveOutfitAsset(characterId, outfitId),
+  addOutfitMotion: (characterId, outfitId, motion) =>
+    createRender3DApis().addOutfitMotion(characterId, outfitId, motion),
   discardOutfitAsset: (characterId, outfitId) =>
     createRender3DApis().discardOutfitAsset(characterId, outfitId),
   getBakeJob: (taskId) => createRender3DApis().getBakeJob(taskId),

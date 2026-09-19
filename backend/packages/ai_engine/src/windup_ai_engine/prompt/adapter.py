@@ -77,8 +77,12 @@ class RuleBasedPromptAdapter:
         kind: Kind = "i2v",
         facing: Facing = Facing.SIDE,
         stance: CharacterStance | str = CharacterStance.BIPED,
+        on_template: bool = False,
     ) -> AdaptedPrompt:
-        """Raises ``PromptRejected``:这段描述送进模型必然出坏产物,理由带 code 与机制。"""
+        """Raises ``PromptRejected``:这段描述送进模型必然出坏产物,理由带 code 与机制。
+
+        ``on_template``:这段话是叠在动作模板之上的细节句(#838),见 ``lint``。
+        """
         stance = CharacterStance(stance)      # 非法体型要炸,不静默按双足放行
         clause = (user_text or "").strip()
         if not clause:
@@ -97,7 +101,7 @@ class RuleBasedPromptAdapter:
 
         clause = rewrite_prompt(clause, kind=kind, stance=stance)
 
-        issues = lint(clause, kind=kind)
+        issues = lint(clause, kind=kind, on_template=on_template)
         blockers = [
             (_CODE_BY_CATEGORY[i.category], i.message) for i in issues if i.level == "error"
         ]

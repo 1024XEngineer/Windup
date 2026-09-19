@@ -21,7 +21,7 @@
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -273,7 +273,14 @@ class AutoRigProvider(Protocol):
         *,
         want: str = "GLB",
         motion: str | int | None = None,
+        on_submitted: Callable[[str], None] | None = None,
     ) -> RiggedModel: ...
+    """``on_submitted`` 在**提交成功、取件之前**被调,入参是上游任务号。
+
+    它在协议里而不是只在某个实现里,是因为它对应的是所有按次计费实现共有的一个事实:
+    **钱在提交那一刻就扣了**,而之后的等待、下载、进程存活每一步都可能失败。调用方
+    拿着这个号才有得续;拿不到就只能重新提交,也就是同一份产物付两次钱。
+    """
 
 
 @runtime_checkable

@@ -10,6 +10,7 @@ from windup_common.exceptions import BizException
 
 from windup_app.server.user.model import (
     ChangePasswordInput,
+    EmailChangePasswordInput,
     LoginByCodeInput,
     LoginByPasswordInput,
     RegisterInput,
@@ -45,9 +46,21 @@ def mock_redis():
     redis_mock.get.return_value = None
     redis_mock.setex.return_value = True
     redis_mock.delete.return_value = True
-    redis_mock.eval.return_value = None  # Lua 脚本默认返回 None
+    redis_mock.hget.return_value = None
+    redis_mock._verify_result = None
+    redis_mock._rotate_result = None
+
+    def eval_script(script, _key_count, *args):
+        if "verify-code-atomic" in script:
+            if redis_mock._verify_result is not None:
+                return redis_mock._verify_result
+            stored = redis_mock.get.return_value
+            return 1 if stored is not None and stored == args[2] else 0
+        return redis_mock._rotate_result
+
+    redis_mock.eval.side_effect = eval_script
     redis_mock.pipeline.return_value = MagicMock(
-        execute=MagicMock(return_value=[True, True])
+        execute=MagicMock(return_value=[True, True, True])
     )
     return redis_mock
 
@@ -126,6 +139,33 @@ def test_decode_expired_token():
 def test_decode_invalid_token():
     with pytest.raises(BizException, match="token 无效"):
         decode_token("invalid-token")
+
+
+def test_access_token_auth_version_invalidates_old_sessions(db_session, service):
+    user = User(
+        email="test@example.com",
+        password_hash=_hash_password("password123"),
+        auth_version=4,
+    )
+    db_session.add(user)
+    db_session.flush()
+    token = create_access_token(user.id, user.email, auth_version=3)
+
+    assert service.validate_access_token(db_session, token) is None
+
+
+def test_refresh_token_auth_version_invalidates_old_sessions(db_session, service):
+    user = User(
+        email="test@example.com",
+        password_hash=_hash_password("password123"),
+        auth_version=4,
+    )
+    db_session.add(user)
+    db_session.flush()
+    token, _ = create_refresh_token(user.id, user.email, auth_version=3)
+
+    with pytest.raises(BizException, match="refresh token 已失效"):
+        service.refresh_tokens(db_session, token)
 
 
 # -- 注册测试 ------------------------------------------------------------
@@ -259,7 +299,7 @@ def test_register_wrong_code(db_session, service):
         invite_code="AB23CD45",
     )
 
-    with pytest.raises(BizException, match="验证码错误"):
+    with pytest.raises(BizException, match="验证码无效或已过期"):
         service.register_by_email(db_session, input_data)
 
 
@@ -273,7 +313,7 @@ def test_register_expired_code(db_session, service):
         invite_code="AB23CD45",
     )
 
-    with pytest.raises(BizException, match="验证码已过期"):
+    with pytest.raises(BizException, match="验证码无效或已过期"):
         service.register_by_email(db_session, input_data)
 
 
@@ -333,7 +373,9 @@ def test_register_expired_invite_code(db_session, service):
     with pytest.raises(BizException, match="邀请码已过期") as exc:
         service.register_by_email(db_session, input_data)
     assert exc.value.code == BizCode.NOT_FOUND
-    assert db_session.scalar(select(User).where(User.email == "late@example.com")) is None
+    assert (
+        db_session.scalar(select(User).where(User.email == "late@example.com")) is None
+    )
 
 
 # -- 登录测试 ------------------------------------------------------------
@@ -516,7 +558,7 @@ def test_login_by_code_wrong_code(db_session, service):
 
     input_data = LoginByCodeInput(email="code@example.com", code="999999")
 
-    with pytest.raises(BizException, match="验证码错误"):
+    with pytest.raises(BizException, match="验证码无效或已过期"):
         service.login_by_code(db_session, input_data)
 
 
@@ -539,6 +581,24 @@ def test_send_verification_code_cooldown(service, mock_mq_publish):
         service.send_verification_code("test@example.com", "login")
 
 
+@pytest.mark.parametrize("result", [0, -1, -2])
+def test_verify_code_rejects_expired_wrong_and_exhausted_with_one_message(
+    service, mock_redis, result
+):
+    mock_redis._verify_result = result
+
+    with pytest.raises(BizException, match="验证码无效或已过期"):
+        service._verify_code("test@example.com", "000000", "change_password")
+
+
+def test_verify_code_consumes_atomically(service, mock_redis):
+    mock_redis._verify_result = 1
+
+    service._verify_code("test@example.com", "654321", "change_password")
+
+    mock_redis.eval.assert_called_once()
+
+
 # -- 登出测试 ------------------------------------------------------------
 
 
@@ -559,45 +619,54 @@ def test_logout_invalid_token(service):
 # -- 刷新 token 测试 ----------------------------------------------------
 
 
-def test_refresh_tokens(service, mock_redis):
+def test_refresh_tokens(db_session, service, mock_redis):
+    user = User(email="test@example.com", password_hash="")
+    db_session.add(user)
+    db_session.flush()
     # 先创建一个 refresh token
-    token, jti = create_refresh_token(1, "test@example.com")
+    token, jti = create_refresh_token(user.id, user.email)
 
     # Mock Redis eval 返回 user_id（Lua 脚本成功）
-    mock_redis.eval.return_value = "1"
+    mock_redis._rotate_result = "1"
 
-    result = service.refresh_tokens(token)
+    result = service.refresh_tokens(db_session, token)
 
     assert result.access_token is not None
     assert result.refresh_token is not None
-    assert result.user.id == 1
+    assert result.user.id == user.id
     # 验证调用了 eval（Lua 脚本），而不是 get
     mock_redis.eval.assert_called_once()
 
 
-def test_refresh_tokens_revoked(service, mock_redis):
-    token, jti = create_refresh_token(1, "test@example.com")
+def test_refresh_tokens_revoked(db_session, service, mock_redis):
+    user = User(email="test@example.com", password_hash="")
+    db_session.add(user)
+    db_session.flush()
+    token, jti = create_refresh_token(user.id, user.email)
 
     # Mock Redis eval 返回 None（Lua 脚本：旧 token 不存在）
-    mock_redis.eval.return_value = None
+    mock_redis._rotate_result = None
 
     with pytest.raises(BizException, match="refresh token 已失效"):
-        service.refresh_tokens(token)
+        service.refresh_tokens(db_session, token)
 
 
-def test_refresh_tokens_concurrent_reuse(service, mock_redis):
+def test_refresh_tokens_concurrent_reuse(db_session, service, mock_redis):
+    user = User(email="test@example.com", password_hash="")
+    db_session.add(user)
+    db_session.flush()
     """并发重放：同一个 refresh token 第二次调用应失败。"""
-    token, jti = create_refresh_token(1, "test@example.com")
+    token, jti = create_refresh_token(user.id, user.email)
 
     # 第一次调用成功
-    mock_redis.eval.return_value = "1"
-    result1 = service.refresh_tokens(token)
+    mock_redis._rotate_result = "1"
+    result1 = service.refresh_tokens(db_session, token)
     assert result1.access_token is not None
 
     # 第二次调用（并发重放）失败
-    mock_redis.eval.return_value = None
+    mock_redis._rotate_result = None
     with pytest.raises(BizException, match="refresh token 已失效"):
-        service.refresh_tokens(token)
+        service.refresh_tokens(db_session, token)
 
 
 # -- 修改密码测试 --------------------------------------------------------
@@ -684,9 +753,11 @@ def test_set_password_success(db_session, service, mock_mq_publish):
         db_session, LoginByCodeInput(email="setpwd@example.com", code="123456")
     )
 
+    session = MagicMock(wraps=db_session)
     service.set_password(
-        db_session, result.user.id, SetPasswordInput(new_password="newpass123")
+        session, result.user.id, SetPasswordInput(new_password="newpass123")
     )
+    session.get.assert_called_once_with(User, result.user.id, with_for_update=True)
 
     service._redis.get.return_value = None
     login_result = service.login_by_password(
@@ -712,6 +783,68 @@ def test_set_password_already_set(db_session, service, mock_mq_publish):
         service.set_password(
             db_session, result.user.id, SetPasswordInput(new_password="newpass123")
         )
+
+
+def test_change_password_by_email_is_bound_to_current_user(
+    db_session, service, mock_redis
+):
+    user = User(email="owner@example.com", password_hash=_hash_password("oldpass123"))
+    db_session.add(user)
+    db_session.flush()
+    mock_redis._verify_result = 1
+
+    session = MagicMock(wraps=db_session)
+    service.change_password_by_email(
+        session,
+        user.id,
+        EmailChangePasswordInput(code="654321", new_password="newpass123"),
+    )
+
+    session.get.assert_called_once_with(User, user.id, with_for_update=True)
+    assert _verify_password("newpass123", user.password_hash)
+    assert user.auth_version == 1
+
+
+def test_password_changes_lock_user_row(db_session, service, mock_redis):
+    """改密必须锁定用户行，避免并发事务丢失 auth_version 递增。"""
+    user = User(email="locked@example.com", password_hash=_hash_password("oldpass123"))
+    db_session.add(user)
+    db_session.flush()
+    session = MagicMock(wraps=db_session)
+
+    service.change_password(
+        session,
+        user.id,
+        ChangePasswordInput(old_password="oldpass123", new_password="newpass123"),
+    )
+
+    session.get.assert_called_once_with(User, user.id, with_for_update=True)
+
+
+def test_reset_password_query_locks_user_row(db_session, service, mock_redis):
+    """忘记密码按邮箱查找时也必须生成 FOR UPDATE。"""
+    from sqlalchemy.dialects import postgresql
+
+    user = User(
+        email="reset-lock@example.com", password_hash=_hash_password("oldpass123")
+    )
+    db_session.add(user)
+    db_session.flush()
+    mock_redis._verify_result = 1
+    session = MagicMock(wraps=db_session)
+
+    service.reset_password(
+        session,
+        ResetPasswordInput(
+            email=user.email,
+            code="654321",
+            new_password="newpass123",
+        ),
+    )
+
+    statement = session.scalar.call_args.args[0]
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" in compiled
 
 
 # -- 昵称修改测试 --------------------------------------------------------
@@ -809,7 +942,7 @@ def test_reset_password_wrong_code(db_session, service, mock_mq_publish):
         email="reset2@example.com", code="000000", new_password="newpass123"
     )
 
-    with pytest.raises(BizException, match="验证码已过期"):
+    with pytest.raises(BizException, match="验证码无效或已过期"):
         service.reset_password(db_session, reset_input)
 
 

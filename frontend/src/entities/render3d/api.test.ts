@@ -60,7 +60,7 @@ describe('三渲二资产适配器', () => {
     const { client, calls } = clientReturning(ASSET)
     const apis = createRender3DApis(client)
     await apis.getOutfitAsset('7', 'outfit-default')
-    await apis.buildOutfitAsset('7', 'outfit-default')
+    await apis.buildOutfitAsset('7', 'outfit-default', 'biped')
     await apis.approveOutfitAsset('7', 'outfit-default')
     await apis.discardOutfitAsset('7', 'outfit-default')
 
@@ -220,7 +220,7 @@ describe('render3DApis 单例', () => {
 
     await render3DApis.precheckMaster('https://cdn.test/master.png')
     await render3DApis.getOutfitAsset('7', 'outfit-default')
-    await render3DApis.buildOutfitAsset('7', 'outfit-default')
+    await render3DApis.buildOutfitAsset('7', 'outfit-default', 'biped')
     await render3DApis.approveOutfitAsset('7', 'outfit-default')
     await render3DApis.discardOutfitAsset('7', 'outfit-default')
 

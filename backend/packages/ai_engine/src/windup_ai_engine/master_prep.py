@@ -62,9 +62,21 @@ def add_headroom(master: bytes, ratio: float = 0.6) -> bytes:
     """
     if not 0.1 < ratio < 1.0:
         raise ValueError("ratio 需在 (0.1, 1.0) 之间")
-    img = Image.open(io.BytesIO(master)).convert("RGB")
-    new_h = max(img.height + 1, int(round(img.height / ratio)))
-    canvas = Image.new("RGB", (img.width, new_h), _bg_color(img))
+    src = Image.open(io.BytesIO(master))
+    # **带 alpha 的母版必须保住 alpha。** 曾经这里无条件 ``convert("RGB")``:透明像素的
+    # RGB 是未定义值(实际为 0),整幅底色因此变成纯黑,而 attack / jump 是仅有的两个走这条
+    # 路的动作 —— 走路不走,所以只有这两个动作的 i2v 首帧是黑底。后果有两层:模型为了把
+    # 角色从黑底里分出来会自己画一圈白描边;而黑发黑裤这类深色角色与黑底同色,抠图必然
+    # 在角色内部打洞(实测生产 attack 帧内部洞占主体 13.8%~31.7%)。
+    # 这与 #509 在 ``fit_first_frame`` 修掉的是同一个错,只是它当时没被一起改到。
+    if src.mode in ("RGBA", "LA") or (src.mode == "P" and "transparency" in src.info):
+        img = src.convert("RGBA")
+        new_h = max(img.height + 1, int(round(img.height / ratio)))
+        canvas = Image.new("RGBA", (img.width, new_h), (0, 0, 0, 0))
+    else:
+        img = src.convert("RGB")
+        new_h = max(img.height + 1, int(round(img.height / ratio)))
+        canvas = Image.new("RGB", (img.width, new_h), _bg_color(img))
     canvas.paste(img, (0, new_h - img.height))       # 原图贴底,空间加在顶部
     buf = io.BytesIO()
     canvas.save(buf, "PNG")

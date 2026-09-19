@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
@@ -33,6 +33,9 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     updateNickname: vi.fn(async () => user),
     setPassword: vi.fn(async () => undefined),
     changePassword: vi.fn(async () => undefined),
+    resetPassword: vi.fn(async () => undefined),
+    sendPasswordChangeCode: vi.fn(async () => undefined),
+    changePasswordWithCode: vi.fn(async () => undefined),
   }
 }
 
@@ -53,6 +56,7 @@ function createQuotaMock(): QuotaApis & {
   return {
     getBalance: vi.fn(async () => creditAccount),
     listTransactions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
+    listInviteRecords: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
     redeemCode: vi.fn(async () => ({ credited: 1000, account: creditAccount })),
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',
@@ -166,7 +170,7 @@ describe('AppHeader 进行中任务入口', () => {
     expect(document.querySelector('[data-active-run-bot]')).toBeNull()
 
     act(() => rememberActiveRun('7', '77'))
-    const entry = screen.getByRole('button', { name: '创作，有任务进行中' })
+    const entry = await screen.findByRole('button', { name: '创作，有任务进行中' })
     const bot = entry.querySelector('[data-active-run-bot]')
     expect(bot).toBeTruthy()
     // 文字保留：这一项不该在图标和文字之间换形态。
@@ -477,7 +481,42 @@ describe('AppHeader', () => {
 
     const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
     expect(accountMenu.textContent).toContain('reader@example.com')
-    expect(accountMenu.textContent).toContain('r')
+    expect(within(accountMenu).getByTestId('default-account-avatar').getAttribute('src')).toBe(
+      '/windup-mark.svg',
+    )
+  })
+
+  it('账号菜单在点击外部或按 Escape 时关闭', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    const trigger = await screen.findByRole('button', { name: '打开账号菜单' })
+    const menu = screen.getByTestId('account-menu')
+
+    fireEvent.click(trigger)
+    fireEvent.pointerDown(document.body)
+    expect(menu.getAttribute('data-state')).toBe('closing')
+    fireEvent.animationEnd(menu)
+
+    fireEvent.click(trigger)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(menu.getAttribute('data-state')).toBe('closing')
+  })
+
+  it('指针移出头像所在区域时账号菜单保持打开，否则鼠标够不到菜单项', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    const trigger = await screen.findByRole('button', { name: '打开账号菜单' })
+    const menu = screen.getByTestId('account-menu')
+    const accountRegion = screen.getByLabelText('账号')
+
+    fireEvent.click(trigger)
+    expect(menu.getAttribute('data-state')).toBe('open')
+
+    fireEvent.pointerLeave(accountRegion)
+    expect(menu.getAttribute('data-state')).toBe('open')
+    expect(screen.getByRole('link', { name: '打开账号中心' })).toBeTruthy()
   })
 
   it('让登录用户从 Header 的账号信息进入账号中心', async () => {
@@ -496,6 +535,9 @@ describe('AppHeader', () => {
     expect(menuSurface.getAttribute('aria-hidden')).toBeNull()
     const account = screen.getByRole('link', { name: '打开账号中心' })
     expect(account.getAttribute('href')).toBe('/account')
+    expect(screen.getByRole('link', { name: '修改密码' }).getAttribute('href')).toBe(
+      '/account?section=security',
+    )
     expect(account.getAttribute('aria-current')).toBe('page')
     expect(accountMenu.textContent).toContain('Reader')
     expect(screen.queryByText('资料与登录安全')).toBeNull()

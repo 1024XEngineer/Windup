@@ -54,6 +54,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from windup_common.enums.character import CharacterStatus
+from windup_common.models import CharacterStance
 from windup_framework.db import Base
 
 
@@ -128,6 +129,11 @@ class CharacterFrame(BaseModel):
     index: int = Field(ge=0, description="帧序号")
     image_url: str = Field(..., description="帧图片 URL")
     duration_ms: int | None = Field(default=None, gt=0, description="帧时长(毫秒)")
+    pixel_perfect_image_url: str | None = Field(
+        default=None,
+        description="完美像素化帧 URL",
+        exclude_if=lambda value: value is None,
+    )
 
 
 ActionDirection = Literal[
@@ -207,9 +213,22 @@ class CharacterAction(BaseModel):
     fps: float = Field(default=12, gt=0, description="播放帧率")
     frame_count: int = Field(ge=0, description="帧数")
     frames: list[CharacterFrame] = Field(default_factory=list, description="帧列表")
+    preferred_version: Literal["original", "pixel-perfect"] = Field(
+        default="original",
+        exclude_if=lambda value: value == "original",
+    )
     sequences: list[CharacterActionSequence] = Field(
         default_factory=list,
         description="可选多方向源序列与镜像关系；旧数据的 frames 视为 east",
+    )
+    # 逐帧水平位移，单位「1.0 = 角色总高」，与出帧台的归一化口径一致。
+    #
+    # **只装出帧台从根骨动画轨读出的那一份**，不装 postprocess.rootmotion 从交付帧像素
+    # 反推的那一份：后者是在帧已被对齐成原地之后再猜，信息在对齐那一步就损失了；前者
+    # 是作者意图的精确值，且在三渲二这条路上是白送的。i2v 路线没有骨架，只能用反推的，
+    # 那条不写进本字段，免得同一个字段装着两种精度的数还分不出来。
+    root_motion: list[tuple[float, float]] | None = Field(
+        default=None, description="逐帧 (dx, dz) 位移，来源为根骨动画轨；None = 未采集"
     )
 
     @model_validator(mode="after")
@@ -232,6 +251,31 @@ class CharacterAction(BaseModel):
         return self
 
 
+class OutfitRigFacts(BaseModel):
+    """绑骨模型的骨架事实。**记录用，不是判据。**
+
+    出帧台每渲一段动作都会从模型里读出这些数，此前算完即丢（#774）。存下来是为了
+    让「这个造型的骨架长什么样」不必每次重新解析 GLB，也让挂点有据可查——自动绑骨
+    保留了挂点骨，武器握持按骨名定位即可，不必重新标定。
+
+    为什么不当闸：曾以「28 骨 · humanoid 命名 · 无 mixamorig 前缀」作硬校验，2026-08-26
+    量全部归档产物即推翻——骨数是 24 / 27 / 28 / 43 / 49，其中 24 与 27 正是混元自己绑
+    的四足，同一条链路出来的骨数就不是常数；带前缀的那个是 Mixamo 绑的，属重定向路线
+    的正常输入。据此当闸会把自家产物一起挡掉。
+    """
+
+    bones: int = Field(..., ge=0, description="骨骼数量。随模型变，不是常数")
+    root_bone: str | None = Field(default=None, description="根骨名；读不出时为 None")
+    bone_names: list[str] = Field(
+        default_factory=list, description="骨名列表。挂点的来源——武器握持按骨名定位"
+    )
+    skinned_meshes: int = Field(default=0, ge=0, description="蒙皮网格数")
+    vertices: int = Field(default=0, ge=0, description="顶点数")
+    available_clips: dict[str, float] = Field(
+        default_factory=dict, description="模型自带的预设动作 → 时长（秒）"
+    )
+
+
 class CharacterOutfit(BaseModel):
     """造型。"""
 
@@ -250,6 +294,25 @@ class CharacterOutfit(BaseModel):
     model_3d_url: str | None = Field(
         default=None, description="该造型的绑骨 3D 模型 URL;None = 未建,三渲二不可用"
     )
+    # 与 model_3d_url 同批产出、每造型一次性。可空:存量造型没有这份数据,
+    # 而缺它不影响出帧(出帧台自己会再读一遍),所以不做回填。
+    rig_facts: OutfitRigFacts | None = Field(
+        default=None, description="绑骨模型的骨架事实；None = 未建或建于本字段之前"
+    )
+    # 这个造型**已经烘好的动作片段** —— 键是动作名(值域见 render3d_assets.ACTION_MOTIONS),
+    # 值是那一份绑骨产物的 URL。
+    #
+    # 为什么要一张表而不是一个 URL:绑骨接口**一次只吃一个 MotionType、产出一个带单条
+    # AnimationStack 的 FBX**(2026-08-03 实测归档:「MotionType 1–48 预设动作,一次一个」)。
+    # 想让一个造型既会走路又会跳,就得绑两次骨、存两份产物 —— 一个 URL 槽位装不下,
+    # 硬塞的话第二次会覆盖第一次,用户付了两次钱只剩一个动作。
+    #
+    # ``model_3d_url`` 保留为**主产物**(建资产那一次,当前是 walk),用来判"这个造型走不走
+    # 三渲二";渲哪个动作从本表按动作名取。两者不是第二真相源:主产物在本表里也有同样的
+    # 条目,``model_3d_url`` 只是那一条的别名,由 builder 同时写、用例钉住两者一致。
+    rigged_motions: dict[str, str] = Field(
+        default_factory=dict, description="动作名 → 该动作的绑骨产物 URL"
+    )
     actions: list[CharacterAction] = Field(
         default_factory=list, description="该造型下的动作列表"
     )
@@ -259,6 +322,20 @@ class CharacterData(BaseModel):
     """角色完整数据（方向母版与造型→动作→帧）。"""
 
     version: int = Field(default=1, ge=1, description="结构版本")
+    # 角色体型。决定"手臂/手肘"这类人体部位词能不能进提示词 —— 非双足角色的描述里
+    # 出现它们,模型会凭空接上一对人的上肢,而帧数/时长/成色全部正常、没有一道会红。
+    #
+    # 存在角色上而不是每次动作请求带:体型是角色的属性,不是这次生成的选项。
+    # 放在请求里的那份(``CreateActionInput.stance``)此前 558/558 个任务一个都没传过,
+    # 三道按体型分流的判据因此全是死代码(#840)。
+    #
+    # ``None`` = 没人选过,**与"选了双足"是两回事**。不在这里兜 BIPED:兜了的话
+    # 每个新建角色都会把默认值实体化写进 character_data,于是"有人确认过它是人形"
+    # 和"从来没人看过这个字段"再也分不开 —— 而那正是 #840 本身的形状。
+    # 双足这个默认值由 ``CharacterCard.stance`` 定义一次,下游取不到时用它。
+    stance: CharacterStance | None = Field(
+        default=None, description="角色体型(双足/四足/无肢);未设置时下游按双足处理"
+    )
     templates: list[CharacterTemplateSequence] = Field(
         default_factory=list, description="角色各源方向母版与镜像关系"
     )

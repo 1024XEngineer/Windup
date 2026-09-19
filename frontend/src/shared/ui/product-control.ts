@@ -1,3 +1,5 @@
+import './product-control.css'
+
 export type ProductControlVariant = 'accent' | 'chrome' | 'primary' | 'secondary'
 
 const productControlBaseClass =

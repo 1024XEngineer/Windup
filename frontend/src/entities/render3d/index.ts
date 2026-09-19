@@ -76,6 +76,10 @@ export interface Render3DAsset {
    * 通过按钮就退化成一个必须点的步骤,反而制造了"已经审过"的假象。
    */
   reviewModelUrl: string | null
+  /** 已经烘好的动作。界面靠它禁掉已有的按钮 —— 否则用户会为同一个动作重复付费。 */
+  bakedMotions: Render3DMotion[]
+  /** 这条路线出得了的动作。由后端给，前端不硬编码一份（抄一份就会各自漂）。 */
+  bakeableMotions: Render3DMotion[]
   error: string | null
   cost: Render3DAssetCost
 }
@@ -107,7 +111,41 @@ export interface BakeJob {
 export interface BakeCompletion {
   clip: string
   sampleTimes: number[]
+  /**
+   * 出帧台从模型里读到的骨架事实。服务端渲那条会把它带上来，浏览器这条此前算完即丢
+   * （#774）。两条路必须交回同样的东西，否则同一造型走哪条路存下来的资产不一样。
+   */
+  rig?: {
+    bones: number
+    rootBone: string | null
+    boneNames: string[]
+    skinnedMeshes: number
+    vertices: number
+    availableClips: Record<string, number>
+  }
+  /** 本片段的逐帧 (dx, dz)，单位「1.0 = 角色总高」，来源为根骨动画轨。 */
+  rootMotion?: Array<[number, number]>
 }
+
+/**
+ * 这条路线出得了的动作。与后端 `render3d_assets.ACTION_MOTIONS` 里**有对应预设**的那些
+ * 同一取值域。
+ *
+ * `attack` / `custom` 不在其中且不该加进来：预设库里只有 thrust / kick 两支，而产品的
+ * 攻击按运动拓扑分四型，拿 thrust 顶 sweep 会渲出「直刺」冒充「横挥」——
+ * 帧数、时长、成色全部正常，只有看画面才发现。那两个继续走 i2v。
+ */
+export type Render3DMotion = 'walk' | 'idle' | 'jump'
+
+/** 动作的中文名。界面上不该出现 `walk` 这种取值。 */
+export const RENDER3D_MOTION_LABELS: Record<Render3DMotion, string> = {
+  walk: '走路',
+  idle: '待机',
+  jump: '跳跃',
+}
+
+/** 角色体型。决定这条路线能不能给它绑骨；与后端 `CharacterStance` 同一取值域。 */
+export type CharacterStance = 'biped' | 'quadruped' | 'serpentine'
 
 export interface Render3DApis {
   /** 零成本母版预检。**不触发任何按次计费调用**,确认闸上可以随便调。 */
@@ -116,10 +154,30 @@ export interface Render3DApis {
     canvas?: { width: number; height: number },
   ): Promise<MasterPrecheckReport>
   getOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
-  /** 触发图生 3D。**按次计费**,只能由用户的显式操作调用。 */
-  buildOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
+  /**
+   * 触发图生 3D。**按次计费**,只能由用户的显式操作调用。
+   *
+   * ``stance`` 必填、无默认:自动绑骨只支持双足,而四足/无肢从模型几何判不出来
+   * (实测归档模型的包围盒比例完全重叠)。给默认值等于把"没声明"当成"双足"。
+   */
+  buildOutfitAsset(
+    characterId: string,
+    outfitId: string,
+    stance: CharacterStance,
+  ): Promise<Render3DAsset>
   /** 人看过模型点头 → 继续绑骨。 */
   approveOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
+  /**
+   * 给**已建好**的资产再烘一个动作片段。**按次计费**（一次绑骨），只能由显式操作调用。
+   *
+   * 一份绑骨产物只带一个动作片段（上游一次只吃一个 MotionType），所以「这个角色既会
+   * 走也会跳」= 两份产物 = 绑两次骨。图生 3D 那笔不重付。
+   */
+  addOutfitMotion(
+    characterId: string,
+    outfitId: string,
+    motion: Render3DMotion,
+  ): Promise<Render3DAsset>
   /** 模型不合格 → 丢弃重来。 */
   discardOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
   /** 取该任务的出帧参数;没有登记说明不需要浏览器出帧(或已收口)。 */

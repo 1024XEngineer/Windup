@@ -22,9 +22,20 @@ from .types import HttpCall, VideoRequest
 #: (``{msg}_url is required``)与"这个端点不存在"在响应里长得一样。
 FAL_I2V_ENDPOINTS: Mapping[str, str] = {
     "fal-ai/kling-video/o1/image-to-video": "start_image_url",
+    "fal-ai/kling-video/v3/turbo/std/image-to-video": "image_url",
     "bytedance/seedance-2.0/image-to-video": "image_url",
     "fal-ai/veo3.1/image-to-video": "image_url",
     "fal-ai/vidu/q1/image-to-video": "image_url",
+}
+
+#: FAL 队列面的**视频型号 → 建单端点**。型号名由 :data:`FAMILIES` 登记,端点在这里定;
+#: 两张表分开是因为 family 只回答"走哪条协议面",而同一条面上不同型号的路径完全不同。
+#:
+#: ``kling-v3-turbo-std`` 只在这条面上有 —— OpenAI ``/videos`` 面实测报
+#: ``model not found or disabled: kling-v3-turbo``(2026-08-27),别再去那边找它。
+FAL_VIDEO_ENDPOINTS: Mapping[str, str] = {
+    "veo3.1": "fal-ai/veo3.1/image-to-video",
+    "kling-v3-turbo-std": "fal-ai/kling-video/v3/turbo/std/image-to-video",
 }
 
 #: 队列里还在跑。除这两个之外的状态一律当终态处理 —— 认不出的状态继续轮询,会把
@@ -235,3 +246,164 @@ def _video_url(resp: httpx.Response) -> str | None:
             if isinstance(video, dict) and video.get("url"):
                 return str(video["url"])
     return None
+
+
+# ── veo3.1 ──────────────────────────────────────────────────────────────────
+
+#: veo3.1 的建单端点。型号名(链上/账本里用的 ``veo3.1``)与端点路径分开:前者是
+#: 我们的标识,后者是上游的 API 事实,拼不出来也不能互相推。
+VEO_ENDPOINT = "fal-ai/veo3.1/image-to-video"
+
+#: 时长档。**带 ``s`` 后缀的字符串**,与 kling 的 ``"5"``(无后缀)形状不同;
+#: 混用不会被立刻拒,而是走成另一个计费档。
+VEO_DURATIONS = ("4s", "6s", "8s")
+
+#: 上游默认 ``8s``,是最贵的一档。这里不取默认,取最便宜的一档做地板。
+VEO_CHEAPEST_DURATION = "4s"
+
+#: 只有横竖两档,**不吃 1:1**。首帧画布是方的时候必须有人做决定,不能让它落到上游去猜。
+VEO_ASPECT_RATIOS = ("16:9", "9:16")
+
+VEO_RESOLUTIONS = ("720p", "1080p", "4k")
+
+
+class VeoSpendGuardError(ValueError):
+    """请求体没把烧钱的那几项显式写死。
+
+    单列一个错误类型是为了让它在测试与日志里认得出来:这三项漏掉的代价不是报错,
+    是**静默走贵档**——上游默认 ``duration=8s`` + ``generate_audio=true``,
+    合起来是 4s 无声那档的 4 倍价,而任务照常成功、没有任何一道会红。
+    """
+
+
+def veo_duration(seconds: int) -> str:
+    """秒数 → 允许的时长档,**向下取**。
+
+    向下不向上:向上取是我们替用户多花钱。上游只认这三档,而调用方给的 ``seconds``
+    是通用参数(当前链上恒为 5),落不到档位上时取比它小的那一档而不是拒绝——
+    拒绝会让"换个视频型号"变成一次要改调用方的改动。
+    """
+    allowed = sorted(VEO_DURATIONS, key=lambda d: int(d.rstrip("s")))
+    fits = [d for d in allowed if int(d.rstrip("s")) <= seconds]
+    return fits[-1] if fits else VEO_CHEAPEST_DURATION
+
+
+def veo_aspect_ratio(size: str) -> str:
+    """首帧画布尺寸 → 画幅枚举。
+
+    跟着首帧走而不是写死:``fit_first_frame`` 已经把首帧补边成了 ``size``,画幅与它
+    不一致的话上游要么裁掉角色、要么再补一次边,而这两种都得等成片出来才看得见。
+    正方形画布在这里就炸——veo 没有 1:1,让它去猜等于用一次已计费的生成来试错。
+    """
+    w, h = (int(x) for x in size.split("x"))
+    if w == h:
+        raise VeoSpendGuardError(
+            f"veo 画幅只有 {VEO_ASPECT_RATIOS},没有 1:1;首帧画布 {size} 是方的,"
+            "请把首帧尺寸改成横或竖"
+        )
+    return "9:16" if h > w else "16:9"
+
+
+class VeoQueueVideoProtocol(FalQueueVideoProtocol):
+    """veo3.1 专用面:比通用 FAL 面多**四个必填项**,少一条 base64 退路。
+
+    单独一个类而不是给通用面加参数:这四项只对 veo 成立(kling 系连 ``resolution``
+    字段都没有),写进通用面就得每家一个分支,而分支写错的代价是一次已计费的错档。
+    """
+
+    def __init__(self, api_key: str, *, base_url: str) -> None:
+        super().__init__(api_key, VEO_ENDPOINT, base_url=base_url)
+
+    def build_submit(self, req: VideoRequest) -> HttpCall:
+        """首帧只走公网 URL;三个烧钱项在这里显式落地并当场自检。"""
+        url = (req.first_frame_url or "").strip()
+        if not url.startswith(("http://", "https://")):
+            raise VeoSpendGuardError(
+                f"veo 首帧必须是公网 URL,收到 {url[:32]!r};"
+                "base64 会在建单后到生成阶段才 failed,而费用可能已经产生"
+            )
+        body: dict[str, object] = {
+            "prompt": req.prompt,
+            FAL_I2V_ENDPOINTS[VEO_ENDPOINT]: url,
+            "duration": veo_duration(req.seconds),
+            # 有声 $0.40/秒、无声 $0.20/秒,而本仓的产物是序列帧,音轨最后会被丢掉。
+            # 付了钱买一条没人听的音轨,是这里唯一会发生的事。
+            "generate_audio": False,
+            "aspect_ratio": veo_aspect_ratio(req.size),
+            "resolution": "720p",
+        }
+        _assert_spend_pinned(body)
+        return HttpCall(
+            method="POST",
+            path=f"{self._root}/queue/{VEO_ENDPOINT}",
+            headers=self._headers,
+            body=body,
+        )
+
+
+def _assert_spend_pinned(body: dict[str, object]) -> None:
+    """发出去之前再数一遍这四项。
+
+    上面刚写完为什么还要查:这四项的共同点是**漏了不会报错**,上游拿默认值照样出片。
+    一次重构把某一行删掉,没有任何一条既有测试会红——除了这里。
+    """
+    duration = body.get("duration")
+    if duration not in VEO_DURATIONS:
+        raise VeoSpendGuardError(
+            f"duration 必须显式取 {VEO_DURATIONS} 之一(上游默认 8s 是最贵档),收到 {duration!r}"
+        )
+    if body.get("generate_audio") is not False:
+        raise VeoSpendGuardError(
+            "generate_audio 必须显式关掉(上游默认 true,走 $0.40/秒 那档,是无声的 2 倍),"
+            f"收到 {body.get('generate_audio')!r}"
+        )
+    if body.get("aspect_ratio") not in VEO_ASPECT_RATIOS:
+        raise VeoSpendGuardError(
+            f"aspect_ratio 必须是 {VEO_ASPECT_RATIOS} 之一,收到 {body.get('aspect_ratio')!r}"
+        )
+    if body.get("resolution") not in VEO_RESOLUTIONS:
+        raise VeoSpendGuardError(
+            f"resolution 必须是 {VEO_RESOLUTIONS} 之一,收到 {body.get('resolution')!r}"
+        )
+
+
+class KlingQueueVideoProtocol(FalQueueVideoProtocol):
+    """kling 在 FAL 队列面上的形状。与 veo 那条面的两处关键差别:
+
+    1. **首帧走 base64 dataURI,不需要先传对象存储。** 2026-08-27 实测十余次建单成片,
+       全部以 ``data:image/jpeg;base64,`` 发出。仓里那条"FAL 面只吃公网 URL"的归档
+       结论对 kling 不成立 —— 少一次上传就少一处会坏的地方,故沿用基类的 base64。
+    2. **``duration`` 必须显式给。** 基类不发它(十个端点的取值形态分 ``5`` / ``"5"`` /
+       ``"5s"`` 三种,猜错是一次已计费的 400);kling 这条已实测是**无后缀的字符串** ``"5"``。
+       不发就得听上游默认值,而默认值要是 10s 就是双倍价 —— 这类"漏了不报错、账单翻倍"
+       的字段一律显式钉住。
+    """
+
+    #: 实测取值形态:字符串、无 ``s`` 后缀(veo 那条面是 ``"4s"``,形状不同,别互相抄)。
+    DURATION = "5"
+
+    def build_submit(self, req: VideoRequest) -> HttpCall:
+        call = super().build_submit(req)
+        body = dict(call.body or {})
+        body["duration"] = self.DURATION
+        if not body.get("duration"):
+            raise ValueError("kling 建单必须带 duration,否则按上游默认档计费")
+        return HttpCall(
+            method=call.method, path=call.path, headers=call.headers, body=body
+        )
+
+
+def fal_video_protocol(model: str, api_key: str, *, base_url: str):
+    """按型号取 FAL 面的协议实现。
+
+    不做成一个类加分支:veo 有四个必填项与一条"首帧必须是公网 URL"的硬约束,
+    kling 一个都不适用,写进同一个类就得每家一个 if,而分支写错的代价是一次已计费的错档。
+    """
+    endpoint = FAL_VIDEO_ENDPOINTS.get(model)
+    if endpoint is None:
+        raise UnknownFalEndpointError(
+            f"型号 {model!r} 没有登记 FAL 端点,已登记: {sorted(FAL_VIDEO_ENDPOINTS)}"
+        )
+    if model == "veo3.1":
+        return VeoQueueVideoProtocol(api_key, base_url=base_url)
+    return KlingQueueVideoProtocol(api_key, endpoint, base_url=base_url)

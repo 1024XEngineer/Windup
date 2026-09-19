@@ -319,8 +319,10 @@ def check_model(
         if ratio > arm_span_max:
             raise ModelRejected(
                 ModelRejectCode.NOT_A_POSE,
-                f"臂展/身高 = {ratio:.2f},高于上限 {arm_span_max};人形 A/T-Pose 不会这么宽 —— "
-                "多半是模型躺着或轴向约定不对(glTF 规范是 Y-up)。包围盒 "
+                f"臂展/身高 = {ratio:.2f},高于上限 {arm_span_max};人形 A/T-Pose 不会这么宽。"
+                "最常见的原因是**角色手里拿着东西**:剑、法杖、弓这类延展物会把包围盒横向"
+                "撑开,而它们本身也绑不了骨(会被当成肢体绑上权重、动画里乱甩)。"
+                "其次才是模型躺着或轴向约定不对(glTF 规范是 Y-up)。包围盒 "
                 f"{facts.bbox[0]:.3f}×{facts.bbox[1]:.3f}×{facts.bbox[2]:.3f}。",
             )
     return facts

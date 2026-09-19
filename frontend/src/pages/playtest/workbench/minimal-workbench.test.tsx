@@ -133,6 +133,34 @@ describe('PlaytestWorkbench minimal control path', () => {
     expect(screen.getByRole('button', { name: '绑定动作：行走' })).toBeTruthy()
   })
 
+  it('keeps a long current action name inside a bounded control slot', () => {
+    const longActionName =
+      '32帧原地呼吸循环：东向站立，胸腔与肩部缓慢起伏，重心轻微上下移动，保持单角色与脚底线稳定。'
+    const characterWithLongActionName: Character = {
+      ...character,
+      outfits: character.outfits.map((outfit) => ({
+        ...outfit,
+        actions: outfit.actions.map((action) =>
+          action.id === IDLE_ACTION_ID ? { ...action, name: longActionName } : action,
+        ),
+      })),
+    }
+
+    render(
+      <PlaytestWorkbench
+        character={characterWithLongActionName}
+        outfitId={OUTFIT_ID}
+        movementMode="single"
+        initialActionId={IDLE_ACTION_ID}
+      />,
+    )
+
+    const currentActionSlot = screen.getByText('当前动作').parentElement
+    expect(currentActionSlot?.className).toContain('w-56')
+    expect(currentActionSlot?.className).toContain('min-w-0')
+    expect(currentActionSlot?.querySelector(`[title="${longActionName}"]`)).toBeTruthy()
+  })
+
   it('uses the same bound character actions for keyboard movement', () => {
     renderWorkbench()
 

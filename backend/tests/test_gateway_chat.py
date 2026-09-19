@@ -73,7 +73,7 @@ def test_chat_gateway_switches_key_after_429(monkeypatch, caplog):
     monkeypatch.setattr("windup_framework.gateway.chat.time.sleep", lambda _: None)
     caplog.set_level(logging.INFO, logger="windup.gateway")
     rate = ChatAdapterResult(ok=False, error_type=ModelErrorType.RATE_LIMIT, http_status=429)
-    key_a = FakeChatAdapter({"gpt-4o-mini": [rate, rate, rate]})
+    key_a = FakeChatAdapter({"gpt-4o-mini": [rate, rate]})
     key_b = FakeChatAdapter({"gpt-4o-mini": [OK]})
     cfg = AIProviderSettings(
         model="gpt-4o-mini",
@@ -90,7 +90,7 @@ def test_chat_gateway_switches_key_after_429(monkeypatch, caplog):
     )
 
     assert gw.invoke([{"role": "user", "content": "ping"}]) == "pong"
-    assert key_a.calls == ["gpt-4o-mini"] * 3
+    assert key_a.calls == ["gpt-4o-mini"] * 2
     assert key_b.calls == ["gpt-4o-mini"]
     records = [json.loads(r.message) for r in caplog.records if r.name == "windup.gateway"]
     success = [r for r in records if r.get("outcome") in ("success", "fallback_success")]

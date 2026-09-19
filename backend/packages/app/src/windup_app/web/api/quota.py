@@ -6,6 +6,7 @@ GET  /quota/balance          查询积分余额
 GET  /quota/transactions     查询积分流水（分页）
 POST /quota/redeem            兑换一次性积分码
 GET  /quota/invite/code      获取我的邀请码
+GET  /quota/invite/records   查询邀请明细
 POST /quota/invite/generate  签发新邀请码
 """
 
@@ -72,6 +73,18 @@ class InviteCodeOut(BaseModel):
     expires_at: datetime
     create_at: datetime
     update_at: datetime
+
+
+class InviteRecordOut(BaseModel):
+    """当前用户发出的单条邀请；身份字段已脱敏。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    invitee: str
+    code: str
+    rewarded: bool
+    create_at: datetime
 
 
 class RedeemCodeIn(BaseModel):
@@ -193,4 +206,26 @@ def generate_invite_code(
             update_at=view.update_at,
         ),
         message="邀请码已更新",
+    )
+
+
+@router.get("/invite/records", response_model=ListResponse[InviteRecordOut])
+def list_invite_records(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    session: Session = Depends(get_session),
+) -> ListResponse[InviteRecordOut]:
+    """分页查询当前登录用户发出的邀请。"""
+    records, total = service.list_invite_records(
+        session,
+        request.state.current_user.id,
+        page=page,
+        page_size=page_size,
+    )
+    return ListResponse.success(
+        [InviteRecordOut.model_validate(record) for record in records],
+        total=total,
+        page=page,
+        page_size=page_size,
     )

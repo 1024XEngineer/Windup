@@ -204,8 +204,9 @@ describe('asset export', () => {
     })
   })
 
-  it('明确 Cocos 尚未就绪，并只落地已确认的锚点坐标转换', () => {
-    expect(COCOS_TARGET_READINESS.ready).toBe(false)
+  it('记录 Cocos 3.8.8 实测就绪状态，并转换锚点坐标', () => {
+    expect(COCOS_TARGET_READINESS.ready).toBe(true)
+    expect(COCOS_TARGET_READINESS.reason).toContain('Creator 3.8.8')
     const anchor = toCocosAnchor({ x: 0.5, y: 0.9 })
     expect(anchor.x).toBe(0.5)
     expect(anchor.y).toBeCloseTo(0.1)

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { getPlaytestSceneState, modulo } from './pixel-stage-model'
+import './pixel-stage.css'
 
 const WORLD_WIDTH = 144
 const WORLD_HEIGHT = 56

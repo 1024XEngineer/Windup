@@ -1,4 +1,10 @@
-import type { ActionDirection, ActionType, Character, Frame } from '@/entities'
+import {
+  resolvedFrameImageUrl,
+  type ActionDirection,
+  type ActionType,
+  type Character,
+  type Frame,
+} from '@/entities'
 
 export interface PlaytestFrame {
   readonly imageUrl: string
@@ -47,9 +53,37 @@ export type PlaytestModelResult =
   | { readonly ok: false; readonly reason: 'outfit_not_found' }
 
 const DEFAULT_FRAME_DURATION_MS = 100
-const DENSE_GENERATED_LOCOMOTION = {
-  walk: { frameCount: 32, frameDurationMs: 125, cycleDurationMs: 1000 },
-  run: { frameCount: 32, frameDurationMs: 90, cycleDurationMs: 720 },
+const DENSE_GENERATED_TIMING = {
+  idle: {
+    frameCount: 12,
+    sourceFrameDurationsMs: [125, 450],
+    cycleDurationMs: 1000,
+    loopOnly: true,
+  },
+  walk: {
+    frameCount: 32,
+    sourceFrameDurationsMs: [125],
+    cycleDurationMs: 1000,
+    loopOnly: true,
+  },
+  run: {
+    frameCount: 32,
+    sourceFrameDurationsMs: [90],
+    cycleDurationMs: 720,
+    loopOnly: true,
+  },
+  jump: {
+    frameCount: 32,
+    sourceFrameDurationsMs: [110],
+    cycleDurationMs: 1000,
+    loopOnly: false,
+  },
+  attack: {
+    frameCount: 32,
+    sourceFrameDurationsMs: [90],
+    cycleDurationMs: 1000,
+    loopOnly: false,
+  },
 } as const
 
 function frameDuration(durationMs: number | null, fps: number): number {
@@ -75,27 +109,35 @@ function playtestFrames(
 ): readonly PlaytestFrame[] {
   const ordered = orderedFrames(frames)
   const playbackFrames = ordered.map((frame) => ({
-    imageUrl: frame.imageUrl,
+    imageUrl: resolvedFrameImageUrl(frame, action.preferredVersion ?? 'original'),
     durationMs: frameDuration(frame.durationMs, action.fps),
   }))
   const denseTiming =
-    action.type === 'walk' || action.type === 'run'
-      ? DENSE_GENERATED_LOCOMOTION[action.type]
+    action.type === 'idle' ||
+    action.type === 'walk' ||
+    action.type === 'run' ||
+    action.type === 'jump' ||
+    action.type === 'attack'
+      ? DENSE_GENERATED_TIMING[action.type]
       : undefined
-  // 只兼容生成器已知的坏形状：32 帧仍逐帧沿用稀疏 walk/run 时值。
-  // 帧数、循环性或任一时值不完全匹配时都尊重资产合同，不能把“超过 8 帧”
-  // 猜成密集采样，否则会误改用户已正确编排的 9/12/16/24/32 帧动作。
+  const sourceFrameDurationMs = ordered[0]?.durationMs
+  // 只兼容生成器已知的密集帧形状。默认非走动动作与 walk 共用 1 秒播放周期；
+  // 帧数、循环性或任一原始时值不完全匹配时仍尊重资产合同，避免误改用户编排。
   if (
-    !action.loop ||
     denseTiming === undefined ||
+    (denseTiming.loopOnly && !action.loop) ||
     ordered.length !== denseTiming.frameCount ||
-    ordered.some((frame) => frame.durationMs !== denseTiming.frameDurationMs)
+    !denseTiming.sourceFrameDurationsMs.some(
+      (sourceDurationMs) => sourceFrameDurationMs === sourceDurationMs,
+    ) ||
+    ordered.some((frame) => frame.durationMs !== sourceFrameDurationMs)
   ) {
     return playbackFrames
   }
 
   const timingScale =
-    denseTiming.cycleDurationMs / (denseTiming.frameCount * denseTiming.frameDurationMs)
+    denseTiming.cycleDurationMs /
+    playbackFrames.reduce((total, frame) => total + frame.durationMs, 0)
   return playbackFrames.map((frame) => ({
     ...frame,
     durationMs: frame.durationMs * timingScale,

@@ -8,7 +8,7 @@ import type {
   WorkflowActionInput,
   WorkflowRun,
 } from '@/entities'
-import { getDirectionProfile } from '@/entities'
+import { getDirectionProfile, resolvedFrameImageUrl } from '@/entities'
 
 import type {
   ExportAction,
@@ -69,7 +69,7 @@ function durationMs(frame: Frame, action: Action): number {
 function exportFrames(action: Action): readonly ExportFrame[] {
   return orderedFrames(action).map((frame) => ({
     index: frame.index,
-    imageUrl: frame.imageUrl,
+    imageUrl: resolvedFrameImageUrl(frame, action.preferredVersion ?? 'original'),
     durationMs: durationMs(frame, action),
   }))
 }
@@ -88,16 +88,27 @@ function exportAction(action: Action, project: Project): ExportAction {
   const directionalSequences =
     project.directionalMovement === 'single' || !hasDirectionalSequences
       ? []
-      : profile.generationDirections.map((direction) => {
-          const sequence = realSequences.find((item) => item.direction === direction)
-          if (!sequence) throw new Error(`${action.name}缺少${direction}方向真实序列`)
-          return sequence
+      : profile.logicalDirections.map((direction) => {
+          const direct = realSequences.find((item) => item.direction === direction)
+          if (direct) return direct
+          const derived = profile.derivedDirections.find((item) => item.direction === direction)
+          const source =
+            derived && realSequences.find((item) => item.direction === derived.sourceDirection)
+          if (!derived || !source) throw new Error(`${action.name}缺少${direction}方向真实序列`)
+          return {
+            ...source,
+            direction,
+            sourceDirection: derived.sourceDirection,
+            mirrorX: derived.mirrorX,
+          }
         })
   const selectedSequences = singleSequence ? [singleSequence] : directionalSequences
   const sequences =
     selectedSequences.length > 0
       ? selectedSequences.map((sequence) => ({
           direction: singleSequence ? ('default' as const) : sequence.direction,
+          sourceDirection: singleSequence ? null : sequence.sourceDirection,
+          mirrorX: singleSequence ? false : sequence.mirrorX,
           expectedFrameCount: sequence.frameCount,
           loop: action.loop,
           ...sequenceGeometry(undefined, project.spriteSize.height),
@@ -110,21 +121,34 @@ function exportAction(action: Action, project: Project): ExportAction {
               }
               return {
                 index: frame.index,
-                imageUrl: frame.imageUrl,
+                imageUrl: resolvedFrameImageUrl(frame, action.preferredVersion ?? 'original'),
                 durationMs: durationMs(frame, action),
               }
             }),
         }))
-      : [
-          {
-            direction: 'default',
+      : project.directionalMovement === 'single'
+        ? [
+            {
+              direction: 'default',
+              sourceDirection: null,
+              mirrorX: false,
+              expectedFrameCount: action.frameCount,
+              loop: action.loop,
+              ...sequenceGeometry(undefined, project.spriteSize.height),
+              qualityStatus: 'passed' as const,
+              frames: exportFrames(action),
+            },
+          ]
+        : ['east', 'west'].map((direction) => ({
+            direction,
+            sourceDirection: direction === 'west' ? ('east' as const) : null,
+            mirrorX: direction === 'west',
             expectedFrameCount: action.frameCount,
             loop: action.loop,
             ...sequenceGeometry(undefined, project.spriteSize.height),
             qualityStatus: 'passed' as const,
             frames: exportFrames(action),
-          },
-        ]
+          }))
   return {
     id: action.id,
     name: action.name,

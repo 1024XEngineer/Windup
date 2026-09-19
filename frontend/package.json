@@ -17,6 +17,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.31",
     "@fontsource-variable/noto-serif-sc": "^5.3.0",
+    "@paper-design/shaders-react": "^0.0.80",
     "@phosphor-icons/react": "^2.1.10",
     "@xyflow/react": "^12.11.2",
     "ai": "^7.0.68",

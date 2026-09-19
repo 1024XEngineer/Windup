@@ -7,11 +7,11 @@
  * **判定不跟着搬。** 帧数对账、空帧自检、脚线对齐、成色闸仍在服务端做 —— 这里做的
  * 自检只是"早点炸",不是替服务端把关。客户端自报的数只是它的说法。
  */
-import { BakeStage, StageError } from './stage'
+import { BakeStage, StageError, resolveClip } from './stage'
 
 import type { BakeJob, Render3DApis } from '@/entities/render3d'
 
-export { BakeStage, StageError, MATERIALS, isStageMaterial } from './stage'
+export { BakeStage, StageError, MATERIALS, isStageMaterial, resolveClip } from './stage'
 export type { StageMaterial, StageRigInfo } from './stage'
 
 export interface BakeProgress {
@@ -41,6 +41,9 @@ export class BakeAborted extends Error {
  * 任何一步失败都要**主动告诉后端**,否则这笔冻结的积分要等满期限才解冻,用户在界面上
  * 看到的是一个一直转的进度条。只有"取消"不上报 —— 那是用户自己的动作。
  */
+/** 主体平均亮度下限。纯黑剪影量到 0.0,正常帧量到约 148 —— 取 20 只拦「全黑」。 */
+const MIN_SUBJECT_LUMA = 20
+
 export async function runClientBake(options: RunClientBakeOptions): Promise<void> {
   const { job, apis, onProgress, signal } = options
   const throwIfAborted = () => {
@@ -60,17 +63,14 @@ export async function runClientBake(options: RunClientBakeOptions): Promise<void
     if (!Object.keys(clips).length) {
       throw new StageError('模型里没有任何动画片段 —— 绑骨时没带 MotionType?')
     }
-    if (!(job.clip in clips)) {
-      throw new StageError(
-        `模型里没有片段 ${JSON.stringify(job.clip)};有的是 ${JSON.stringify(Object.keys(clips))}`,
-      )
-    }
+    // 片段名由绑骨接口按任务哈希起,对不上产品动作名是常态,见 resolveClip。
+    const clip = resolveClip(job.clip, Object.keys(clips))
     stage.setCamYaw(job.cameraYaw)
 
     const sampleTimes: number[] = []
     for (let i = 0; i < job.frames; i++) {
       throwIfAborted()
-      sampleTimes.push(stage.setup(job.clip, i, job.frames))
+      sampleTimes.push(stage.setup(clip, i, job.frames))
       const coverage = stage.coverage()
       if (coverage < job.minCoverage) {
         // 角色出画或片段选错都会安静地产出全透明帧,而外面照样以为成功了。
@@ -78,11 +78,34 @@ export async function runClientBake(options: RunClientBakeOptions): Promise<void
           `第 ${i} 帧几乎全透明(覆盖率 ${coverage.toFixed(5)} < ${job.minCoverage})`,
         )
       }
+      // 纯黑主体逃得过覆盖率那道闸(它只数 alpha),所以在这里再判一次亮度。
+      // 触发点几乎只有一个:贴图还没传上 GPU 就渲了 —— 交付出去才看得见。
+      const luma = stage.subjectLuma()
+      if (luma >= 0 && luma < MIN_SUBJECT_LUMA) {
+        throw new StageError(
+          `第 ${i} 帧主体是纯黑(平均亮度 ${luma.toFixed(1)} < ${MIN_SUBJECT_LUMA})，贴图可能还没就绪`,
+        )
+      }
       await apis.putBakeFrame(job.taskId, i, await stage.grab())
       onProgress?.({ done: i + 1, total: job.frames })
     }
     throwIfAborted()
-    await apis.completeBake(job.taskId, { clip: job.clip, sampleTimes })
+    // 骨架事实与根骨位移轨随交齐一起回传（#774）。服务端渲那条会把它们带上来，
+    // 这条此前算完即随页面销毁 —— 两条路必须交回同样的东西。
+    const rig = stage.rigInfo()
+    await apis.completeBake(job.taskId, {
+      clip: job.clip,
+      sampleTimes,
+      rig: {
+        bones: rig.bones,
+        rootBone: rig.rootBone,
+        boneNames: rig.boneNames,
+        skinnedMeshes: rig.skinned,
+        vertices: rig.verts,
+        availableClips: clips,
+      },
+      rootMotion: stage.rootMotionOf(job.clip),
+    })
   } catch (error) {
     if (error instanceof BakeAborted) throw error
     await apis

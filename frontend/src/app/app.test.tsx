@@ -243,6 +243,9 @@ describe('AppRoutes authentication boundary', () => {
       updateNickname: async () => Promise.reject(new Error('not used')),
       setPassword: async () => Promise.reject(new Error('not used')),
       changePassword: async () => Promise.reject(new Error('not used')),
+      resetPassword: async () => Promise.reject(new Error('not used')),
+      sendPasswordChangeCode: async () => Promise.reject(new Error('not used')),
+      changePasswordWithCode: async () => Promise.reject(new Error('not used')),
     }
     window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')
 
@@ -272,6 +275,9 @@ describe('AppRoutes authentication boundary', () => {
       updateNickname: async () => Promise.reject(new Error('not used')),
       setPassword: async () => Promise.reject(new Error('not used')),
       changePassword: async () => Promise.reject(new Error('not used')),
+      resetPassword: async () => Promise.reject(new Error('not used')),
+      sendPasswordChangeCode: async () => Promise.reject(new Error('not used')),
+      changePasswordWithCode: async () => Promise.reject(new Error('not used')),
     }
     window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')
 

@@ -60,6 +60,10 @@ def _json_or_none(value: Any) -> Any:
     return {"value": str(value)}
 
 
+#: 落库的提示词正文长度上限。当前正文约 1–2KB,留足余量。
+_PROMPT_MAX_CHARS = 8000
+
+
 def _audit_extra(detail: AttemptDetail) -> dict | None:
     extra: dict[str, object] = {}
     if detail.policy_next_step:
@@ -72,6 +76,10 @@ def _audit_extra(detail: AttemptDetail) -> dict | None:
         extra["finish_reason"] = detail.finish_reason
     if detail.has_tool_calls is not None:
         extra["has_tool_calls"] = detail.has_tool_calls
+    if detail.prompt:
+        # 截断而不是整条存:提示词正文约 1–2KB,而一次生成会记多跳(429 换 key 时更多)。
+        # 上限取得比正文长,截断实际不会发生;它防的是将来某次把整本 md 塞进提示词。
+        extra["prompt"] = detail.prompt[:_PROMPT_MAX_CHARS]
     return extra or None
 
 

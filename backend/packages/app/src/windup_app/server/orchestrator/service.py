@@ -19,6 +19,7 @@ from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterDirectionSetInput,
     CharacterDirectionSetOutput,
+    CharacterFirstFrameInput,
     CharacterImageInput,
     CharacterViewSheetInput,
     EIGHT_VIEW_MODEL_CALLS_PER_SHEET,
@@ -109,6 +110,35 @@ class AiGenerationService(GenerationService):
             task_type=GenerationType.CHARACTER_EIGHT_VIEW,
             model_calls_per_sheet=EIGHT_VIEW_MODEL_CALLS_PER_SHEET,
         )
+
+    def generate_character_first_frame(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        project_id: int,
+        input: CharacterFirstFrameInput,
+    ) -> GenerationTask:
+        self._assert_clean(
+            user_id=user_id,
+            source="generation.first_frame",
+            texts=(input.prompt, input.negative_prompt),
+        )
+        task = task_repo.create_task(
+            session,
+            user_id=user_id,
+            project_id=project_id,
+            task_type=GenerationType.CHARACTER_FIRST_FRAME,
+            input_payload=dataclasses.asdict(input),
+        )
+        billing.reserve_for_task(
+            session,
+            user_id=user_id,
+            task_id=task.id,
+            task_type=task.task_type,
+            model_calls=max(1, input.num_images or 1),
+        )
+        return task
 
     def _submit_view_sheet(
         self,

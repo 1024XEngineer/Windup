@@ -92,7 +92,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('WorkflowEditorPage real runtime boundary', () => {
-  it('身份母版只展示现有操作，并让加号菜单专注于生成动作', async () => {
+  it('身份母版展示导出、调整与 3D 资产入口，加号菜单专注于生成动作', async () => {
     const character = characterFixture()
     character.outfits[0] = {
       ...character.outfits[0]!,
@@ -111,7 +111,9 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     })
     expect(within(secondaryActions).getByRole('button', { name: '重新生成角色母版' })).toBeTruthy()
     expect(within(secondaryActions).getByRole('button', { name: '微调角色母版' })).toBeTruthy()
-    expect(screen.queryByText(/3D 资产/)).toBeNull()
+    // #486 当时把 3D 入口撤了，理由是 worker 镜像缺 node/playwright、点进去必然抛错；
+    // 依赖在 #517 补齐、出帧又在 #717 改到浏览器之后，那条理由不成立了（#518）。
+    expect(await within(primaryActions).findByRole('group', { name: '3D 资产' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '添加动作分支' }))
     const actionMenu = screen.getByRole('menu', { name: '新增节点' })
@@ -150,6 +152,18 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       'character-template',
       expect.objectContaining({ mode: 'regenerate' }),
     )
+  })
+
+  it('上传过参考图时，它本身就是一个可选母版', async () => {
+    // 用户手上已经有成品角色图时，再生成一遍只会更差。此前「直接用我这张」是个
+    // 不存在的选项——只能眼看着系统拿它去重画，然后从重画的结果里挑。
+    const session = createSession(selectingMasterWithReferenceWorkflow())
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    const own = await screen.findByRole('button', { name: '选择我上传的参考图' })
+    fireEvent.click(own)
+    expect(own.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('角色母版微调失败时保留输入草稿以便重试', async () => {
@@ -542,6 +556,48 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     ).toBe(false)
   })
 
+  it('支持在角色设定卡的大区域拖入参考图并提示格式限制', async () => {
+    const uploadReferenceImage = vi.fn().mockResolvedValue('opaque-reference-1' as MediaReference)
+    const session = createSession(workflowFixture(), { uploadReferenceImage })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    const dropzone = await screen.findByRole('group', { name: '角色参考图上传区' })
+    const file = new File(['pixels'], 'reference.gif', { type: 'image/gif' })
+
+    expect(dropzone.textContent).toContain('拖入图片，或点击选择')
+    expect(dropzone.textContent).toContain('PNG、JPG、GIF、WEBP')
+    expect(dropzone.textContent).toContain('10 MB')
+
+    fireEvent.dragEnter(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    expect(screen.getByText('松开以上传参考图')).toBeTruthy()
+
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    await waitFor(() =>
+      expect(uploadReferenceImage).toHaveBeenCalledWith(file, expect.any(AbortSignal)),
+    )
+  })
+
+  it('拖入超过 10 MB 的参考图时在本地拒绝且不发起上传', async () => {
+    const uploadReferenceImage = vi.fn()
+    const session = createSession(workflowFixture(), { uploadReferenceImage })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    const dropzone = await screen.findByRole('group', { name: '角色参考图上传区' })
+    const file = new File(['pixels'], 'oversized.png', { type: 'image/png' })
+    Object.defineProperty(file, 'size', { value: 10 * 1024 * 1024 + 1 })
+
+    fireEvent.drop(dropzone, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+
+    expect(screen.getByRole('alert').textContent).toContain('图片不能超过 10 MB')
+    expect(uploadReferenceImage).not.toHaveBeenCalled()
+  })
+
   it('上传失败时提示错误且不写入 WorkflowRun', async () => {
     const uploadReferenceImage = vi.fn().mockRejectedValue(new Error('对象存储暂不可用'))
     const session = createSession(workflowFixture(), { uploadReferenceImage })
@@ -763,6 +819,43 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.queryByRole('button', { name: /选择.*角色候选/ })).toBeNull()
   })
 
+  it('四向 sheet 生成中在母版节点渲染方向立绘进度而不是身份母版进度', async () => {
+    const workflow = selectingTemplateWorkflow(5, 'template-south')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      phase: 'generating',
+      selectedImageUrl: 'https://assets.windup.test/south.png',
+      selectedImages: { south: 'https://assets.windup.test/south.png' },
+      generations: [
+        { taskId: 'template-south', role: 'character_template', direction: 'south' },
+        { taskId: 'view-sheet', role: 'character_four_view' },
+      ],
+    }
+    const session = createSession(workflow, {
+      project: { ...projectFixture(), directionalMovement: 'four-way' },
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) =>
+          taskId === 'view-sheet'
+            ? {
+                id: taskId,
+                projectId: '1',
+                type: 'character_four_view' as const,
+                status: 'running' as const,
+                result: null,
+                error: null,
+              }
+            : directionalCharacterGeneration('south'),
+        ) as GenerationApis['get'],
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByLabelText('方向立绘生成进度')).toBeTruthy()
+    expect(screen.queryByLabelText('身份母版生成进度')).toBeNull()
+  })
+
   it('四向 sheet 的四张独立图片在一个方向集合中展示并一次确认', async () => {
     const workflow = selectingTemplateWorkflow(4, 'template-south')
     workflow.nodes[1] = {
@@ -930,6 +1023,59 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.queryByRole('button', { name: '重试东方向' })).toBeNull()
     expect(screen.queryByRole('button', { name: '重试南方向' })).toBeNull()
     expect(retry).toHaveBeenCalledWith('character-template', 'north', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+  })
+
+  it.each([
+    ['four-way', 'character_four_view'],
+    ['eight-way', 'character_eight_view'],
+  ] as const)('%s 方向 sheet 失败时保留母版并提供整张 sheet 重试入口', async (movement, role) => {
+    const workflow = selectingTemplateWorkflow(5, 'template-south')
+    const template = workflow.nodes.find((node) => node.id === 'character-template')
+    if (!template || template.type !== 'character-template') throw new Error('missing template')
+    Object.assign(template, {
+      status: 'failed',
+      phase: 'generating',
+      error: 'sheet provider failed',
+      selectedImageUrl: 'https://assets.windup.test/south.png',
+      selectedImages: { south: 'https://assets.windup.test/south.png' },
+      generations: [
+        {
+          taskId: 'template-south',
+          role: 'character_template' as const,
+          direction: 'south' as const,
+        },
+        { taskId: 'view-sheet', role },
+      ],
+    })
+    const generationApis = generationApisFixture({
+      get: vi.fn(async (_projectId, taskId) =>
+        taskId === 'view-sheet'
+          ? {
+              id: taskId,
+              projectId: '1',
+              type: role,
+              status: 'failed' as const,
+              result: null,
+              error: 'sheet provider failed',
+            }
+          : directionalCharacterGeneration('south'),
+      ) as GenerationApis['get'],
+    })
+    const session = createSession(workflow, {
+      generationApis,
+      project: { ...projectFixture(), directionalMovement: movement },
+    })
+    const retry = vi.spyOn(session.controller, 'retryGenerationDirection').mockResolvedValue()
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '重新生成整张方向立绘' }))
+
+    expect(screen.queryByRole('button', { name: '从此节点重做' })).toBeNull()
+    expect(retry).toHaveBeenCalledWith('character-template', 'east', {
       spriteWidth: 64,
       spriteHeight: 64,
     })
@@ -2327,6 +2473,41 @@ function workflowFixture(): WorkflowRun {
         type: 'character-template',
         status: 'locked',
         phase: 'ready',
+        dependsOnNodeIds: ['character-setup'],
+        generations: [],
+        error: null,
+        selectedImageUrl: null,
+      },
+    ],
+  }
+}
+
+/** 母版节点正在选候选，且用户上传过参考图——「直接用我上传那张」的判定发生在这一步。 */
+function selectingMasterWithReferenceWorkflow(): WorkflowRun {
+  return {
+    id: '42',
+    projectId: '1',
+    version: 3,
+    storageStatus: 'active',
+    nodes: [
+      {
+        id: 'character-setup',
+        type: 'character-setup',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: [],
+        generations: [],
+        error: null,
+        input: {
+          prompt: '一头橙色卡通小牛',
+          referenceMedia: ['https://cdn.test/my-cow.png' as unknown as MediaReference],
+        },
+      },
+      {
+        id: 'character-template',
+        type: 'character-template',
+        status: 'active',
+        phase: 'selecting',
         dependsOnNodeIds: ['character-setup'],
         generations: [],
         error: null,

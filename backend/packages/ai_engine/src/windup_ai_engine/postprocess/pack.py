@@ -157,6 +157,7 @@ def align_bottom_center(
     ref_height: float | None = None,
     cell_h: int | None = None,
     anchor: str = ANCHOR_FOOT,
+    resample: Image.Resampling = Image.Resampling.NEAREST,
 ) -> list[Image.Image]:
     """按脚线对齐到统一画布,消除逐帧画布漂移(Issue #21)。
 
@@ -189,6 +190,9 @@ def align_bottom_center(
     几何按"比例"而不是"像素"表达(``foot_line``/``fill_h``/``fill_w`` 都是比例),所以
     换画布尺寸不改变构图,母版入口预检(``master_check.REJECT_ASPECT`` = 2*FILL_W/FILL_H)
     与出帧仍共用同一套几何 —— 那条阈值里没有 cell,本来就与画布像素尺寸无关。
+
+    ``resample``:最后一次尺寸变换的采样方式。默认 NEAREST 保持已有像素资产逐像素兼容;
+    连续色调的原生视频帧应显式传 LANCZOS,避免缩小时把纹理抽成无意义硬色块。
     """
     import numpy as np
 
@@ -253,6 +257,7 @@ def align_bottom_center(
     max_core, max_full = max(1.0, max(core_w)), max(1.0, max(full_w))
     scale = min(scale, (cw * fill_w) / max_core)
 
+
     # 整帧装不下时**不为它压缩角色**,让延展物溢出被裁。
     #
     # 这两个目标本身冲突:延展物越宽,"装进画布"就把角色压得越小,而那正是本函数要消除的
@@ -279,6 +284,43 @@ def align_bottom_center(
             ratio * 100, min(per_frame), max(per_frame),
         )
 
+    # ── 高度夹取。必须放在 per_frame 之后 ────────────────────────────────────
+    #
+    # 高度方向溢出的不是翅尖尾尖,是**脑袋**。上面的定标取的是中位数,按构造就有约一半
+    # 的帧比它高;而摆放时 ``top = ch*foot_line - h`` 允许为负,``alpha_composite`` 到负
+    # 坐标会把顶部**静默**裁掉。生产 #604(老妇待机)实测:32 帧里 9 帧顶边贴 y=0、
+    # 头顶被平切,而帧数、时长、脚线、成色全部正常 —— 只能靠人看动图发现。
+    #
+    # 乘 ``per_frame`` 是防御性的:实际用的是 ``scale * per_frame[idx]``,补偿系数以 1.0
+    # 为中心,原理上可以大于 1 并把某帧顶回去。**但这一项目前没有用例覆盖** —— 造了三种
+    # 漂移形态(单调推镜 / 阶跃 / 强推镜),``scale_drift`` 给出的系数恒为 1.0,拿掉这一项
+    # 测试也不会红。留着是因为它对且零成本,不是因为它被验证过。
+    #
+    # 夹取按**本体**跨度而不是整体包围盒,与宽度同一条理由:按包围盒夹会让"举过头顶"
+    # 那一帧把整段压小(实测人形举武器 68.4%)。举起来的武器仍可溢出被裁、和翅尖同档;
+    # 本体(含头)必须完整。
+    # 要夹的量是**本体顶到包围盒底**的距离,不是本体跨度 —— 摆放时 ``top`` 按包围盒底
+    # 定位(``foot_line - h``),所以决定本体会不会顶出去的正是这一段。
+    # 拿本体跨度去夹会差一个"本体顶到包围盒顶"的偏移;实测那样写仍然切进身体,
+    # 这是本修复里唯一真正起作用的那一处改动。
+    foot_px = int(ch * foot_line)          # 摆放用的是这个整数,夹取也要用它
+    need_h = 0.0
+    for f, box, pf in zip(frames, boxes, per_frame):
+        if box is None:
+            continue
+        m = np.asarray(f.crop(box))[:, :, 3] > 128
+        r0, _r1 = _core_rows(m)
+        need_h = max(need_h, ((box[3] - box[1]) - r0) * pf)
+    if need_h > 0:
+        height_bound = foot_px / need_h
+        if height_bound < scale:
+            _logger.info(
+                "按最高帧的本体高度收窄定标(避免头顶被裁):%.4f → %.4f;"
+                "最高需求(本体顶→脚线,含漂移补偿) %.0fpx、可用高 %dpx",
+                scale, height_bound, need_h, foot_px,
+            )
+            scale = height_bound
+
     if max_full * scale > cw:
         _logger.info(
             "保尺寸一致而不压缩:整帧需 %.0fpx、画布 %dpx,两侧各溢出约 %.0fpx",
@@ -301,7 +343,13 @@ def align_bottom_center(
         else:
             lift = round((ground - box[3]) * fs) if preserve_lift else 0
             top = int(ch * foot_line) - h - lift
-        crop = crop.resize((w, h), Image.NEAREST)
+            if top < 0:
+                # 夹取之后还溢出,只可能是举过头顶的延展物(与宽度那档同理)。
+                # 但**不静默** —— 这正是 #604 头被切掉却无人知晓的那条路。
+                _logger.info(
+                    "第 %d 帧顶部溢出 %dpx 被裁(本体已夹取,溢出的是延展物)", idx, -top,
+                )
+        crop = crop.resize((w, h), resample)
         canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
         canvas.alpha_composite(crop, (cw // 2 - w // 2, top))
         out.append(canvas)

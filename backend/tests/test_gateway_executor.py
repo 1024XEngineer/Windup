@@ -4,6 +4,8 @@ from __future__ import annotations
 import uuid
 
 import pytest
+
+from windup_framework.config.provider import AIProviderSettings
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -52,8 +54,9 @@ def test_unknown_model_error_lists_chain_members():
         _resolve_video_model("sora-2")
     msg = str(e.value)
     assert "sora-2" in msg
-    chain_hint = "kling-v2-5-turbo"
-    assert chain_hint in msg, "报错要带上链上型号,否则调用方无从改"
+    # 从配置推而不是写死型号名:这条断言的是"报错要带上可选值",不是"默认型号叫什么"。
+    # 写死的话,每换一次默认型号就要改一次测试,而它要保护的行为一个字没变。
+    assert AIProviderSettings().video_model in msg, "报错要带上链上型号,否则调用方无从改"
 
 
 def test_action_task_failure_includes_request_id(session_factory):
@@ -110,7 +113,7 @@ def test_action_task_binds_start_from_model(session_factory):
     )
     action_input = CharacterActionInput(
         character_id=1, action_type=ActionType.WALK, num_frames=4,
-        video_model="kling-v2-5-turbo",
+        video_model=AIProviderSettings().video_model,
     )
     with session_factory() as s:
         task = service.generate_character_action(s, user_id=1, input=action_input)
@@ -122,7 +125,7 @@ def test_action_task_binds_start_from_model(session_factory):
     with session_factory() as s:
         done = service.get_task(s, project_id=1, task_id=task_id)
     assert done.status is TaskStatus.FAILED
-    assert seen["start_from_model"] == "kling-v2-5-turbo"
+    assert seen["start_from_model"] == AIProviderSettings().video_model
     assert "request_id" not in (done.error_message or "")
 
 

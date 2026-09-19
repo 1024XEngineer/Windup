@@ -66,6 +66,16 @@ describe('createUserApis', () => {
     await apis.updateNickname('New Reader')
     await apis.setPassword({ newPassword: 'new-password-123' })
     await apis.changePassword({ oldPassword: 'password-123', newPassword: 'new-password-123' })
+    await apis.resetPassword({
+      email: 'reader@example.com',
+      code: '123456',
+      newPassword: 'reset-password-123',
+    })
+    await apis.sendPasswordChangeCode()
+    await apis.changePasswordWithCode({
+      code: '123456',
+      newPassword: 'new-password-123',
+    })
 
     expect(request.mock.calls).toEqual([
       [
@@ -119,7 +129,32 @@ describe('createUserApis', () => {
         '/auth/change-password',
         {
           method: 'POST',
-          json: { old_password: 'password-123', new_password: 'new-password-123' },
+          json: {
+            old_password: 'password-123',
+            new_password: 'new-password-123',
+          },
+        },
+      ],
+      [
+        '/auth/reset-password',
+        {
+          method: 'POST',
+          json: {
+            email: 'reader@example.com',
+            code: '123456',
+            new_password: 'reset-password-123',
+          },
+        },
+      ],
+      ['/auth/change-password/send-code', { method: 'POST' }],
+      [
+        '/auth/change-password/confirm',
+        {
+          method: 'POST',
+          json: {
+            code: '123456',
+            new_password: 'new-password-123',
+          },
         },
       ],
     ])
@@ -284,10 +319,10 @@ describe('createUserApis', () => {
       (apis: ReturnType<typeof createUserApis>) => apis.updateNickname('New Reader'),
     ],
     [
-      'password-change',
+      'password-reset',
       (apis: ReturnType<typeof createUserApis>) =>
-        apis.changePassword({
-          oldPassword: 'password-123',
+        apis.changePasswordWithCode({
+          code: '123456',
           newPassword: 'new-password-123',
         }),
     ],

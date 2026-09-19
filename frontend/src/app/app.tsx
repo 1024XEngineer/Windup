@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 
 import { AssetLibraryPage } from '@/pages/asset-library'
 import { AccountPage } from '@/pages/account'
+import { AdminRedemptionCodesPage } from '@/pages/admin-redemption-codes'
 import { CharacterDetailPage } from '@/pages/character-detail'
 import { LandingPage } from '@/pages/landing'
 import { NotFoundPage } from '@/pages/not-found'
@@ -72,6 +73,7 @@ export function AppRoutes() {
         <Route element={<AppShellRoute />}>
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/admin/redemption-codes" element={<AdminRedemptionCodesPage />} />
           <Route path="/quick-start" element={<QuickStartRoute />} />
           <Route path="/quick-start/:runId" element={<QuickStartRoute />} />
           <Route path="/projects" element={<ProjectsPage />} />

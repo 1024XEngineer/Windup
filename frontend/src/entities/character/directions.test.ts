@@ -11,8 +11,8 @@ describe('direction grid layouts', () => {
   it('maps single, four-way, and eight-way assets to their display grids', () => {
     expect(getDirectionGridLayout('single')).toEqual({ columns: 1, cells: ['east'] })
     expect(getDirectionGridLayout('four-way')).toEqual({
-      columns: 2,
-      cells: ['north', 'south', 'west', 'east'],
+      columns: 3,
+      cells: [null, 'north', null, 'west', null, 'east', null, 'south', null],
     })
     expect(getDirectionGridLayout('eight-way')).toEqual({
       columns: 3,

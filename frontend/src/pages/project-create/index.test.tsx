@@ -47,6 +47,11 @@ function workflowCreationRequests(backend: ReturnType<typeof createProjectAssets
   )
 }
 
+function chooseOption(label: string, option: string) {
+  fireEvent.click(screen.getByRole('combobox', { name: label }))
+  fireEvent.click(screen.getByRole('option', { name: option }))
+}
+
 function installWorkflowBackend(failWorkflowAttempts = 0) {
   const backend = createProjectAssetsBackend()
   const baseFetch = backend.fetch
@@ -151,6 +156,7 @@ describe('ProjectCreatePage', () => {
     await renderWorkflowProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '可重试画布' } })
+    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
     expect((await screen.findByRole('alert')).textContent).toBe('项目已创建，但工作流暂时无法创建')
@@ -175,10 +181,10 @@ describe('ProjectCreatePage', () => {
     await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
-    fireEvent.change(screen.getByLabelText('游戏视角'), { target: { value: 'top-down' } })
-    fireEvent.change(screen.getByLabelText('朝向'), { target: { value: 'eight-way' } })
+    chooseOption('游戏视角', '俯视')
+    chooseOption('朝向', '八向')
     fireEvent.click(screen.getByRole('button', { name: '512 × 512' }))
-    fireEvent.change(screen.getByLabelText('画风'), { target: { value: 'pixel' } })
+    chooseOption('画风', '像素')
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
     expect(await screen.findByRole('heading', { name: '雾港来信' })).toBeTruthy()
@@ -243,11 +249,11 @@ describe('ProjectCreatePage', () => {
     await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '点灯人 · MVP' } })
-    fireEvent.change(screen.getByLabelText('画风'), { target: { value: 'pixel' } })
+    chooseOption('画风', '像素')
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
     expect((await screen.findByRole('alert')).textContent).toBe('项目名称已存在')
-    expect((screen.getByLabelText('画风') as HTMLSelectElement).value).toBe('pixel')
+    expect(screen.getByRole('combobox', { name: '画风' }).textContent).toContain('像素')
   })
 
   it('连续点击创建只发出一次请求', async () => {
@@ -277,6 +283,7 @@ describe('ProjectCreatePage', () => {
     await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
+    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
     fireEvent.change(screen.getByLabelText('宽度（像素）'), { target: { value: '16' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
@@ -313,6 +320,7 @@ describe('ProjectCreatePage', () => {
     await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
+    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
     fireEvent.change(screen.getByLabelText('宽度（像素）'), { target: { value: '16' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
     expect(await screen.findByRole('alert')).toBeTruthy()
@@ -320,5 +328,32 @@ describe('ProjectCreatePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '256 × 256' }))
 
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('默认只显示尺寸预设，选择自定义后才显示宽高输入', async () => {
+    installBackend()
+    await renderProjectCreate()
+
+    expect(screen.queryByLabelText('宽度（像素）')).toBeNull()
+    expect(screen.getByRole('button', { name: '256 × 256' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
+
+    expect(screen.getByLabelText('宽度（像素）')).toBeTruthy()
+    expect(screen.getByLabelText('高度（像素）')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '自定义' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: '128 × 128' }))
+    expect(screen.queryByLabelText('宽度（像素）')).toBeNull()
+  })
+
+  it('游戏视角、朝向和画风使用产品下拉框而不是原生 select', async () => {
+    installBackend()
+    const { container } = await renderProjectCreate()
+
+    expect(container.querySelectorAll('select')).toHaveLength(0)
+    expect(screen.getAllByRole('combobox')).toHaveLength(3)
   })
 })

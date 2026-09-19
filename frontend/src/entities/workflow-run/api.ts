@@ -350,8 +350,9 @@ function getApiClient() {
   return createApiClient({ getAccessToken: getApiAccessToken })
 }
 
-/** 精确对应后端已公开的 CRUD 与项目内分页列表；不声明尚未提供的按 Character 查询。 */
-export const workflowRunApis: WorkflowRunApis & Required<Pick<WorkflowRunApis, 'listByProject'>> = {
+/** 精确对应后端已公开的 CRUD 与运行记录分页列表。 */
+export const workflowRunApis: WorkflowRunApis &
+  Required<Pick<WorkflowRunApis, 'listByProject' | 'listRecent'>> = {
   async create(input) {
     return mapWorkflowRun(
       await getApiClient().request<WorkflowRunDto>('/workflow-runs', {
@@ -366,6 +367,15 @@ export const workflowRunApis: WorkflowRunApis & Required<Pick<WorkflowRunApis, '
         project_id: toBackendId(projectId, 'projectId'),
         page: query.page,
         page_size: query.pageSize,
+      },
+    })
+    return { ...result, items: result.items.map(mapWorkflowRun) }
+  },
+  async listRecent(query = {}) {
+    const result = await getApiClient().requestList<WorkflowRunDto>('/workflow-runs', {
+      query: {
+        page: query.page ?? 1,
+        page_size: query.pageSize ?? 20,
       },
     })
     return { ...result, items: result.items.map(mapWorkflowRun) }
