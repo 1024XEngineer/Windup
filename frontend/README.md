@@ -49,3 +49,7 @@ Vercel 部署路径不受影响，`vercel.json` 照旧。
 
 前后端接口契约以仓库根目录自动生成的 `openapi.json` 为准，也可在本地后端的
 FastAPI `/docs` 页面中查看。
+
+## 前端架构
+
+浏览器直接打开 [前端架构与创作链路图](./docs/architecture/windup-frontend.html)，可以按“双入口合流 / 状态闭环 / 资产交付”聚焦阅读，并从节点详情跳到固定 Git revision 的源码锚点。可读源文件与重新生成命令见 [架构图说明](./docs/architecture/README.md)。

@@ -1,0 +1,4436 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f3f2ec" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#101512" media="(prefers-color-scheme: dark)" />
+    <meta name="generator" content="Windup frontend architecture renderer" />
+    <title>Windup 前端架构 · 双入口，一张节点图，一棵可交付资产树</title>
+    <script>
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('windup-architecture-theme')
+          var theme =
+            stored === 'dark' || stored === 'light'
+              ? stored
+              : matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          document.documentElement.dataset.theme = theme
+        } catch (_) {}
+      })()
+    </script>
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #e8e9e3;
+        --chrome: rgba(255, 255, 255, 0.9);
+        --chrome-solid: #ffffff;
+        --ink: #1d251f;
+        --muted: #687169;
+        --line: #cbd1ca;
+        --accent: #284331;
+        --accent-soft: #dce9df;
+        --canvas-shadow: 0 26px 80px rgb(29 37 31 / 15%);
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+        --page: #0b0f0c;
+        --chrome: rgba(24, 32, 26, 0.92);
+        --chrome-solid: #18201a;
+        --ink: #edf2ec;
+        --muted: #aab5ac;
+        --line: #334238;
+        --accent: #8fbaa0;
+        --accent-soft: #22382b;
+        --canvas-shadow: 0 28px 90px rgb(0 0 0 / 40%);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        min-height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--page);
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+        overflow: hidden;
+      }
+      button,
+      a {
+        font: inherit;
+        touch-action: manipulation;
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      .toolbar {
+        position: fixed;
+        inset: 14px 16px auto 16px;
+        z-index: 20;
+        display: flex;
+        min-height: 46px;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 9px 7px 14px;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: var(--chrome);
+        box-shadow: 0 12px 32px rgb(29 37 31 / 10%);
+        backdrop-filter: blur(18px) saturate(0.9);
+      }
+      .brand {
+        display: flex;
+        min-width: 210px;
+        align-items: baseline;
+        gap: 9px;
+        margin-right: 6px;
+        white-space: nowrap;
+      }
+      .brand strong {
+        font-family: ui-serif, 'Songti SC', serif;
+        font-size: 17px;
+      }
+      .brand span {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .view-tabs {
+        display: flex;
+        min-width: 0;
+        gap: 2px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .view-tabs::-webkit-scrollbar {
+        display: none;
+      }
+      .tool-button,
+      .view-button {
+        min-height: 32px;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 680;
+        letter-spacing: 0.015em;
+        white-space: nowrap;
+      }
+      .view-button {
+        padding: 0 11px;
+      }
+      .tool-button {
+        display: grid;
+        min-width: 34px;
+        place-items: center;
+        padding: 0 9px;
+      }
+      .tool-button:hover,
+      .view-button:hover {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .view-button[aria-pressed='true'] {
+        background: var(--accent);
+        color: var(--chrome-solid);
+      }
+      :root[data-theme='dark'] .view-button[aria-pressed='true'] {
+        color: #101512;
+      }
+      .toolbar-separator {
+        width: 1px;
+        height: 24px;
+        flex: 0 0 auto;
+        background: var(--line);
+      }
+      .toolbar-actions {
+        display: flex;
+        gap: 2px;
+        margin-left: auto;
+      }
+      .revision {
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .stage {
+        width: 100vw;
+        height: 100dvh;
+        overflow: auto;
+        overscroll-behavior: contain;
+        padding: 78px 24px 24px;
+      }
+      .diagram-wrap {
+        width: max(1120px, calc((100dvh - 112px) * 1.5));
+        max-width: 1800px;
+        margin: 0 auto;
+        transform: scale(var(--viewer-zoom, 1));
+        transform-origin: top center;
+        transition: transform 160ms ease;
+      }
+      #windup-frontend-architecture {
+        display: block;
+        width: 100%;
+        height: auto;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: var(--canvas-shadow);
+      }
+      .view-note {
+        position: fixed;
+        left: 32px;
+        bottom: 24px;
+        z-index: 10;
+        max-width: min(560px, calc(100vw - 64px));
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--chrome);
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+        backdrop-filter: blur(14px);
+      }
+      .inspector {
+        position: fixed;
+        inset: 76px 16px 16px auto;
+        z-index: 30;
+        width: min(390px, calc(100vw - 32px));
+        overflow: auto;
+        overscroll-behavior: contain;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--chrome-solid);
+        box-shadow: 0 26px 80px rgb(29 37 31 / 24%);
+        transform: translateX(calc(100% + 28px));
+        transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .inspector[data-open='true'] {
+        transform: translateX(0);
+      }
+      .inspector-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .inspector-tag {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+      }
+      .inspector h2 {
+        margin: 0;
+        font-family: ui-serif, 'Songti SC', serif;
+        font-size: 27px;
+        line-height: 1.18;
+        letter-spacing: -0.035em;
+        text-wrap: balance;
+      }
+      .inspector-subtitle {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      .inspector-close {
+        min-width: 36px;
+        min-height: 36px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 20px;
+      }
+      .inspector-close:hover {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .inspector h3 {
+        margin: 24px 0 10px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        font-size: 11px;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+      .inspector ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .inspector-detail {
+        position: relative;
+        padding: 0 0 10px 17px;
+        color: var(--ink);
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      .inspector-detail::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0.65em;
+        width: 6px;
+        height: 6px;
+        background: var(--accent);
+      }
+      .source-link {
+        display: block;
+        padding: 10px 0;
+        border-top: 1px solid var(--line);
+        color: var(--ink);
+        text-decoration: none;
+      }
+      .source-link:first-child {
+        border-top: 0;
+      }
+      .source-link:hover {
+        color: var(--accent);
+      }
+      .source-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .source-path {
+        display: block;
+        margin-top: 4px;
+        overflow-wrap: anywhere;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        line-height: 1.45;
+      }
+      .noscript {
+        margin: 100px auto;
+        max-width: 42rem;
+        padding: 24px;
+      }
+      @media (max-width: 900px) {
+        .toolbar {
+          inset: 8px 8px auto 8px;
+          overflow-x: auto;
+        }
+        .brand {
+          min-width: auto;
+        }
+        .brand span,
+        .revision {
+          display: none;
+        }
+        .stage {
+          padding: 66px 10px 18px;
+        }
+        .view-note {
+          left: 18px;
+          bottom: 14px;
+          max-width: calc(100vw - 36px);
+        }
+        .inspector {
+          inset: 64px 8px 8px auto;
+          width: min(390px, calc(100vw - 16px));
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .diagram-wrap,
+        .inspector {
+          transition: none;
+        }
+      }
+      @media print {
+        .toolbar,
+        .view-note,
+        .inspector {
+          display: none !important;
+        }
+        body {
+          overflow: visible;
+          background: white;
+        }
+        .stage {
+          width: auto;
+          height: auto;
+          overflow: visible;
+          padding: 0;
+        }
+        .diagram-wrap {
+          width: 100%;
+          max-width: none;
+          transform: none !important;
+        }
+        #windup-frontend-architecture {
+          border: 0;
+          border-radius: 0;
+          box-shadow: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="toolbar" aria-label="架构图工具栏">
+      <div class="brand"><strong>Windup</strong><span>Frontend Map</span></div>
+      <nav class="view-tabs" aria-label="阅读视图" id="view-tabs"></nav>
+      <span class="toolbar-separator" aria-hidden="true"></span>
+      <span class="revision">main@992dadf</span>
+      <div class="toolbar-actions">
+        <button class="tool-button" id="zoom-out" type="button" aria-label="缩小">−</button>
+        <button class="tool-button" id="zoom-reset" type="button" aria-label="重置缩放">
+          100%
+        </button>
+        <button class="tool-button" id="zoom-in" type="button" aria-label="放大">＋</button>
+        <button class="tool-button" id="theme-toggle" type="button" aria-label="切换深浅主题">
+          ◐
+        </button>
+        <button class="tool-button" id="download-svg" type="button">SVG</button>
+        <button class="tool-button" id="download-png" type="button">PNG</button>
+      </div>
+    </header>
+    <main class="stage" id="stage">
+      <div class="diagram-wrap" id="diagram-wrap">
+        <svg
+          id="windup-frontend-architecture"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 1800 1200"
+          width="1800"
+          height="1200"
+          role="img"
+          aria-labelledby="diagram-title diagram-desc"
+          data-theme="light"
+          data-view="overview"
+          fill="#f3f2ec"
+          style="background: #f3f2ec"
+        >
+          <title id="diagram-title">Windup 前端架构</title>
+          <desc id="diagram-desc">
+            双入口，一张节点图，一棵可交付资产树。Quick Start 与 Workflow Editor 汇入同一个
+            WorkflowController 和 WorkflowRun，再把审核后的 Character 资产交给资产库、Playtest
+            与导出包。
+          </desc>
+          <defs>
+            <marker
+              id="arrow-entry"
+              markerWidth="8"
+              markerHeight="8"
+              refX="7"
+              refY="4"
+              orient="auto"
+            >
+              <path d="M0,0 L8,4 L0,8 Z" class="arrow-entry-head" fill="#8a672a" />
+            </marker>
+            <marker
+              id="arrow-core"
+              markerWidth="8"
+              markerHeight="8"
+              refX="7"
+              refY="4"
+              orient="auto"
+            >
+              <path d="M0,0 L8,4 L0,8 Z" class="arrow-core-head" fill="#284331" />
+            </marker>
+            <marker
+              id="arrow-contract"
+              markerWidth="8"
+              markerHeight="8"
+              refX="7"
+              refY="4"
+              orient="auto"
+            >
+              <path d="M0,0 L8,4 L0,8 Z" class="arrow-contract-head" fill="#2a5284" />
+            </marker>
+            <marker
+              id="arrow-caution"
+              markerWidth="8"
+              markerHeight="8"
+              refX="7"
+              refY="4"
+              orient="auto"
+            >
+              <path d="M0,0 L8,4 L0,8 Z" class="arrow-caution-head" fill="#6f3928" />
+            </marker>
+          </defs>
+          <style>
+            svg {
+              --canvas: #f3f2ec;
+              --surface: #ffffff;
+              --surface-muted: #e7eae5;
+              --ink: #1d251f;
+              --ink-soft: #303a32;
+              --muted: #687169;
+              --faint: #778078;
+              --line: #cbd1ca;
+              --line-strong: #8fa092;
+              --core: #284331;
+              --core-soft: #dce9df;
+              --entry: #8a672a;
+              --entry-soft: #f3e8cb;
+              --contract: #2a5284;
+              --contract-soft: #e4edf7;
+              --caution: #6f3928;
+              --caution-soft: #f4e8e1;
+              --grid: #dfe3dc;
+              --shadow: #1d251f;
+              color-scheme: light;
+              background: var(--canvas);
+              font-family:
+                -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+            }
+            svg[data-theme='dark'] {
+              --canvas: #101512;
+              --surface: #18201a;
+              --surface-muted: #202a23;
+              --ink: #edf2ec;
+              --ink-soft: #d9e1da;
+              --muted: #aab5ac;
+              --faint: #87958a;
+              --line: #334238;
+              --line-strong: #607366;
+              --core: #8fbaa0;
+              --core-soft: #22382b;
+              --entry: #d5ad65;
+              --entry-soft: #3a3020;
+              --contract: #86aee0;
+              --contract-soft: #1c3048;
+              --caution: #d49a7e;
+              --caution-soft: #3c2922;
+              --grid: #1b241e;
+              --shadow: #000000;
+              color-scheme: dark;
+            }
+            text {
+              fill: var(--ink);
+            }
+            .canvas {
+              fill: var(--canvas);
+            }
+            .grid-line {
+              stroke: var(--grid);
+              stroke-width: 1;
+              vector-effect: non-scaling-stroke;
+            }
+            .boundary {
+              fill: none;
+              stroke: var(--line);
+              stroke-width: 1.5;
+              vector-effect: non-scaling-stroke;
+            }
+            .boundary-backend {
+              stroke: var(--contract);
+              stroke-dasharray: 7 8;
+            }
+            .boundary-label {
+              fill: var(--muted);
+              font-size: 12px;
+              font-weight: 700;
+              letter-spacing: 0.16em;
+            }
+            .header-kicker {
+              fill: var(--core);
+              font-size: 12px;
+              font-weight: 800;
+              letter-spacing: 0.18em;
+            }
+            .header-title {
+              font-family: ui-serif, 'Songti SC', 'Noto Serif SC', serif;
+              font-size: 48px;
+              font-weight: 700;
+              letter-spacing: -0.045em;
+            }
+            .header-subtitle {
+              fill: var(--muted);
+              font-size: 16px;
+              font-weight: 500;
+              letter-spacing: 0.01em;
+            }
+            .truth-number {
+              fill: var(--core);
+              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: 11px;
+              font-weight: 800;
+              letter-spacing: 0.12em;
+            }
+            .truth-title {
+              fill: var(--ink-soft);
+              font-size: 12px;
+              font-weight: 700;
+            }
+            .legend-copy {
+              fill: var(--muted);
+              font-size: 11px;
+              font-weight: 650;
+              letter-spacing: 0.04em;
+            }
+            .node {
+              cursor: pointer;
+              transition: opacity 180ms ease;
+              outline: none;
+            }
+            .node-shape {
+              fill: var(--surface);
+              stroke: var(--line-strong);
+              stroke-width: 1.35;
+              vector-effect: non-scaling-stroke;
+            }
+            .node:hover .node-shape,
+            .node:focus-visible .node-shape,
+            .node[data-selected='true'] .node-shape {
+              stroke-width: 2.6;
+            }
+            .node:focus-visible .focus-ring {
+              opacity: 1;
+            }
+            .focus-ring {
+              fill: none;
+              stroke: var(--core);
+              stroke-width: 3;
+              stroke-dasharray: 2 5;
+              opacity: 0;
+              vector-effect: non-scaling-stroke;
+            }
+            .node-entry .node-shape {
+              fill: var(--entry-soft);
+              stroke: var(--entry);
+            }
+            .node-core .node-shape {
+              fill: var(--core-soft);
+              stroke: var(--core);
+            }
+            .node-caution .node-shape {
+              fill: var(--caution-soft);
+              stroke: var(--caution);
+              stroke-dasharray: 6 5;
+            }
+            .node-contract .node-shape {
+              fill: var(--contract-soft);
+              stroke: var(--contract);
+              stroke-dasharray: 5 5;
+            }
+            .node-surface .node-shape {
+              fill: var(--surface);
+              stroke: var(--line-strong);
+            }
+            .node-platform .node-shape {
+              fill: var(--surface);
+              stroke: var(--line);
+            }
+            .node-label {
+              fill: var(--ink);
+              font-size: 18px;
+              font-weight: 760;
+              letter-spacing: -0.018em;
+            }
+            .node-copy {
+              fill: var(--muted);
+              font-size: 12px;
+              font-weight: 520;
+            }
+            .node-tag {
+              fill: var(--faint);
+              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: 9.5px;
+              font-weight: 750;
+              letter-spacing: 0.09em;
+            }
+            .node-glyph {
+              fill: none;
+              stroke: currentColor;
+              stroke-width: 1.6;
+              vector-effect: non-scaling-stroke;
+            }
+            .node-entry .node-glyph {
+              color: var(--entry);
+            }
+            .node-core .node-glyph {
+              color: var(--core);
+            }
+            .node-caution .node-glyph {
+              color: var(--caution);
+            }
+            .node-surface .node-glyph {
+              color: var(--core);
+            }
+            .workflow-rail {
+              fill: none;
+              stroke: var(--core);
+              stroke-width: 2.2;
+              vector-effect: non-scaling-stroke;
+            }
+            .workflow-branch {
+              fill: none;
+              stroke: var(--core);
+              stroke-width: 1.25;
+              stroke-dasharray: 4 5;
+              vector-effect: non-scaling-stroke;
+            }
+            .workflow-branch-note {
+              fill: var(--surface);
+              stroke: var(--core);
+            }
+            .workflow-stage {
+              fill: var(--surface);
+              stroke: var(--core);
+              stroke-width: 1.6;
+              vector-effect: non-scaling-stroke;
+            }
+            .workflow-stage-number {
+              fill: var(--core);
+              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: 10px;
+              font-weight: 800;
+              text-anchor: middle;
+            }
+            .workflow-stage-label {
+              fill: var(--ink-soft);
+              font-size: 10px;
+              font-weight: 650;
+              text-anchor: middle;
+            }
+            .asset-spine {
+              fill: none;
+              stroke: var(--core);
+              stroke-width: 1.5;
+              vector-effect: non-scaling-stroke;
+            }
+            .asset-pixel {
+              fill: var(--core);
+            }
+            .asset-label {
+              fill: var(--ink-soft);
+              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: 11px;
+              font-weight: 700;
+            }
+            .connection {
+              fill: none;
+              stroke-linecap: square;
+              stroke-linejoin: round;
+              stroke-width: 1.8;
+              vector-effect: non-scaling-stroke;
+              transition:
+                opacity 180ms ease,
+                stroke-width 180ms ease;
+            }
+            .connection-entry {
+              stroke: var(--entry);
+              marker-end: url(#arrow-entry);
+            }
+            .connection-core,
+            .connection-feedback {
+              stroke: var(--core);
+              marker-end: url(#arrow-core);
+            }
+            .connection-feedback {
+              stroke-dasharray: 4 5;
+            }
+            .connection-optional {
+              stroke: var(--core);
+              stroke-dasharray: 2 7;
+              marker-end: url(#arrow-core);
+            }
+            .connection-contract {
+              stroke: var(--contract);
+              stroke-dasharray: 6 7;
+              marker-end: url(#arrow-contract);
+              opacity: 0.72;
+            }
+            .connection-caution {
+              stroke: var(--caution);
+              stroke-dasharray: 6 5;
+              marker-end: url(#arrow-caution);
+            }
+            .arrow-entry-head {
+              fill: var(--entry);
+            }
+            .arrow-core-head {
+              fill: var(--core);
+            }
+            .arrow-contract-head {
+              fill: var(--contract);
+            }
+            .arrow-caution-head {
+              fill: var(--caution);
+            }
+            .connection-label {
+              fill: var(--muted);
+              stroke: var(--canvas);
+              stroke-width: 6;
+              paint-order: stroke;
+              font-size: 10px;
+              font-weight: 680;
+              text-anchor: middle;
+              letter-spacing: 0.02em;
+            }
+            [data-view-dimmed='true'] {
+              opacity: 0.1;
+            }
+            [data-related='true'] {
+              opacity: 1;
+            }
+            .connection[data-related='true'] {
+              stroke-width: 3.2;
+            }
+            .node[data-related='true'] .node-shape {
+              stroke-width: 2.25;
+            }
+            @media (prefers-reduced-motion: reduce) {
+              .node,
+              .connection {
+                transition: none;
+              }
+            }
+          </style>
+          <rect class="canvas" width="1800" height="1200" fill="#f3f2ec" />
+          <g aria-hidden="true">
+            <line
+              class="grid-line"
+              x1="50"
+              y1="175"
+              x2="50"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="100"
+              y1="175"
+              x2="100"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="150"
+              y1="175"
+              x2="150"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="200"
+              y1="175"
+              x2="200"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="250"
+              y1="175"
+              x2="250"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="300"
+              y1="175"
+              x2="300"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="350"
+              y1="175"
+              x2="350"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="400"
+              y1="175"
+              x2="400"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="450"
+              y1="175"
+              x2="450"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="500"
+              y1="175"
+              x2="500"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="550"
+              y1="175"
+              x2="550"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="600"
+              y1="175"
+              x2="600"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="650"
+              y1="175"
+              x2="650"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="700"
+              y1="175"
+              x2="700"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="750"
+              y1="175"
+              x2="750"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="800"
+              y1="175"
+              x2="800"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="850"
+              y1="175"
+              x2="850"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="900"
+              y1="175"
+              x2="900"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="950"
+              y1="175"
+              x2="950"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1000"
+              y1="175"
+              x2="1000"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1050"
+              y1="175"
+              x2="1050"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="1100"
+              y1="175"
+              x2="1100"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1150"
+              y1="175"
+              x2="1150"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1200"
+              y1="175"
+              x2="1200"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1250"
+              y1="175"
+              x2="1250"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="1300"
+              y1="175"
+              x2="1300"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1350"
+              y1="175"
+              x2="1350"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1400"
+              y1="175"
+              x2="1400"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1450"
+              y1="175"
+              x2="1450"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="1500"
+              y1="175"
+              x2="1500"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1550"
+              y1="175"
+              x2="1550"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1600"
+              y1="175"
+              x2="1600"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1650"
+              y1="175"
+              x2="1650"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="1700"
+              y1="175"
+              x2="1700"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="1750"
+              y1="175"
+              x2="1750"
+              y2="1155"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="180"
+              x2="1750"
+              y2="180"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="230"
+              x2="1750"
+              y2="230"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="280"
+              x2="1750"
+              y2="280"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="330"
+              x2="1750"
+              y2="330"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="380"
+              x2="1750"
+              y2="380"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="430"
+              x2="1750"
+              y2="430"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="480"
+              x2="1750"
+              y2="480"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="530"
+              x2="1750"
+              y2="530"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="580"
+              x2="1750"
+              y2="580"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="630"
+              x2="1750"
+              y2="630"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="680"
+              x2="1750"
+              y2="680"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="730"
+              x2="1750"
+              y2="730"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="780"
+              x2="1750"
+              y2="780"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="830"
+              x2="1750"
+              y2="830"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="880"
+              x2="1750"
+              y2="880"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="930"
+              x2="1750"
+              y2="930"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="980"
+              x2="1750"
+              y2="980"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="1030"
+              x2="1750"
+              y2="1030"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="1080"
+              x2="1750"
+              y2="1080"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="1130"
+              x2="1750"
+              y2="1130"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.22"
+            />
+            <line
+              class="grid-line"
+              x1="50"
+              y1="1180"
+              x2="1750"
+              y2="1180"
+              stroke="#dfe3dc"
+              stroke-width="1"
+              opacity="0.55"
+            />
+          </g>
+          <g id="diagram-header">
+            <text class="header-kicker" x="70" y="52" fill="#284331">
+              FRONTEND ARCHITECTURE · 2026.08
+            </text>
+            <text class="header-title" x="70" y="108" fill="#1d251f">Windup 前端架构</text>
+            <text class="header-subtitle" x="72" y="142" fill="#687169">
+              双入口，一张节点图，一棵可交付资产树
+            </text>
+            <line x1="1020" y1="45" x2="1020" y2="142" stroke="#cbd1ca" stroke-width="1" />
+            <g aria-hidden="true">
+              <text class="truth-number" x="1120" y="68" fill="#284331">01</text>
+              <text class="truth-title" x="1120" y="91" text-anchor="start" fill="#303a32">
+                <tspan x="1120" dy="0">双入口共享编排，不等于端到端</tspan>
+                <tspan x="1120" dy="17">完全统一</tspan>
+              </text>
+            </g>
+            <g aria-hidden="true">
+              <text class="truth-number" x="1340" y="68" fill="#284331">02</text>
+              <text class="truth-title" x="1340" y="91" text-anchor="start" fill="#303a32">
+                <tspan x="1340" dy="0">后端任务完成，不等于浏览器流</tspan>
+                <tspan x="1340" dy="17">程已经闭合</tspan>
+              </text>
+            </g>
+            <g aria-hidden="true">
+              <text class="truth-number" x="1560" y="68" fill="#284331">03</text>
+              <text class="truth-title" x="1560" y="91" text-anchor="start" fill="#303a32">
+                <tspan x="1560" dy="0">交付的是资产，而不是一组图片</tspan>
+              </text>
+            </g>
+          </g>
+          <g aria-hidden="true">
+            <rect
+              class="boundary"
+              x="50"
+              y="175"
+              width="1700"
+              height="825"
+              rx="22"
+              fill="none"
+              stroke="#cbd1ca"
+              stroke-width="1.5"
+            />
+            <text class="boundary-label" x="70" y="199" fill="#687169">
+              BROWSER · React + TypeScript
+            </text>
+          </g>
+          <g aria-hidden="true">
+            <rect
+              class="boundary boundary-backend"
+              x="50"
+              y="1030"
+              width="1700"
+              height="125"
+              rx="10"
+              fill="none"
+              stroke="#2a5284"
+              stroke-width="1.5"
+              stroke-dasharray="7 8"
+            />
+            <text class="boundary-label" x="70" y="1054" fill="#687169">
+              BACKEND CONTRACTS · FastAPI
+            </text>
+          </g>
+          <g aria-hidden="true" transform="translate(1260 205)">
+            <circle cx="0" cy="0" r="5" fill="#8a672a" />
+            <text class="legend-copy" x="12" y="4" fill="#687169">用户入口</text>
+            <circle cx="104" cy="0" r="5" fill="#284331" />
+            <text class="legend-copy" x="116" y="4" fill="#687169">前端状态</text>
+            <circle cx="218" cy="0" r="5" fill="#2a5284" />
+            <text class="legend-copy" x="230" y="4" fill="#687169">后端契约</text>
+            <circle cx="334" cy="0" r="5" fill="#6f3928" />
+            <text class="legend-copy" x="346" y="4" fill="#687169">当前分叉</text>
+          </g>
+          <g id="connections">
+            <g
+              class="connection-group"
+              data-connection-id="quick-agent"
+              data-from="quick-start"
+              data-to="agent-runtime"
+            >
+              <polyline
+                class="connection connection-entry"
+                points="370,338 430,338"
+                fill="none"
+                stroke="#8a672a"
+                stroke-width="1.8"
+                marker-end="url(#arrow-entry)"
+              />
+              <text
+                class="connection-label"
+                x="400"
+                y="326"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                提案 / 授权
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="editor-session-link"
+              data-from="workflow-editor"
+              data-to="editor-session"
+            >
+              <polyline
+                class="connection connection-entry"
+                points="370,508 430,508"
+                fill="none"
+                stroke="#8a672a"
+                stroke-width="1.8"
+                marker-end="url(#arrow-entry)"
+              />
+              <text
+                class="connection-label"
+                x="400"
+                y="496"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                用户命令
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="agent-controller"
+              data-from="agent-runtime"
+              data-to="workflow-controller"
+            >
+              <polyline
+                class="connection connection-entry"
+                points="675,338 720,338 720,392 760,392"
+                fill="none"
+                stroke="#8a672a"
+                stroke-width="1.8"
+                marker-end="url(#arrow-entry)"
+              />
+              <text
+                class="connection-label"
+                x="719"
+                y="325"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                自动连续调用
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="session-controller"
+              data-from="editor-session"
+              data-to="workflow-controller"
+            >
+              <polyline
+                class="connection connection-entry"
+                points="675,508 720,508 720,474 760,474"
+                fill="none"
+                stroke="#8a672a"
+                stroke-width="1.8"
+                marker-end="url(#arrow-entry)"
+              />
+              <text
+                class="connection-label"
+                x="718"
+                y="530"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                逐步调用
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="controller-run"
+              data-from="workflow-controller"
+              data-to="workflow-run"
+            >
+              <polyline
+                class="connection connection-core"
+                points="1020,432 1052,432 1052,402 1090,402"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="1052"
+                y="420"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                推进 / 保存
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="controller-generation"
+              data-from="workflow-controller"
+              data-to="generation-apis"
+            >
+              <polyline
+                class="connection connection-core"
+                points="890,515 890,610"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="933"
+                y="566"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                创建 / 查询
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="generation-sse"
+              data-from="generation-apis"
+              data-to="sse-recovery"
+            >
+              <polyline
+                class="connection connection-core"
+                points="990,660 1045,660"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="1018"
+                y="648"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                任务身份
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="sse-controller"
+              data-from="sse-recovery"
+              data-to="workflow-controller"
+            >
+              <polyline
+                class="connection connection-feedback"
+                points="1160,610 1160,565 980,565 980,515"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                stroke-dasharray="4 5"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="1068"
+                y="553"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                终态收口
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="sse-bake"
+              data-from="sse-recovery"
+              data-to="client-bake"
+            >
+              <polyline
+                class="connection connection-optional"
+                points="1275,660 1330,660"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                stroke-dasharray="2 7"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="1303"
+                y="648"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                可选出帧
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="agent-quick-publish"
+              data-from="agent-runtime"
+              data-to="quickstart-publisher"
+            >
+              <polyline
+                class="connection connection-caution"
+                points="552,390 552,760"
+                fill="none"
+                stroke="#6f3928"
+                stroke-width="1.8"
+                stroke-dasharray="6 5"
+                marker-end="url(#arrow-caution)"
+              />
+              <text
+                class="connection-label"
+                x="594"
+                y="732"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                审核交付
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="session-editor-publish"
+              data-from="editor-session"
+              data-to="editor-publisher"
+            >
+              <polyline
+                class="connection connection-core"
+                points="552,560 552,880"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="594"
+                y="865"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                审核交付
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="quick-assets"
+              data-from="quickstart-publisher"
+              data-to="asset-tree"
+            >
+              <polyline
+                class="connection connection-caution"
+                points="675,808 720,808 720,826 760,826"
+                fill="none"
+                stroke="#6f3928"
+                stroke-width="1.8"
+                stroke-dasharray="6 5"
+                marker-end="url(#arrow-caution)"
+              />
+              <text
+                class="connection-label"
+                x="716"
+                y="796"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                update
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="editor-assets"
+              data-from="editor-publisher"
+              data-to="asset-tree"
+            >
+              <polyline
+                class="connection connection-core"
+                points="675,928 720,928 720,906 760,906"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="716"
+                y="948"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                publish
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="assets-library"
+              data-from="asset-tree"
+              data-to="asset-library"
+            >
+              <polyline
+                class="connection connection-core"
+                points="1020,826 1110,826"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="1065"
+                y="814"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                已发布摘要
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="library-detail"
+              data-from="asset-library"
+              data-to="character-detail"
+            >
+              <polyline
+                class="connection connection-core"
+                points="1210,875 1210,900"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="1250"
+                y="892"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                完整资产
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="assets-playtest"
+              data-from="asset-tree"
+              data-to="playtest"
+            >
+              <polyline
+                class="connection connection-core"
+                points="1020,850 1320,850 1320,828 1360,828"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="1320"
+                y="842"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                只读核验
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="assets-export"
+              data-from="asset-tree"
+              data-to="export-package"
+            >
+              <polyline
+                class="connection connection-core"
+                points="1020,906 1535,906 1535,828 1580,828"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.8"
+                marker-end="url(#arrow-core)"
+              />
+              <text
+                class="connection-label"
+                x="1535"
+                y="893"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                渐进导出
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="agent-contract"
+              data-from="agent-runtime"
+              data-to="agent-api"
+            >
+              <polyline
+                class="connection connection-contract"
+                points="552,390 552,1030 360,1030 360,1065"
+                fill="none"
+                stroke="#2a5284"
+                stroke-width="1.8"
+                stroke-dasharray="6 7"
+                marker-end="url(#arrow-contract)"
+              />
+              <text
+                class="connection-label"
+                x="390"
+                y="1018"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                Bearer
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="run-contract"
+              data-from="workflow-run"
+              data-to="workflow-api"
+            >
+              <polyline
+                class="connection connection-contract"
+                points="1390,580 1390,1018 725,1018 725,1065"
+                fill="none"
+                stroke="#2a5284"
+                stroke-width="1.8"
+                stroke-dasharray="6 7"
+                marker-end="url(#arrow-contract)"
+              />
+              <text
+                class="connection-label"
+                x="760"
+                y="1006"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                JSON
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="generation-contract"
+              data-from="generation-apis"
+              data-to="generation-api"
+            >
+              <polyline
+                class="connection connection-contract"
+                points="875,710 875,1006 1105,1006 1105,1065"
+                fill="none"
+                stroke="#2a5284"
+                stroke-width="1.8"
+                stroke-dasharray="6 7"
+                marker-end="url(#arrow-contract)"
+              />
+              <text
+                class="connection-label"
+                x="1088"
+                y="994"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                HTTP / SSE
+              </text>
+            </g>
+            <g
+              class="connection-group"
+              data-connection-id="assets-contract"
+              data-from="asset-tree"
+              data-to="assets-api"
+            >
+              <polyline
+                class="connection connection-contract"
+                points="890,950 890,1038 1530,1038 1530,1065"
+                fill="none"
+                stroke="#2a5284"
+                stroke-width="1.8"
+                stroke-dasharray="6 7"
+                marker-end="url(#arrow-contract)"
+              />
+              <text
+                class="connection-label"
+                x="1495"
+                y="1026"
+                fill="#687169"
+                stroke="#f3f2ec"
+                stroke-width="6"
+                paint-order="stroke"
+              >
+                整树读写
+              </text>
+            </g>
+          </g>
+          <g id="components">
+            <g
+              class="node node-platform"
+              data-node-id="app-shell"
+              tabindex="0"
+              role="button"
+              aria-label="查看 AppRoutes · ProtectedRoute · AuthSession 的说明"
+            >
+              <title>
+                AppRoutes · ProtectedRoute · AuthSession：公开页 / 登录产品 /
+                项目工作区的外壳边界；shared/api 惰性读取 token 并处理 401 恢复
+              </title>
+              <rect
+                class="focus-ring"
+                x="95"
+                y="200"
+                width="1590"
+                height="55"
+                rx="16"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="100"
+                y="205"
+                width="1580"
+                height="45"
+                rx="12"
+                fill="#ffffff"
+                stroke="#cbd1ca"
+                stroke-width="1.35"
+              />
+              <g aria-hidden="true" transform="translate(118 218)">
+                <rect width="8" height="8" fill="#284331" />
+                <rect x="10" width="8" height="8" fill="#8a672a" />
+                <rect x="20" width="8" height="8" fill="#2a5284" />
+              </g>
+              <text class="node-tag" x="162" y="224" fill="#778078">
+                APPROUTES / PROTECTEDROUTE / AUTHSESSION
+              </text>
+              <text class="node-copy" x="1662" y="224" text-anchor="end" fill="#687169">
+                公开页 / 登录产品 / 项目工作区的外壳边界；shared/api 惰性读取 token 并处理 401 恢复
+              </text>
+            </g>
+            <g
+              class="node node-entry"
+              data-node-id="quick-start"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Quick Start 的说明"
+            >
+              <title>Quick Start：对话式入口 · 自动选择与连续推进</title>
+              <rect
+                class="focus-ring"
+                x="95"
+                y="280"
+                width="280"
+                height="115"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="100"
+                y="285"
+                width="270"
+                height="105"
+                rx="18"
+                fill="#f3e8cb"
+                stroke="#8a672a"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#8a672a"
+                stroke-width="1.6"
+              >
+                <rect x="116" y="302" width="12" height="12" />
+                <rect x="124" y="310" width="12" height="12" />
+              </g>
+              <text class="node-tag" x="354" y="303" text-anchor="end" fill="#778078">
+                AI-GUIDED
+              </text>
+              <text class="node-label" x="146" y="324" text-anchor="start" fill="#1d251f">
+                <tspan x="146" dy="0">Quick Start</tspan>
+              </text>
+              <text class="node-copy" x="118" y="350" text-anchor="start" fill="#687169">
+                <tspan x="118" dy="0">对话式入口 · 自动选择与连续推进</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-entry"
+              data-node-id="agent-runtime"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Agent Runtime 的说明"
+            >
+              <title>Agent Runtime：Planner · 授权闸 · 自动推进</title>
+              <rect
+                class="focus-ring"
+                x="425"
+                y="280"
+                width="255"
+                height="115"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="430"
+                y="285"
+                width="245"
+                height="105"
+                rx="18"
+                fill="#f3e8cb"
+                stroke="#8a672a"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#8a672a"
+                stroke-width="1.6"
+              >
+                <circle cx="448" cy="310" r="3" />
+                <circle cx="460" cy="304" r="3" />
+                <circle cx="460" cy="316" r="3" />
+                <path d="M451 310L457 305M451 310L457 315" />
+              </g>
+              <text class="node-tag" x="659" y="303" text-anchor="end" fill="#778078">
+                BROWSER SANDBOX
+              </text>
+              <text class="node-label" x="476" y="324" text-anchor="start" fill="#1d251f">
+                <tspan x="476" dy="0">Agent Runtime</tspan>
+              </text>
+              <text class="node-copy" x="448" y="350" text-anchor="start" fill="#687169">
+                <tspan x="448" dy="0">Planner · 授权闸 · 自动推进</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-entry"
+              data-node-id="workflow-editor"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Workflow Editor 的说明"
+            >
+              <title>Workflow Editor：节点画布 · 用户逐步生成、确认与审核</title>
+              <rect
+                class="focus-ring"
+                x="95"
+                y="450"
+                width="280"
+                height="115"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="100"
+                y="455"
+                width="270"
+                height="105"
+                rx="18"
+                fill="#f3e8cb"
+                stroke="#8a672a"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#8a672a"
+                stroke-width="1.6"
+              >
+                <rect x="116" y="472" width="12" height="12" />
+                <rect x="124" y="480" width="12" height="12" />
+              </g>
+              <text class="node-tag" x="354" y="473" text-anchor="end" fill="#778078">
+                USER-DRIVEN
+              </text>
+              <text class="node-label" x="146" y="494" text-anchor="start" fill="#1d251f">
+                <tspan x="146" dy="0">Workflow Editor</tspan>
+              </text>
+              <text class="node-copy" x="118" y="520" text-anchor="start" fill="#687169">
+                <tspan x="118" dy="0">节点画布 · 用户逐步生成、确认与审核</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-entry"
+              data-node-id="editor-session"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Editor Session 的说明"
+            >
+              <title>Editor Session：Project / Character 上下文 · Controller 装配</title>
+              <rect
+                class="focus-ring"
+                x="425"
+                y="450"
+                width="255"
+                height="115"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="430"
+                y="455"
+                width="245"
+                height="105"
+                rx="18"
+                fill="#f3e8cb"
+                stroke="#8a672a"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#8a672a"
+                stroke-width="1.6"
+              >
+                <circle cx="448" cy="480" r="3" />
+                <circle cx="460" cy="474" r="3" />
+                <circle cx="460" cy="486" r="3" />
+                <path d="M451 480L457 475M451 480L457 485" />
+              </g>
+              <text class="node-tag" x="659" y="473" text-anchor="end" fill="#778078">
+                SESSION ADAPTER
+              </text>
+              <text class="node-label" x="476" y="494" text-anchor="start" fill="#1d251f">
+                <tspan x="476" dy="0">Editor Session</tspan>
+              </text>
+              <text class="node-copy" x="448" y="520" text-anchor="start" fill="#687169">
+                <tspan x="448" dy="0">Project / Character 上下文 ·</tspan>
+                <tspan x="448" dy="16">Controller 装配</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-core"
+              data-node-id="workflow-controller"
+              tabindex="0"
+              role="button"
+              aria-label="查看 WorkflowController 的说明"
+            >
+              <title>WorkflowController：一实例 · 一条 WorkflowRun</title>
+              <rect
+                class="focus-ring"
+                x="755"
+                y="345"
+                width="270"
+                height="175"
+                rx="38"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="760"
+                y="350"
+                width="260"
+                height="165"
+                rx="34"
+                fill="#dce9df"
+                stroke="#284331"
+                stroke-width="1.35"
+              />
+              <rect x="753" y="393" width="14" height="34" rx="3" fill="#284331" />
+              <rect x="1013" y="438" width="14" height="34" rx="3" fill="#284331" />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                transform="translate(798 395)"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.6"
+              >
+                <circle cx="0" cy="0" r="16" />
+                <circle cx="0" cy="0" r="5" />
+                <path d="M-11 -11L11 11M11 -11L-11 11" />
+              </g>
+              <text class="node-tag" x="782" y="374" fill="#778078">ORCHESTRATION CORE</text>
+              <text class="node-label" x="782" y="440" style="font-size: 23px" fill="#1d251f">
+                WorkflowController
+              </text>
+              <text class="node-copy" x="782" y="468" text-anchor="start" fill="#687169">
+                <tspan x="782" dy="0">一实例 · 一条 WorkflowRun</tspan>
+              </text>
+              <text class="node-tag" x="782" y="497" fill="#778078">
+                COMMANDS · PERSIST · SUBSCRIBE · RESUME
+              </text>
+            </g>
+            <g
+              class="node node-core"
+              data-node-id="workflow-run"
+              tabindex="0"
+              role="button"
+              aria-label="查看 WorkflowRun.nodes 的说明"
+            >
+              <title>WorkflowRun.nodes：前端感知并推进 · 后端原样持久化</title>
+              <rect
+                class="focus-ring"
+                x="1085"
+                y="265"
+                width="610"
+                height="320"
+                rx="30"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="1090"
+                y="270"
+                width="600"
+                height="310"
+                rx="26"
+                fill="#dce9df"
+                stroke="#284331"
+                stroke-width="1.35"
+              />
+              <text class="node-tag" x="1114" y="297" fill="#778078">
+                SINGLE SOURCE OF FLOW STATE
+              </text>
+              <text class="node-label" x="1114" y="331" style="font-size: 24px" fill="#1d251f">
+                WorkflowRun.nodes
+              </text>
+              <text class="node-copy" x="1114" y="354" fill="#687169">
+                前端感知并推进 · 后端原样持久化
+              </text>
+              <line
+                class="workflow-rail"
+                x1="1145"
+                y1="390"
+                x2="1635"
+                y2="390"
+                stroke="#284331"
+                stroke-width="2.2"
+              />
+              <g aria-hidden="true">
+                <circle
+                  class="workflow-stage"
+                  cx="1145"
+                  cy="390"
+                  r="22"
+                  fill="#ffffff"
+                  stroke="#284331"
+                  stroke-width="1.6"
+                />
+                <text class="workflow-stage-number" x="1145" y="394" fill="#284331">01</text>
+                <text class="workflow-stage-label" x="1145" y="434" fill="#303a32">角色设定</text>
+              </g>
+              <g aria-hidden="true">
+                <circle
+                  class="workflow-stage"
+                  cx="1243"
+                  cy="390"
+                  r="22"
+                  fill="#ffffff"
+                  stroke="#284331"
+                  stroke-width="1.6"
+                />
+                <text class="workflow-stage-number" x="1243" y="394" fill="#284331">02</text>
+                <text class="workflow-stage-label" x="1243" y="434" fill="#303a32">角色母版</text>
+              </g>
+              <g aria-hidden="true">
+                <circle
+                  class="workflow-stage"
+                  cx="1341"
+                  cy="390"
+                  r="22"
+                  fill="#ffffff"
+                  stroke="#284331"
+                  stroke-width="1.6"
+                />
+                <text class="workflow-stage-number" x="1341" y="394" fill="#284331">03</text>
+                <text class="workflow-stage-label" x="1341" y="434" fill="#303a32">动作首帧</text>
+              </g>
+              <g aria-hidden="true">
+                <circle
+                  class="workflow-stage"
+                  cx="1439"
+                  cy="390"
+                  r="22"
+                  fill="#ffffff"
+                  stroke="#284331"
+                  stroke-width="1.6"
+                />
+                <text class="workflow-stage-number" x="1439" y="394" fill="#284331">04</text>
+                <text class="workflow-stage-label" x="1439" y="434" fill="#303a32">生成路线</text>
+              </g>
+              <g aria-hidden="true">
+                <circle
+                  class="workflow-stage"
+                  cx="1537"
+                  cy="390"
+                  r="22"
+                  fill="#ffffff"
+                  stroke="#284331"
+                  stroke-width="1.6"
+                />
+                <text class="workflow-stage-number" x="1537" y="394" fill="#284331">05</text>
+                <text class="workflow-stage-label" x="1537" y="434" fill="#303a32">完整动画</text>
+              </g>
+              <g aria-hidden="true">
+                <circle
+                  class="workflow-stage"
+                  cx="1635"
+                  cy="390"
+                  r="22"
+                  fill="#ffffff"
+                  stroke="#284331"
+                  stroke-width="1.6"
+                />
+                <text class="workflow-stage-number" x="1635" y="394" fill="#284331">06</text>
+                <text class="workflow-stage-label" x="1635" y="434" fill="#303a32">审核</text>
+              </g>
+              <path
+                class="workflow-branch"
+                d="M1243 412V498H1627"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.25"
+                stroke-dasharray="4 5"
+              />
+              <rect
+                class="workflow-branch-note"
+                x="1261"
+                y="478"
+                width="368"
+                height="42"
+                rx="10"
+                fill="#ffffff"
+                stroke="#284331"
+                stroke-dasharray="3 5"
+              />
+              <text class="node-copy" x="1277" y="495" fill="#687169">
+                每个 Action 重复 03 → 06；多个动作共享角色母版后可并行
+              </text>
+              <text class="node-tag" x="1277" y="511" fill="#778078">
+                dependsOnNodeIds · nodeId + taskId · phase / status
+              </text>
+            </g>
+            <g
+              class="node node-core"
+              data-node-id="generation-apis"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Generation APIs 的说明"
+            >
+              <title>Generation APIs：图片 · 首帧 · 动画 · 任务快照</title>
+              <rect
+                class="focus-ring"
+                x="755"
+                y="605"
+                width="240"
+                height="110"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="760"
+                y="610"
+                width="230"
+                height="100"
+                rx="18"
+                fill="#dce9df"
+                stroke="#284331"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.6"
+              >
+                <circle cx="778" cy="635" r="3" />
+                <circle cx="790" cy="629" r="3" />
+                <circle cx="790" cy="641" r="3" />
+                <path d="M781 635L787 630M781 635L787 640" />
+              </g>
+              <text class="node-tag" x="974" y="628" text-anchor="end" fill="#778078">
+                AUTHENTICATED ADAPTER
+              </text>
+              <text class="node-label" x="806" y="649" text-anchor="start" fill="#1d251f">
+                <tspan x="806" dy="0">Generation APIs</tspan>
+              </text>
+              <text class="node-copy" x="778" y="675" text-anchor="start" fill="#687169">
+                <tspan x="778" dy="0">图片 · 首帧 · 动画 · 任务快照</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-core"
+              data-node-id="sse-recovery"
+              tabindex="0"
+              role="button"
+              aria-label="查看 SSE + Recovery 的说明"
+            >
+              <title>SSE + Recovery：先订阅再查询 · 断线对账 · 轮询降级</title>
+              <rect
+                class="focus-ring"
+                x="1040"
+                y="605"
+                width="240"
+                height="110"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="1045"
+                y="610"
+                width="230"
+                height="100"
+                rx="18"
+                fill="#dce9df"
+                stroke="#284331"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.6"
+              >
+                <circle cx="1063" cy="635" r="3" />
+                <circle cx="1075" cy="629" r="3" />
+                <circle cx="1075" cy="641" r="3" />
+                <path d="M1066 635L1072 630M1066 635L1072 640" />
+              </g>
+              <text class="node-tag" x="1259" y="628" text-anchor="end" fill="#778078">
+                FINALIZATION LOOP
+              </text>
+              <text class="node-label" x="1091" y="649" text-anchor="start" fill="#1d251f">
+                <tspan x="1091" dy="0">SSE + Recovery</tspan>
+              </text>
+              <text class="node-copy" x="1063" y="675" text-anchor="start" fill="#687169">
+                <tspan x="1063" dy="0">先订阅再查询 · 断线对账 · 轮询降级</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-core"
+              data-node-id="client-bake"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Client Bake 的说明"
+            >
+              <title>Client Bake：可选三渲二 · 浏览器 WebGL 出帧</title>
+              <rect
+                class="focus-ring"
+                x="1325"
+                y="605"
+                width="240"
+                height="110"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="1330"
+                y="610"
+                width="230"
+                height="100"
+                rx="18"
+                fill="#dce9df"
+                stroke="#284331"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.6"
+              >
+                <circle cx="1348" cy="635" r="3" />
+                <circle cx="1360" cy="629" r="3" />
+                <circle cx="1360" cy="641" r="3" />
+                <path d="M1351 635L1357 630M1351 635L1357 640" />
+              </g>
+              <text class="node-tag" x="1544" y="628" text-anchor="end" fill="#778078">
+                GPU ON DEVICE
+              </text>
+              <text class="node-label" x="1376" y="649" text-anchor="start" fill="#1d251f">
+                <tspan x="1376" dy="0">Client Bake</tspan>
+              </text>
+              <text class="node-copy" x="1348" y="675" text-anchor="start" fill="#687169">
+                <tspan x="1348" dy="0">可选三渲二 · 浏览器 WebGL 出帧</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-caution"
+              data-node-id="quickstart-publisher"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Quick Start 发布适配 的说明"
+            >
+              <title>Quick Start 发布适配：service 内组装 Action 并更新 Character</title>
+              <rect
+                class="focus-ring"
+                x="425"
+                y="755"
+                width="255"
+                height="105"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="430"
+                y="760"
+                width="245"
+                height="95"
+                rx="18"
+                fill="#f4e8e1"
+                stroke="#6f3928"
+                stroke-width="1.35"
+                stroke-dasharray="6 5"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#6f3928"
+                stroke-width="1.6"
+              >
+                <path d="M446 778V792M446 785H460M455 780L461 785L455 790" />
+              </g>
+              <text class="node-tag" x="659" y="778" text-anchor="end" fill="#778078">
+                CURRENTLY SEPARATE
+              </text>
+              <text class="node-label" x="476" y="799" text-anchor="start" fill="#1d251f">
+                <tspan x="476" dy="0">Quick Start 发布适配</tspan>
+              </text>
+              <text class="node-copy" x="448" y="825" text-anchor="start" fill="#687169">
+                <tspan x="448" dy="0">service 内组装 Action 并更新</tspan>
+                <tspan x="448" dy="16">Character</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-core"
+              data-node-id="editor-publisher"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Asset Publisher 的说明"
+            >
+              <title>Asset Publisher：CharacterAssetPublisher · Editor 幂等发布与对账回滚</title>
+              <rect
+                class="focus-ring"
+                x="425"
+                y="875"
+                width="255"
+                height="105"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="430"
+                y="880"
+                width="245"
+                height="95"
+                rx="18"
+                fill="#dce9df"
+                stroke="#284331"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.6"
+              >
+                <path d="M446 898V912M446 905H460M455 900L461 905L455 910" />
+              </g>
+              <text class="node-tag" x="659" y="898" text-anchor="end" fill="#778078">
+                SHARED PUBLISHER
+              </text>
+              <text class="node-label" x="476" y="919" text-anchor="start" fill="#1d251f">
+                <tspan x="476" dy="0">Asset Publisher</tspan>
+              </text>
+              <text class="node-copy" x="448" y="945" text-anchor="start" fill="#687169">
+                <tspan x="448" dy="0">CharacterAssetPublisher · Editor</tspan>
+                <tspan x="448" dy="16">幂等发布与对账回滚</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-core"
+              data-node-id="asset-tree"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Character 资产树 的说明"
+            >
+              <title>Character 资产树：Character → Outfit → Action → Sequence → Frame</title>
+              <rect
+                class="focus-ring"
+                x="755"
+                y="780"
+                width="270"
+                height="175"
+                rx="30"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="760"
+                y="785"
+                width="260"
+                height="165"
+                rx="26"
+                fill="#dce9df"
+                stroke="#284331"
+                stroke-width="1.35"
+              />
+              <text class="node-tag" x="782" y="809" fill="#778078">DELIVERY BOUNDARY</text>
+              <text class="node-label" x="782" y="837" style="font-size: 21px" fill="#1d251f">
+                Character 资产树
+              </text>
+              <g aria-hidden="true">
+                <rect class="asset-pixel" x="785" y="847" width="8" height="8" fill="#284331" />
+                <text class="asset-label" x="801" y="855" fill="#303a32">Character</text>
+              </g>
+              <g aria-hidden="true">
+                <line
+                  class="asset-spine"
+                  x1="793"
+                  y1="859"
+                  x2="793"
+                  y2="874"
+                  stroke="#284331"
+                  stroke-width="1.5"
+                />
+                <rect class="asset-pixel" x="803" y="866" width="8" height="8" fill="#284331" />
+                <text class="asset-label" x="819" y="874" fill="#303a32">Outfit</text>
+              </g>
+              <g aria-hidden="true">
+                <line
+                  class="asset-spine"
+                  x1="811"
+                  y1="878"
+                  x2="811"
+                  y2="893"
+                  stroke="#284331"
+                  stroke-width="1.5"
+                />
+                <rect class="asset-pixel" x="821" y="885" width="8" height="8" fill="#284331" />
+                <text class="asset-label" x="837" y="893" fill="#303a32">Action</text>
+              </g>
+              <g aria-hidden="true">
+                <line
+                  class="asset-spine"
+                  x1="829"
+                  y1="897"
+                  x2="829"
+                  y2="912"
+                  stroke="#284331"
+                  stroke-width="1.5"
+                />
+                <rect class="asset-pixel" x="839" y="904" width="8" height="8" fill="#284331" />
+                <text class="asset-label" x="855" y="912" fill="#303a32">Sequence</text>
+              </g>
+              <g aria-hidden="true">
+                <line
+                  class="asset-spine"
+                  x1="847"
+                  y1="916"
+                  x2="847"
+                  y2="931"
+                  stroke="#284331"
+                  stroke-width="1.5"
+                />
+                <rect class="asset-pixel" x="857" y="923" width="8" height="8" fill="#284331" />
+                <text class="asset-label" x="873" y="931" fill="#303a32">Frame</text>
+              </g>
+              <path
+                class="asset-spine"
+                d="M785 840V923"
+                fill="none"
+                stroke="#284331"
+                stroke-width="1.5"
+              />
+              <text class="node-tag" x="1002" y="932" text-anchor="end" fill="#778078">
+                character_data
+              </text>
+            </g>
+            <g
+              class="node node-surface"
+              data-node-id="asset-library"
+              tabindex="0"
+              role="button"
+              aria-label="查看 资产库 的说明"
+            >
+              <title>资产库：项目下已发布角色索引</title>
+              <rect
+                class="focus-ring"
+                x="1105"
+                y="775"
+                width="210"
+                height="105"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="1110"
+                y="780"
+                width="200"
+                height="95"
+                rx="18"
+                fill="#ffffff"
+                stroke="#8fa092"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#8fa092"
+                stroke-width="1.6"
+              >
+                <path d="M1134 796L1143 805L1134 814L1125 805Z" />
+                <circle cx="1134" cy="805" r="2" />
+              </g>
+
+              <text class="node-label" x="1156" y="819" text-anchor="start" fill="#1d251f">
+                <tspan x="1156" dy="0">资产库</tspan>
+              </text>
+              <text class="node-copy" x="1128" y="845" text-anchor="start" fill="#687169">
+                <tspan x="1128" dy="0">项目下已发布角色索引</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-surface"
+              data-node-id="character-detail"
+              tabindex="0"
+              role="button"
+              aria-label="查看 角色详情 的说明"
+            >
+              <title>角色详情：母版 · 造型 · 动作 · 像素精修</title>
+              <rect
+                class="focus-ring"
+                x="1105"
+                y="895"
+                width="210"
+                height="85"
+                rx="16"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="1110"
+                y="900"
+                width="200"
+                height="75"
+                rx="12"
+                fill="#ffffff"
+                stroke="#8fa092"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#8fa092"
+                stroke-width="1.6"
+              >
+                <path d="M1134 916L1143 925L1134 934L1125 925Z" />
+                <circle cx="1134" cy="925" r="2" />
+              </g>
+
+              <text class="node-label" x="1156" y="939" text-anchor="start" fill="#1d251f">
+                <tspan x="1156" dy="0">角色详情</tspan>
+              </text>
+              <text class="node-copy" x="1128" y="965" text-anchor="start" fill="#687169">
+                <tspan x="1128" dy="0">母版 · 造型 · 动作 ·</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-surface"
+              data-node-id="playtest"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Playtest 的说明"
+            >
+              <title>Playtest：只读核验已发布动作</title>
+              <rect
+                class="focus-ring"
+                x="1355"
+                y="775"
+                width="190"
+                height="105"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="1360"
+                y="780"
+                width="180"
+                height="95"
+                rx="18"
+                fill="#ffffff"
+                stroke="#8fa092"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#8fa092"
+                stroke-width="1.6"
+              >
+                <path d="M1384 796L1393 805L1384 814L1375 805Z" />
+                <circle cx="1384" cy="805" r="2" />
+              </g>
+
+              <text class="node-label" x="1406" y="819" text-anchor="start" fill="#1d251f">
+                <tspan x="1406" dy="0">Playtest</tspan>
+              </text>
+              <text class="node-copy" x="1378" y="845" text-anchor="start" fill="#687169">
+                <tspan x="1378" dy="0">只读核验已发布动作</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-surface"
+              data-node-id="export-package"
+              tabindex="0"
+              role="button"
+              aria-label="查看 Export Package 的说明"
+            >
+              <title>Export Package：PNG · Atlas · GIF · Meta · ZIP · Cocos</title>
+              <rect
+                class="focus-ring"
+                x="1575"
+                y="775"
+                width="180"
+                height="105"
+                rx="22"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="1580"
+                y="780"
+                width="170"
+                height="95"
+                rx="18"
+                fill="#ffffff"
+                stroke="#8fa092"
+                stroke-width="1.35"
+              />
+              <g
+                class="node-glyph"
+                aria-hidden="true"
+                fill="none"
+                stroke="#8fa092"
+                stroke-width="1.6"
+              >
+                <path d="M1604 796L1613 805L1604 814L1595 805Z" />
+                <circle cx="1604" cy="805" r="2" />
+              </g>
+
+              <text class="node-label" x="1626" y="819" text-anchor="start" fill="#1d251f">
+                <tspan x="1626" dy="0">Export Package</tspan>
+              </text>
+              <text class="node-copy" x="1598" y="845" text-anchor="start" fill="#687169">
+                <tspan x="1598" dy="0">PNG · Atlas · GIF ·</tspan>
+                <tspan x="1598" dy="16">Meta · ZIP · Cocos</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-contract"
+              data-node-id="agent-api"
+              tabindex="0"
+              role="button"
+              aria-label="查看 /ai/chat 的说明"
+            >
+              <title>/ai/chat：Agent 对话</title>
+              <rect
+                class="focus-ring"
+                x="245"
+                y="1060"
+                width="230"
+                height="75"
+                rx="36.5"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="250"
+                y="1065"
+                width="220"
+                height="65"
+                rx="32.5"
+                fill="#e4edf7"
+                stroke="#2a5284"
+                stroke-width="1.35"
+                stroke-dasharray="6 5"
+              />
+
+              <text class="node-label" x="360" y="1093" text-anchor="middle" fill="#1d251f">
+                <tspan x="360" dy="0">/ai/chat</tspan>
+              </text>
+              <text class="node-copy" x="360" y="1112" text-anchor="middle" fill="#687169">
+                <tspan x="360" dy="0">Agent 对话</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-contract"
+              data-node-id="workflow-api"
+              tabindex="0"
+              role="button"
+              aria-label="查看 /workflow-runs 的说明"
+            >
+              <title>/workflow-runs：CRUD · nodes JSON 持久化</title>
+              <rect
+                class="focus-ring"
+                x="595"
+                y="1060"
+                width="260"
+                height="75"
+                rx="36.5"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="600"
+                y="1065"
+                width="250"
+                height="65"
+                rx="32.5"
+                fill="#e4edf7"
+                stroke="#2a5284"
+                stroke-width="1.35"
+                stroke-dasharray="6 5"
+              />
+
+              <text class="node-label" x="725" y="1093" text-anchor="middle" fill="#1d251f">
+                <tspan x="725" dy="0">/workflow-runs</tspan>
+              </text>
+              <text class="node-copy" x="725" y="1112" text-anchor="middle" fill="#687169">
+                <tspan x="725" dy="0">CRUD · nodes JSON 持久化</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-contract"
+              data-node-id="generation-api"
+              tabindex="0"
+              role="button"
+              aria-label="查看 /generation/* · /tasks/*/events 的说明"
+            >
+              <title>/generation/* · /tasks/*/events：任务创建 · 快照 · SSE 终态</title>
+              <rect
+                class="focus-ring"
+                x="925"
+                y="1060"
+                width="360"
+                height="75"
+                rx="36.5"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="930"
+                y="1065"
+                width="350"
+                height="65"
+                rx="32.5"
+                fill="#e4edf7"
+                stroke="#2a5284"
+                stroke-width="1.35"
+                stroke-dasharray="6 5"
+              />
+
+              <text class="node-label" x="1105" y="1093" text-anchor="middle" fill="#1d251f">
+                <tspan x="1105" dy="0">/generation/* · /tasks/*/events</tspan>
+              </text>
+              <text class="node-copy" x="1105" y="1112" text-anchor="middle" fill="#687169">
+                <tspan x="1105" dy="0">任务创建 · 快照 · SSE 终态</tspan>
+              </text>
+            </g>
+            <g
+              class="node node-contract"
+              data-node-id="assets-api"
+              tabindex="0"
+              role="button"
+              aria-label="查看 /projects · /characters 的说明"
+            >
+              <title>/projects · /characters：项目约束 · 完整资产树</title>
+              <rect
+                class="focus-ring"
+                x="1385"
+                y="1060"
+                width="290"
+                height="75"
+                rx="36.5"
+                fill="none"
+                stroke="#284331"
+                stroke-width="3"
+                stroke-dasharray="2 5"
+                opacity="0"
+              />
+              <rect
+                class="node-shape"
+                x="1390"
+                y="1065"
+                width="280"
+                height="65"
+                rx="32.5"
+                fill="#e4edf7"
+                stroke="#2a5284"
+                stroke-width="1.35"
+                stroke-dasharray="6 5"
+              />
+
+              <text class="node-label" x="1530" y="1093" text-anchor="middle" fill="#1d251f">
+                <tspan x="1530" dy="0">/projects · /characters</tspan>
+              </text>
+              <text class="node-copy" x="1530" y="1112" text-anchor="middle" fill="#687169">
+                <tspan x="1530" dy="0">项目约束 · 完整资产树</tspan>
+              </text>
+            </g>
+          </g>
+        </svg>
+      </div>
+    </main>
+    <p class="view-note" id="view-note" aria-live="polite"></p>
+    <aside class="inspector" id="inspector" aria-labelledby="inspector-title" data-open="false">
+      <div class="inspector-header">
+        <div>
+          <p class="inspector-tag" id="inspector-tag"></p>
+          <h2 id="inspector-title"></h2>
+          <p class="inspector-subtitle" id="inspector-subtitle"></p>
+        </div>
+        <button class="inspector-close" id="inspector-close" type="button" aria-label="关闭详情">
+          ×
+        </button>
+      </div>
+      <h3>Architecture notes</h3>
+      <ul id="inspector-details"></ul>
+      <h3>Source anchors</h3>
+      <div id="inspector-sources"></div>
+    </aside>
+    <noscript
+      ><p class="noscript">
+        请启用 JavaScript 查看交互式源码索引；图本身仍可打印或导出。
+      </p></noscript
+    >
+    <script id="architecture-data" type="application/json">
+      {
+        "schema_version": 1,
+        "diagram_type": "frontend-architecture",
+        "meta": {
+          "title": "Windup 前端架构",
+          "subtitle": "双入口，一张节点图，一棵可交付资产树",
+          "locale": "zh-CN",
+          "quality_profile": "showcase",
+          "canvas": [1800, 1200],
+          "repository": {
+            "url": "https://github.com/1024XEngineer/Windup",
+            "revision": "992dadf2aa91f4904c1e61c9621adb11dc0f68d3"
+          },
+          "views": [
+            {
+              "id": "overview",
+              "label": "全景",
+              "note": "从产品入口、浏览器编排、生成恢复走到资产发布与交付。"
+            },
+            {
+              "id": "convergence",
+              "label": "双入口合流",
+              "focus": [
+                "quick-start",
+                "agent-runtime",
+                "workflow-editor",
+                "editor-session",
+                "workflow-controller",
+                "workflow-run"
+              ],
+              "note": "Quick Start 自动连续调用；Workflow Editor 等待用户逐步操作。两者不维护第二套状态机。"
+            },
+            {
+              "id": "state",
+              "label": "状态闭环",
+              "focus": [
+                "workflow-controller",
+                "workflow-run",
+                "generation-apis",
+                "sse-recovery",
+                "client-bake",
+                "workflow-api",
+                "generation-api"
+              ],
+              "note": "任务由后端执行，浏览器订阅终态、对账并把节点变化写回 WorkflowRun。"
+            },
+            {
+              "id": "delivery",
+              "label": "资产交付",
+              "focus": [
+                "quickstart-publisher",
+                "editor-publisher",
+                "asset-tree",
+                "asset-library",
+                "character-detail",
+                "playtest",
+                "export-package",
+                "assets-api"
+              ],
+              "note": "已审核动作进入 Character 资产树，再被资产库、核验台和导出包消费。"
+            }
+          ]
+        },
+        "palette": {
+          "canvas": "#f3f2ec",
+          "surface": "#ffffff",
+          "ink": "#1d251f",
+          "muted": "#687169",
+          "line": "#cbd1ca",
+          "core": "#284331",
+          "core_soft": "#dce9df",
+          "entry": "#8a672a",
+          "entry_soft": "#f3e8cb",
+          "contract": "#2a5284",
+          "contract_soft": "#e4edf7",
+          "caution": "#6f3928",
+          "caution_soft": "#f4e8e1"
+        },
+        "boundaries": [
+          {
+            "id": "browser",
+            "label": "BROWSER · React + TypeScript",
+            "pos": [50, 175],
+            "size": [1700, 825],
+            "note": "路由、会话、工作流推进、SSE 收口、WebGL 出帧与浏览器导出都在此边界内。"
+          },
+          {
+            "id": "backend",
+            "label": "BACKEND CONTRACTS · FastAPI",
+            "pos": [50, 1030],
+            "size": [1700, 125],
+            "note": "前端只经公开 HTTP/SSE 合同访问任务、流程与资产；密钥与模型调用不进入浏览器。"
+          }
+        ],
+        "components": [
+          {
+            "id": "app-shell",
+            "kind": "platform",
+            "shape": "rail",
+            "label": "AppRoutes · ProtectedRoute · AuthSession",
+            "sublabel": "公开页 / 登录产品 / 项目工作区的外壳边界；shared/api 惰性读取 token 并处理 401 恢复",
+            "pos": [100, 205],
+            "size": [1580, 45],
+            "details": [
+              "路由表定义公开宣传页、受保护产品页与项目工作区，不由页面反向决定全局外壳。",
+              "AuthSession 持有访问令牌；shared/api 只注册读取函数和 401 恢复函数，不拥有登录状态。"
+            ],
+            "sources": [
+              { "path": "frontend/src/app/app.tsx", "line": 29, "label": "路由与外壳边界" },
+              {
+                "path": "frontend/src/features/auth-session/index.tsx",
+                "line": 202,
+                "label": "注册 token 与 401 恢复"
+              },
+              {
+                "path": "frontend/src/shared/api/index.ts",
+                "line": 41,
+                "label": "共享 API 认证边界"
+              }
+            ]
+          },
+          {
+            "id": "quick-start",
+            "kind": "entry",
+            "shape": "entry",
+            "label": "Quick Start",
+            "sublabel": "对话式入口 · 自动选择与连续推进",
+            "tag": "AI-GUIDED",
+            "pos": [100, 285],
+            "size": [270, 105],
+            "details": [
+              "用户用文字或参考媒体开始角色创作。",
+              "页面把 Agent 提案翻译为同一组 WorkflowController 命令，而不是维护独立流程模型。"
+            ],
+            "sources": [
+              { "path": "frontend/src/app/app.tsx", "line": 59, "label": "生产 Agent 装配" },
+              {
+                "path": "frontend/src/pages/quick-start/service.ts",
+                "line": 320,
+                "label": "创建共享 Controller"
+              }
+            ]
+          },
+          {
+            "id": "agent-runtime",
+            "kind": "entry",
+            "shape": "adapter",
+            "label": "Agent Runtime",
+            "sublabel": "Planner · 授权闸 · 自动推进",
+            "tag": "BROWSER SANDBOX",
+            "pos": [430, 285],
+            "size": [245, 105],
+            "details": [
+              "AI SDK 只负责协议，适配器补 Windup JWT 并接到 /ai/chat。",
+              "真正的生成授权与业务推进仍由浏览器里的 Agent Runtime 和 Controller 协作完成。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/features/quick-start-agent/production.ts",
+                "line": 84,
+                "label": "Agent HTTP 适配器"
+              },
+              {
+                "path": "frontend/src/features/quick-start-agent/production.ts",
+                "line": 143,
+                "label": "生产依赖装配"
+              },
+              {
+                "path": "frontend/src/pages/quick-start/service.ts",
+                "line": 775,
+                "label": "订阅并自动推进"
+              }
+            ]
+          },
+          {
+            "id": "workflow-editor",
+            "kind": "entry",
+            "shape": "entry",
+            "label": "Workflow Editor",
+            "sublabel": "节点画布 · 用户逐步生成、确认与审核",
+            "tag": "USER-DRIVEN",
+            "pos": [100, 455],
+            "size": [270, 105],
+            "details": [
+              "用户直接看见六类工作流节点与依赖边。",
+              "页面只消费 WorkflowEditorSession，不直接拼装 API 或另建状态机。"
+            ],
+            "sources": [
+              { "path": "frontend/src/app/app.tsx", "line": 81, "label": "编辑器路由" },
+              {
+                "path": "frontend/src/pages/workflow-editor/runtime.ts",
+                "line": 71,
+                "label": "真实编辑器会话"
+              }
+            ]
+          },
+          {
+            "id": "editor-session",
+            "kind": "entry",
+            "shape": "adapter",
+            "label": "Editor Session",
+            "sublabel": "Project / Character 上下文 · Controller 装配",
+            "tag": "SESSION ADAPTER",
+            "pos": [430, 455],
+            "size": [245, 105],
+            "details": [
+              "会话读取 WorkflowRun、项目与其唯一 Character，再创建同一个 WorkflowController。",
+              "上传、三渲二、发布和错误订阅均通过会话暴露，页面不直连传输协议。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/pages/workflow-editor/runtime.ts",
+                "line": 33,
+                "label": "会话公开边界"
+              },
+              {
+                "path": "frontend/src/pages/workflow-editor/runtime.ts",
+                "line": 75,
+                "label": "读取上下文并装配"
+              }
+            ]
+          },
+          {
+            "id": "workflow-controller",
+            "kind": "core",
+            "shape": "controller",
+            "label": "WorkflowController",
+            "sublabel": "一实例 · 一条 WorkflowRun",
+            "tag": "ORCHESTRATION CORE",
+            "pos": [760, 350],
+            "size": [260, 165],
+            "details": [
+              "Quick Start 自动连续调用；Workflow Editor 等待用户逐步点击。Controller 不识别入口。",
+              "命令覆盖生成、确认、重做、方向级重试、审核、恢复与中断。",
+              "保存串行化；只有后端确认落库后才替换内存快照，避免页面假报成功。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/features/workflow-controller/controller.ts",
+                "line": 177,
+                "label": "双入口共享约定"
+              },
+              {
+                "path": "frontend/src/features/workflow-controller/controller.ts",
+                "line": 338,
+                "label": "Controller 状态与队列"
+              },
+              {
+                "path": "frontend/src/features/workflow-controller/controller.ts",
+                "line": 409,
+                "label": "持久化后再通知页面"
+              }
+            ]
+          },
+          {
+            "id": "workflow-run",
+            "kind": "core",
+            "shape": "workflow",
+            "label": "WorkflowRun.nodes",
+            "sublabel": "前端感知并推进 · 后端原样持久化",
+            "tag": "SINGLE SOURCE OF FLOW STATE",
+            "pos": [1090, 270],
+            "size": [600, 310],
+            "details": [
+              "节点通过 dependsOnNodeIds 保存直接依赖，边随节点一起落库。",
+              "角色母版通过后，每个 Action 展开首帧 → 路线 → 完整动画 → 审核四节点分支。",
+              "生成中、选择中等是节点 phase；重做覆盖结果并用 nodeId + taskId 拒绝迟到任务。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/entities/workflow-run/README.md",
+                "line": 7,
+                "label": "统一节点模型"
+              },
+              {
+                "path": "frontend/src/entities/workflow-run/README.md",
+                "line": 12,
+                "label": "动作分支"
+              },
+              {
+                "path": "frontend/src/entities/workflow-run/README.md",
+                "line": 20,
+                "label": "前后端状态边界"
+              }
+            ]
+          },
+          {
+            "id": "generation-apis",
+            "kind": "core",
+            "shape": "adapter",
+            "label": "Generation APIs",
+            "sublabel": "图片 · 首帧 · 动画 · 任务快照",
+            "tag": "AUTHENTICATED ADAPTER",
+            "pos": [760, 610],
+            "size": [230, 100],
+            "details": [
+              "把节点语义映射为 /generation/image、/first-frame 与 /action 请求。",
+              "候选数、方向、路线和任务预期都在前端适配器中显式校验。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/entities/generation/api.ts",
+                "line": 989,
+                "label": "完整动画请求"
+              },
+              {
+                "path": "frontend/src/entities/generation/api.ts",
+                "line": 1029,
+                "label": "动作首帧请求"
+              },
+              {
+                "path": "frontend/src/entities/generation/api.ts",
+                "line": 1071,
+                "label": "角色母版请求"
+              }
+            ]
+          },
+          {
+            "id": "sse-recovery",
+            "kind": "core",
+            "shape": "adapter",
+            "label": "SSE + Recovery",
+            "sublabel": "先订阅再查询 · 断线对账 · 轮询降级",
+            "tag": "FINALIZATION LOOP",
+            "pos": [1045, 610],
+            "size": [230, 100],
+            "details": [
+              "受保护 SSE 用 fetch 流携带 Authorization，不能使用原生 EventSource。",
+              "Controller 先订阅再查询任务快照，关闭查询与订阅之间的丢事件窗口。",
+              "刷新恢复时复用 WorkflowRun 中记录的 taskId，不盲目创建新任务。"
+            ],
+            "sources": [
+              { "path": "frontend/src/shared/api/stream.ts", "line": 187, "label": "鉴权 SSE" },
+              {
+                "path": "frontend/src/features/workflow-controller/controller.ts",
+                "line": 1761,
+                "label": "订阅、快照与结算"
+              },
+              {
+                "path": "frontend/src/features/workflow-controller/controller.ts",
+                "line": 1991,
+                "label": "刷新恢复"
+              }
+            ]
+          },
+          {
+            "id": "client-bake",
+            "kind": "core",
+            "shape": "adapter",
+            "label": "Client Bake",
+            "sublabel": "可选三渲二 · 浏览器 WebGL 出帧",
+            "tag": "GPU ON DEVICE",
+            "pos": [1330, 610],
+            "size": [230, 100],
+            "details": [
+              "完整动画任务需要浏览器出帧时，Controller 拉起本地 WebGL runner。",
+              "浏览器逐帧渲染并上传；帧数、空帧、脚线和成色最终仍由服务端把关。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/features/client-bake/index.ts",
+                "line": 1,
+                "label": "浏览器出帧边界"
+              },
+              {
+                "path": "frontend/src/features/client-bake/index.ts",
+                "line": 47,
+                "label": "逐帧渲染与交付"
+              },
+              {
+                "path": "frontend/src/features/workflow-controller/controller.ts",
+                "line": 1802,
+                "label": "Controller 挂起出帧"
+              }
+            ]
+          },
+          {
+            "id": "quickstart-publisher",
+            "kind": "caution",
+            "shape": "publisher",
+            "label": "Quick Start 发布适配",
+            "sublabel": "service 内组装 Action 并更新 Character",
+            "tag": "CURRENTLY SEPARATE",
+            "pos": [430, 760],
+            "size": [245, 95],
+            "details": [
+              "Quick Start 审核后在 service 内从完整动画结果组装 Action，并直接更新 Character。",
+              "这条发布投影与 Editor 的共享 Publisher 尚未完全合流；图中保留分叉，避免误称端到端统一。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/pages/quick-start/service.ts",
+                "line": 1293,
+                "label": "Quick Start 审核发布"
+              },
+              {
+                "path": "frontend/src/pages/quick-start/service.ts",
+                "line": 1320,
+                "label": "组装 Action"
+              },
+              {
+                "path": "frontend/src/pages/quick-start/service.ts",
+                "line": 1352,
+                "label": "写入 Character"
+              }
+            ]
+          },
+          {
+            "id": "editor-publisher",
+            "kind": "core",
+            "shape": "publisher",
+            "label": "Asset Publisher",
+            "sublabel": "CharacterAssetPublisher · Editor 幂等发布与对账回滚",
+            "tag": "SHARED PUBLISHER",
+            "pos": [430, 880],
+            "size": [245, 95],
+            "details": [
+              "Editor 会话把审核节点、完整动画任务和 Character 交给 Publisher。",
+              "Action ID 使用首帧节点 ID，发布成功但 WorkflowRun 保存失败时可安全重试。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/pages/workflow-editor/runtime.ts",
+                "line": 217,
+                "label": "Editor 发布命令"
+              },
+              {
+                "path": "frontend/src/features/export/index.ts",
+                "line": 29,
+                "label": "幂等发布约定"
+              }
+            ]
+          },
+          {
+            "id": "asset-tree",
+            "kind": "core",
+            "shape": "asset-tree",
+            "label": "Character 资产树",
+            "sublabel": "Character → Outfit → Action → Sequence → Frame",
+            "tag": "DELIVERY BOUNDARY",
+            "pos": [760, 785],
+            "size": [260, 165],
+            "details": [
+              "造型、动作、方向序列与逐帧时长属于同一份 character_data。",
+              "Outfit、Action、Frame 没有独立端点；更新时随 Character 整棵提交。",
+              "WorkflowRun 保留制作过程，Character 资产树提供产品消费与导出。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/entities/character/index.ts",
+                "line": 45,
+                "label": "Frame 与方向序列"
+              },
+              {
+                "path": "frontend/src/entities/character/index.ts",
+                "line": 96,
+                "label": "Outfit / Character 树"
+              },
+              {
+                "path": "frontend/src/entities/character/index.ts",
+                "line": 146,
+                "label": "整树 API 边界"
+              }
+            ]
+          },
+          {
+            "id": "asset-library",
+            "kind": "surface",
+            "shape": "surface",
+            "label": "资产库",
+            "sublabel": "项目下已发布角色索引",
+            "pos": [1110, 780],
+            "size": [200, 95],
+            "details": [
+              "按项目分页读取已发布 Character 摘要。",
+              "草稿不会伪装成可交付资产出现在库中。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/pages/asset-library/index.tsx",
+                "line": 14,
+                "label": "资产库页面"
+              },
+              {
+                "path": "frontend/src/pages/asset-library/index.tsx",
+                "line": 32,
+                "label": "已发布资产查询"
+              }
+            ]
+          },
+          {
+            "id": "character-detail",
+            "kind": "surface",
+            "shape": "surface-small",
+            "label": "角色详情",
+            "sublabel": "母版 · 造型 · 动作 · 像素精修",
+            "pos": [1110, 900],
+            "size": [200, 75],
+            "details": [
+              "读取完整 Character 树，组织造型、动作和精修入口。",
+              "可从当前造型构造导出模型，也可进入核验台。"
+            ],
+            "sources": [
+              { "path": "frontend/src/app/app.tsx", "line": 85, "label": "项目资产路由" },
+              {
+                "path": "frontend/src/pages/character-detail/index.tsx",
+                "line": 236,
+                "label": "角色导出入口"
+              }
+            ]
+          },
+          {
+            "id": "playtest",
+            "kind": "surface",
+            "shape": "surface",
+            "label": "Playtest",
+            "sublabel": "只读核验已发布动作",
+            "pos": [1360, 780],
+            "size": [180, 95],
+            "details": [
+              "只依赖 Character 公开类型与读取接口，不推进 Workflow、不修改资产。",
+              "按 Frame.index 与 durationMs 还原真实动作，并提供方向与动作键位核验。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/pages/playtest/README.md",
+                "line": 13,
+                "label": "只读页面边界"
+              },
+              { "path": "frontend/src/pages/playtest/README.md", "line": 19, "label": "运行时模型" }
+            ]
+          },
+          {
+            "id": "export-package",
+            "kind": "surface",
+            "shape": "surface",
+            "label": "Export Package",
+            "sublabel": "PNG · Atlas · GIF · Meta · ZIP · Cocos",
+            "pos": [1580, 780],
+            "size": [170, 95],
+            "details": [
+              "同一渐进装配器被 Quick Start、Editor、角色详情和 Playtest 组合点复用。",
+              "浏览器验证帧序、尺寸、透明通道与质量状态，再生成 Sprite Sheet、元数据和 ZIP。"
+            ],
+            "sources": [
+              {
+                "path": "frontend/src/features/export-package/README.md",
+                "line": 14,
+                "label": "导出数据流"
+              },
+              {
+                "path": "frontend/src/features/export-package/README.md",
+                "line": 23,
+                "label": "导出结构"
+              }
+            ]
+          },
+          {
+            "id": "agent-api",
+            "kind": "contract",
+            "shape": "endpoint",
+            "label": "/ai/chat",
+            "sublabel": "Agent 对话",
+            "pos": [250, 1065],
+            "size": [220, 65],
+            "details": ["AI SDK 协议经前端适配后进入同源 /ai/chat；模型密钥留在后端。"],
+            "sources": [
+              {
+                "path": "frontend/src/features/quick-start-agent/production.ts",
+                "line": 33,
+                "label": "路径改写"
+              }
+            ]
+          },
+          {
+            "id": "workflow-api",
+            "kind": "contract",
+            "shape": "endpoint",
+            "label": "/workflow-runs",
+            "sublabel": "CRUD · nodes JSON 持久化",
+            "pos": [600, 1065],
+            "size": [250, 65],
+            "details": ["后端保存 WorkflowRun.nodes；节点结构与推进规则仍由前端拥有。"],
+            "sources": [
+              {
+                "path": "frontend/src/entities/workflow-run/api.ts",
+                "line": 29,
+                "label": "WorkflowRun DTO"
+              }
+            ]
+          },
+          {
+            "id": "generation-api",
+            "kind": "contract",
+            "shape": "endpoint",
+            "label": "/generation/* · /tasks/*/events",
+            "sublabel": "任务创建 · 快照 · SSE 终态",
+            "pos": [930, 1065],
+            "size": [350, 65],
+            "details": ["任务在服务端运行；浏览器通过快照与 SSE 收回终态并完成流程闭环。"],
+            "sources": [
+              {
+                "path": "frontend/src/entities/generation/api.ts",
+                "line": 1093,
+                "label": "任务快照"
+              },
+              {
+                "path": "frontend/src/entities/generation/api.ts",
+                "line": 1120,
+                "label": "任务订阅"
+              }
+            ]
+          },
+          {
+            "id": "assets-api",
+            "kind": "contract",
+            "shape": "endpoint",
+            "label": "/projects · /characters",
+            "sublabel": "项目约束 · 完整资产树",
+            "pos": [1390, 1065],
+            "size": [280, 65],
+            "details": ["项目提供生成约束；Character 整树承载可消费、可核验、可导出的资产。"],
+            "sources": [
+              {
+                "path": "frontend/src/entities/character/index.ts",
+                "line": 146,
+                "label": "Character API"
+              }
+            ]
+          }
+        ],
+        "workflow_stages": [
+          { "id": "setup", "label": "角色设定", "short": "01" },
+          { "id": "template", "label": "角色母版", "short": "02" },
+          { "id": "first-frame", "label": "动作首帧", "short": "03" },
+          { "id": "method", "label": "生成路线", "short": "04" },
+          { "id": "animation", "label": "完整动画", "short": "05" },
+          { "id": "review", "label": "审核", "short": "06" }
+        ],
+        "asset_tree": [
+          { "id": "character", "label": "Character", "depth": 0 },
+          { "id": "outfit", "label": "Outfit", "depth": 1 },
+          { "id": "action", "label": "Action", "depth": 2 },
+          { "id": "sequence", "label": "Sequence", "depth": 3 },
+          { "id": "frame", "label": "Frame", "depth": 4 }
+        ],
+        "connections": [
+          {
+            "id": "quick-agent",
+            "from": "quick-start",
+            "to": "agent-runtime",
+            "label": "提案 / 授权",
+            "variant": "entry",
+            "route": [
+              [370, 338],
+              [430, 338]
+            ],
+            "label_pos": [400, 326]
+          },
+          {
+            "id": "editor-session-link",
+            "from": "workflow-editor",
+            "to": "editor-session",
+            "label": "用户命令",
+            "variant": "entry",
+            "route": [
+              [370, 508],
+              [430, 508]
+            ],
+            "label_pos": [400, 496]
+          },
+          {
+            "id": "agent-controller",
+            "from": "agent-runtime",
+            "to": "workflow-controller",
+            "label": "自动连续调用",
+            "variant": "entry",
+            "route": [
+              [675, 338],
+              [720, 338],
+              [720, 392],
+              [760, 392]
+            ],
+            "label_pos": [719, 325]
+          },
+          {
+            "id": "session-controller",
+            "from": "editor-session",
+            "to": "workflow-controller",
+            "label": "逐步调用",
+            "variant": "entry",
+            "route": [
+              [675, 508],
+              [720, 508],
+              [720, 474],
+              [760, 474]
+            ],
+            "label_pos": [718, 530]
+          },
+          {
+            "id": "controller-run",
+            "from": "workflow-controller",
+            "to": "workflow-run",
+            "label": "推进 / 保存",
+            "variant": "core",
+            "route": [
+              [1020, 432],
+              [1052, 432],
+              [1052, 402],
+              [1090, 402]
+            ],
+            "label_pos": [1052, 420]
+          },
+          {
+            "id": "controller-generation",
+            "from": "workflow-controller",
+            "to": "generation-apis",
+            "label": "创建 / 查询",
+            "variant": "core",
+            "route": [
+              [890, 515],
+              [890, 610]
+            ],
+            "label_pos": [933, 566]
+          },
+          {
+            "id": "generation-sse",
+            "from": "generation-apis",
+            "to": "sse-recovery",
+            "label": "任务身份",
+            "variant": "core",
+            "route": [
+              [990, 660],
+              [1045, 660]
+            ],
+            "label_pos": [1018, 648]
+          },
+          {
+            "id": "sse-controller",
+            "from": "sse-recovery",
+            "to": "workflow-controller",
+            "label": "终态收口",
+            "variant": "feedback",
+            "route": [
+              [1160, 610],
+              [1160, 565],
+              [980, 565],
+              [980, 515]
+            ],
+            "label_pos": [1068, 553]
+          },
+          {
+            "id": "sse-bake",
+            "from": "sse-recovery",
+            "to": "client-bake",
+            "label": "可选出帧",
+            "variant": "optional",
+            "route": [
+              [1275, 660],
+              [1330, 660]
+            ],
+            "label_pos": [1303, 648]
+          },
+          {
+            "id": "agent-quick-publish",
+            "from": "agent-runtime",
+            "to": "quickstart-publisher",
+            "label": "审核交付",
+            "variant": "caution",
+            "route": [
+              [552, 390],
+              [552, 760]
+            ],
+            "label_pos": [594, 732]
+          },
+          {
+            "id": "session-editor-publish",
+            "from": "editor-session",
+            "to": "editor-publisher",
+            "label": "审核交付",
+            "variant": "core",
+            "route": [
+              [552, 560],
+              [552, 880]
+            ],
+            "label_pos": [594, 865]
+          },
+          {
+            "id": "quick-assets",
+            "from": "quickstart-publisher",
+            "to": "asset-tree",
+            "label": "update",
+            "variant": "caution",
+            "route": [
+              [675, 808],
+              [720, 808],
+              [720, 826],
+              [760, 826]
+            ],
+            "label_pos": [716, 796]
+          },
+          {
+            "id": "editor-assets",
+            "from": "editor-publisher",
+            "to": "asset-tree",
+            "label": "publish",
+            "variant": "core",
+            "route": [
+              [675, 928],
+              [720, 928],
+              [720, 906],
+              [760, 906]
+            ],
+            "label_pos": [716, 948]
+          },
+          {
+            "id": "assets-library",
+            "from": "asset-tree",
+            "to": "asset-library",
+            "label": "已发布摘要",
+            "variant": "core",
+            "route": [
+              [1020, 826],
+              [1110, 826]
+            ],
+            "label_pos": [1065, 814]
+          },
+          {
+            "id": "library-detail",
+            "from": "asset-library",
+            "to": "character-detail",
+            "label": "完整资产",
+            "variant": "core",
+            "route": [
+              [1210, 875],
+              [1210, 900]
+            ],
+            "label_pos": [1250, 892]
+          },
+          {
+            "id": "assets-playtest",
+            "from": "asset-tree",
+            "to": "playtest",
+            "label": "只读核验",
+            "variant": "core",
+            "route": [
+              [1020, 850],
+              [1320, 850],
+              [1320, 828],
+              [1360, 828]
+            ],
+            "label_pos": [1320, 842]
+          },
+          {
+            "id": "assets-export",
+            "from": "asset-tree",
+            "to": "export-package",
+            "label": "渐进导出",
+            "variant": "core",
+            "route": [
+              [1020, 906],
+              [1535, 906],
+              [1535, 828],
+              [1580, 828]
+            ],
+            "label_pos": [1535, 893]
+          },
+          {
+            "id": "agent-contract",
+            "from": "agent-runtime",
+            "to": "agent-api",
+            "label": "Bearer",
+            "variant": "contract",
+            "route": [
+              [552, 390],
+              [552, 1030],
+              [360, 1030],
+              [360, 1065]
+            ],
+            "label_pos": [390, 1018]
+          },
+          {
+            "id": "run-contract",
+            "from": "workflow-run",
+            "to": "workflow-api",
+            "label": "JSON",
+            "variant": "contract",
+            "route": [
+              [1390, 580],
+              [1390, 1018],
+              [725, 1018],
+              [725, 1065]
+            ],
+            "label_pos": [760, 1006]
+          },
+          {
+            "id": "generation-contract",
+            "from": "generation-apis",
+            "to": "generation-api",
+            "label": "HTTP / SSE",
+            "variant": "contract",
+            "route": [
+              [875, 710],
+              [875, 1006],
+              [1105, 1006],
+              [1105, 1065]
+            ],
+            "label_pos": [1088, 994]
+          },
+          {
+            "id": "assets-contract",
+            "from": "asset-tree",
+            "to": "assets-api",
+            "label": "整树读写",
+            "variant": "contract",
+            "route": [
+              [890, 950],
+              [890, 1038],
+              [1530, 1038],
+              [1530, 1065]
+            ],
+            "label_pos": [1495, 1026]
+          }
+        ],
+        "truths": [
+          {
+            "number": "01",
+            "title": "双入口共享编排，不等于端到端完全统一",
+            "body": "Quick Start 与 Workflow Editor 共用 Controller 和 WorkflowRun；动作发布仍保留两条适配路径。"
+          },
+          {
+            "number": "02",
+            "title": "后端任务完成，不等于浏览器流程已经闭合",
+            "body": "SSE / 快照终态仍要由 Controller 结算并把节点变化持久化回 WorkflowRun。"
+          },
+          {
+            "number": "03",
+            "title": "交付的是资产，而不是一组图片",
+            "body": "最终被核验和导出的，是带造型、动作方向、帧序与时长的 Character 资产树。"
+          }
+        ]
+      }
+    </script>
+    <script>
+      ;(function () {
+        'use strict'
+        var data = JSON.parse(document.getElementById('architecture-data').textContent)
+        var svg = document.getElementById('windup-frontend-architecture')
+        var root = document.documentElement
+        var inspector = document.getElementById('inspector')
+        var nodeById = Object.fromEntries(
+          data.components.map(function (item) {
+            return [item.id, item]
+          }),
+        )
+        var zoom = 1
+        var activeView = 'overview'
+        var selectedId = null
+
+        function syncTheme() {
+          var theme = root.dataset.theme === 'dark' ? 'dark' : 'light'
+          svg.dataset.theme = theme
+          try {
+            localStorage.setItem('windup-architecture-theme', theme)
+          } catch (_) {}
+        }
+
+        function setTheme(theme) {
+          root.dataset.theme = theme
+          syncTheme()
+        }
+
+        function renderViewTabs() {
+          var tabs = document.getElementById('view-tabs')
+          data.meta.views.forEach(function (view, index) {
+            var button = document.createElement('button')
+            button.type = 'button'
+            button.className = 'view-button'
+            button.textContent = view.label
+            button.dataset.viewId = view.id
+            button.setAttribute('aria-pressed', index === 0 ? 'true' : 'false')
+            button.addEventListener('click', function () {
+              setView(view.id)
+            })
+            tabs.appendChild(button)
+          })
+        }
+
+        function setView(viewId) {
+          var view =
+            data.meta.views.find(function (item) {
+              return item.id === viewId
+            }) || data.meta.views[0]
+          activeView = view.id
+          var focus = new Set(
+            view.focus ||
+              data.components.map(function (item) {
+                return item.id
+              }),
+          )
+          svg.dataset.view = view.id
+          svg.querySelectorAll('[data-node-id]').forEach(function (node) {
+            node.dataset.viewDimmed = focus.has(node.dataset.nodeId) ? 'false' : 'true'
+          })
+          svg.querySelectorAll('[data-connection-id]').forEach(function (group) {
+            var visible = focus.has(group.dataset.from) && focus.has(group.dataset.to)
+            group.dataset.viewDimmed = visible ? 'false' : 'true'
+          })
+          document.querySelectorAll('.view-button').forEach(function (button) {
+            button.setAttribute(
+              'aria-pressed',
+              button.dataset.viewId === view.id ? 'true' : 'false',
+            )
+          })
+          document.getElementById('view-note').textContent = view.note
+          clearRelated()
+        }
+
+        function clearRelated() {
+          svg.querySelectorAll('[data-related]').forEach(function (item) {
+            item.removeAttribute('data-related')
+          })
+        }
+
+        function highlightRelated(id) {
+          clearRelated()
+          var selected = svg.querySelector('[data-node-id="' + CSS.escape(id) + '"]')
+          if (selected) selected.dataset.related = 'true'
+          svg.querySelectorAll('[data-connection-id]').forEach(function (connection) {
+            if (connection.dataset.from !== id && connection.dataset.to !== id) return
+            connection.dataset.related = 'true'
+            var peerId =
+              connection.dataset.from === id ? connection.dataset.to : connection.dataset.from
+            var peer = svg.querySelector('[data-node-id="' + CSS.escape(peerId) + '"]')
+            if (peer) peer.dataset.related = 'true'
+          })
+        }
+
+        function showInspector(id) {
+          var item = nodeById[id]
+          if (!item) return
+          selectedId = id
+          svg.querySelectorAll('[data-node-id]').forEach(function (node) {
+            node.dataset.selected = node.dataset.nodeId === id ? 'true' : 'false'
+          })
+          document.getElementById('inspector-tag').textContent = item.tag || item.kind.toUpperCase()
+          document.getElementById('inspector-title').textContent = item.label
+          document.getElementById('inspector-subtitle').textContent = item.sublabel || ''
+          var details = document.getElementById('inspector-details')
+          details.replaceChildren()
+          ;(item.details || []).forEach(function (detail) {
+            var li = document.createElement('li')
+            li.className = 'inspector-detail'
+            li.textContent = detail
+            details.appendChild(li)
+          })
+          var sources = document.getElementById('inspector-sources')
+          sources.replaceChildren()
+          ;(item.sources || []).forEach(function (source) {
+            var link = document.createElement('a')
+            link.className = 'source-link'
+            link.target = '_blank'
+            link.rel = 'noreferrer'
+            link.href =
+              data.meta.repository.url +
+              '/blob/' +
+              data.meta.repository.revision +
+              '/' +
+              source.path +
+              '#L' +
+              source.line
+            var label = document.createElement('span')
+            label.className = 'source-label'
+            label.textContent = source.label
+            var path = document.createElement('span')
+            path.className = 'source-path'
+            path.textContent = source.path + ':' + source.line
+            link.append(label, path)
+            sources.appendChild(link)
+          })
+          inspector.dataset.open = 'true'
+          highlightRelated(id)
+        }
+
+        function closeInspector() {
+          inspector.dataset.open = 'false'
+          selectedId = null
+          svg.querySelectorAll('[data-selected]').forEach(function (node) {
+            node.removeAttribute('data-selected')
+          })
+          clearRelated()
+        }
+
+        function setZoom(next) {
+          zoom = Math.max(0.65, Math.min(1.45, next))
+          document.getElementById('diagram-wrap').style.setProperty('--viewer-zoom', String(zoom))
+          document.getElementById('zoom-reset').textContent = Math.round(zoom * 100) + '%'
+        }
+
+        function cleanSvgClone() {
+          var clone = svg.cloneNode(true)
+          clone.dataset.theme = root.dataset.theme === 'dark' ? 'dark' : 'light'
+          clone.dataset.view = activeView
+          clone.removeAttribute('style')
+          clone
+            .querySelectorAll('[data-view-dimmed], [data-related], [data-selected]')
+            .forEach(function (item) {
+              item.removeAttribute('data-view-dimmed')
+              item.removeAttribute('data-related')
+              item.removeAttribute('data-selected')
+            })
+          return clone
+        }
+
+        function downloadBlob(blob, filename) {
+          var url = URL.createObjectURL(blob)
+          var link = document.createElement('a')
+          link.href = url
+          link.download = filename
+          link.click()
+          setTimeout(function () {
+            URL.revokeObjectURL(url)
+          }, 1000)
+        }
+
+        function exportSvg() {
+          var clone = cleanSvgClone()
+          var markup = new XMLSerializer().serializeToString(clone)
+          downloadBlob(
+            new Blob([markup], { type: 'image/svg+xml;charset=utf-8' }),
+            'windup-frontend-architecture.svg',
+          )
+        }
+
+        function exportPng() {
+          var clone = cleanSvgClone()
+          var markup = new XMLSerializer().serializeToString(clone)
+          var blob = new Blob([markup], { type: 'image/svg+xml;charset=utf-8' })
+          var url = URL.createObjectURL(blob)
+          var image = new Image()
+          image.onload = function () {
+            var scale = 2
+            var canvas = document.createElement('canvas')
+            canvas.width = data.meta.canvas[0] * scale
+            canvas.height = data.meta.canvas[1] * scale
+            var context = canvas.getContext('2d')
+            context.drawImage(image, 0, 0, canvas.width, canvas.height)
+            URL.revokeObjectURL(url)
+            canvas.toBlob(function (png) {
+              if (png) downloadBlob(png, 'windup-frontend-architecture.png')
+            }, 'image/png')
+          }
+          image.src = url
+        }
+
+        renderViewTabs()
+        syncTheme()
+        setView('overview')
+
+        svg.querySelectorAll('[data-node-id]').forEach(function (node) {
+          node.addEventListener('click', function () {
+            showInspector(node.dataset.nodeId)
+          })
+          node.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              showInspector(node.dataset.nodeId)
+            }
+          })
+          node.addEventListener('mouseenter', function () {
+            if (!selectedId) highlightRelated(node.dataset.nodeId)
+          })
+          node.addEventListener('mouseleave', function () {
+            if (!selectedId) clearRelated()
+          })
+        })
+
+        document.getElementById('inspector-close').addEventListener('click', closeInspector)
+        document.getElementById('theme-toggle').addEventListener('click', function () {
+          setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark')
+        })
+        document.getElementById('zoom-out').addEventListener('click', function () {
+          setZoom(zoom - 0.1)
+        })
+        document.getElementById('zoom-reset').addEventListener('click', function () {
+          setZoom(1)
+        })
+        document.getElementById('zoom-in').addEventListener('click', function () {
+          setZoom(zoom + 0.1)
+        })
+        document.getElementById('download-svg').addEventListener('click', exportSvg)
+        document.getElementById('download-png').addEventListener('click', exportPng)
+        window.addEventListener('keydown', function (event) {
+          if (
+            event.target instanceof HTMLInputElement ||
+            event.target instanceof HTMLTextAreaElement
+          )
+            return
+          if (event.key === 'Escape') closeInspector()
+          if (event.key.toLowerCase() === 't')
+            setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark')
+          if (event.key === '0') setZoom(1)
+          if (event.key === '+' || event.key === '=') setZoom(zoom + 0.1)
+          if (event.key === '-') setZoom(zoom - 0.1)
+          var index = Number(event.key) - 1
+          if (Number.isInteger(index) && data.meta.views[index]) setView(data.meta.views[index].id)
+        })
+      })()
+    </script>
+  </body>
+</html>

@@ -1,0 +1,903 @@
+{
+  "schema_version": 1,
+  "diagram_type": "frontend-architecture",
+  "meta": {
+    "title": "Windup 前端架构",
+    "subtitle": "双入口，一张节点图，一棵可交付资产树",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "canvas": [1800, 1200],
+    "repository": {
+      "url": "https://github.com/1024XEngineer/Windup",
+      "revision": "992dadf2aa91f4904c1e61c9621adb11dc0f68d3"
+    },
+    "views": [
+      {
+        "id": "overview",
+        "label": "全景",
+        "note": "从产品入口、浏览器编排、生成恢复走到资产发布与交付。"
+      },
+      {
+        "id": "convergence",
+        "label": "双入口合流",
+        "focus": [
+          "quick-start",
+          "agent-runtime",
+          "workflow-editor",
+          "editor-session",
+          "workflow-controller",
+          "workflow-run"
+        ],
+        "note": "Quick Start 自动连续调用；Workflow Editor 等待用户逐步操作。两者不维护第二套状态机。"
+      },
+      {
+        "id": "state",
+        "label": "状态闭环",
+        "focus": [
+          "workflow-controller",
+          "workflow-run",
+          "generation-apis",
+          "sse-recovery",
+          "client-bake",
+          "workflow-api",
+          "generation-api"
+        ],
+        "note": "任务由后端执行，浏览器订阅终态、对账并把节点变化写回 WorkflowRun。"
+      },
+      {
+        "id": "delivery",
+        "label": "资产交付",
+        "focus": [
+          "quickstart-publisher",
+          "editor-publisher",
+          "asset-tree",
+          "asset-library",
+          "character-detail",
+          "playtest",
+          "export-package",
+          "assets-api"
+        ],
+        "note": "已审核动作进入 Character 资产树，再被资产库、核验台和导出包消费。"
+      }
+    ]
+  },
+  "palette": {
+    "canvas": "#f3f2ec",
+    "surface": "#ffffff",
+    "ink": "#1d251f",
+    "muted": "#687169",
+    "line": "#cbd1ca",
+    "core": "#284331",
+    "core_soft": "#dce9df",
+    "entry": "#8a672a",
+    "entry_soft": "#f3e8cb",
+    "contract": "#2a5284",
+    "contract_soft": "#e4edf7",
+    "caution": "#6f3928",
+    "caution_soft": "#f4e8e1"
+  },
+  "boundaries": [
+    {
+      "id": "browser",
+      "label": "BROWSER · React + TypeScript",
+      "pos": [50, 175],
+      "size": [1700, 825],
+      "note": "路由、会话、工作流推进、SSE 收口、WebGL 出帧与浏览器导出都在此边界内。"
+    },
+    {
+      "id": "backend",
+      "label": "BACKEND CONTRACTS · FastAPI",
+      "pos": [50, 1030],
+      "size": [1700, 125],
+      "note": "前端只经公开 HTTP/SSE 合同访问任务、流程与资产；密钥与模型调用不进入浏览器。"
+    }
+  ],
+  "components": [
+    {
+      "id": "app-shell",
+      "kind": "platform",
+      "shape": "rail",
+      "label": "AppRoutes · ProtectedRoute · AuthSession",
+      "sublabel": "公开页 / 登录产品 / 项目工作区的外壳边界；shared/api 惰性读取 token 并处理 401 恢复",
+      "pos": [100, 205],
+      "size": [1580, 45],
+      "details": [
+        "路由表定义公开宣传页、受保护产品页与项目工作区，不由页面反向决定全局外壳。",
+        "AuthSession 持有访问令牌；shared/api 只注册读取函数和 401 恢复函数，不拥有登录状态。"
+      ],
+      "sources": [
+        { "path": "frontend/src/app/app.tsx", "line": 29, "label": "路由与外壳边界" },
+        {
+          "path": "frontend/src/features/auth-session/index.tsx",
+          "line": 202,
+          "label": "注册 token 与 401 恢复"
+        },
+        { "path": "frontend/src/shared/api/index.ts", "line": 41, "label": "共享 API 认证边界" }
+      ]
+    },
+    {
+      "id": "quick-start",
+      "kind": "entry",
+      "shape": "entry",
+      "label": "Quick Start",
+      "sublabel": "对话式入口 · 自动选择与连续推进",
+      "tag": "AI-GUIDED",
+      "pos": [100, 285],
+      "size": [270, 105],
+      "details": [
+        "用户用文字或参考媒体开始角色创作。",
+        "页面把 Agent 提案翻译为同一组 WorkflowController 命令，而不是维护独立流程模型。"
+      ],
+      "sources": [
+        { "path": "frontend/src/app/app.tsx", "line": 59, "label": "生产 Agent 装配" },
+        {
+          "path": "frontend/src/pages/quick-start/service.ts",
+          "line": 320,
+          "label": "创建共享 Controller"
+        }
+      ]
+    },
+    {
+      "id": "agent-runtime",
+      "kind": "entry",
+      "shape": "adapter",
+      "label": "Agent Runtime",
+      "sublabel": "Planner · 授权闸 · 自动推进",
+      "tag": "BROWSER SANDBOX",
+      "pos": [430, 285],
+      "size": [245, 105],
+      "details": [
+        "AI SDK 只负责协议，适配器补 Windup JWT 并接到 /ai/chat。",
+        "真正的生成授权与业务推进仍由浏览器里的 Agent Runtime 和 Controller 协作完成。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/features/quick-start-agent/production.ts",
+          "line": 84,
+          "label": "Agent HTTP 适配器"
+        },
+        {
+          "path": "frontend/src/features/quick-start-agent/production.ts",
+          "line": 143,
+          "label": "生产依赖装配"
+        },
+        {
+          "path": "frontend/src/pages/quick-start/service.ts",
+          "line": 775,
+          "label": "订阅并自动推进"
+        }
+      ]
+    },
+    {
+      "id": "workflow-editor",
+      "kind": "entry",
+      "shape": "entry",
+      "label": "Workflow Editor",
+      "sublabel": "节点画布 · 用户逐步生成、确认与审核",
+      "tag": "USER-DRIVEN",
+      "pos": [100, 455],
+      "size": [270, 105],
+      "details": [
+        "用户直接看见六类工作流节点与依赖边。",
+        "页面只消费 WorkflowEditorSession，不直接拼装 API 或另建状态机。"
+      ],
+      "sources": [
+        { "path": "frontend/src/app/app.tsx", "line": 81, "label": "编辑器路由" },
+        {
+          "path": "frontend/src/pages/workflow-editor/runtime.ts",
+          "line": 71,
+          "label": "真实编辑器会话"
+        }
+      ]
+    },
+    {
+      "id": "editor-session",
+      "kind": "entry",
+      "shape": "adapter",
+      "label": "Editor Session",
+      "sublabel": "Project / Character 上下文 · Controller 装配",
+      "tag": "SESSION ADAPTER",
+      "pos": [430, 455],
+      "size": [245, 105],
+      "details": [
+        "会话读取 WorkflowRun、项目与其唯一 Character，再创建同一个 WorkflowController。",
+        "上传、三渲二、发布和错误订阅均通过会话暴露，页面不直连传输协议。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/pages/workflow-editor/runtime.ts",
+          "line": 33,
+          "label": "会话公开边界"
+        },
+        {
+          "path": "frontend/src/pages/workflow-editor/runtime.ts",
+          "line": 75,
+          "label": "读取上下文并装配"
+        }
+      ]
+    },
+    {
+      "id": "workflow-controller",
+      "kind": "core",
+      "shape": "controller",
+      "label": "WorkflowController",
+      "sublabel": "一实例 · 一条 WorkflowRun",
+      "tag": "ORCHESTRATION CORE",
+      "pos": [760, 350],
+      "size": [260, 165],
+      "details": [
+        "Quick Start 自动连续调用；Workflow Editor 等待用户逐步点击。Controller 不识别入口。",
+        "命令覆盖生成、确认、重做、方向级重试、审核、恢复与中断。",
+        "保存串行化；只有后端确认落库后才替换内存快照，避免页面假报成功。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/features/workflow-controller/controller.ts",
+          "line": 177,
+          "label": "双入口共享约定"
+        },
+        {
+          "path": "frontend/src/features/workflow-controller/controller.ts",
+          "line": 338,
+          "label": "Controller 状态与队列"
+        },
+        {
+          "path": "frontend/src/features/workflow-controller/controller.ts",
+          "line": 409,
+          "label": "持久化后再通知页面"
+        }
+      ]
+    },
+    {
+      "id": "workflow-run",
+      "kind": "core",
+      "shape": "workflow",
+      "label": "WorkflowRun.nodes",
+      "sublabel": "前端感知并推进 · 后端原样持久化",
+      "tag": "SINGLE SOURCE OF FLOW STATE",
+      "pos": [1090, 270],
+      "size": [600, 310],
+      "details": [
+        "节点通过 dependsOnNodeIds 保存直接依赖，边随节点一起落库。",
+        "角色母版通过后，每个 Action 展开首帧 → 路线 → 完整动画 → 审核四节点分支。",
+        "生成中、选择中等是节点 phase；重做覆盖结果并用 nodeId + taskId 拒绝迟到任务。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/entities/workflow-run/README.md",
+          "line": 7,
+          "label": "统一节点模型"
+        },
+        { "path": "frontend/src/entities/workflow-run/README.md", "line": 12, "label": "动作分支" },
+        {
+          "path": "frontend/src/entities/workflow-run/README.md",
+          "line": 20,
+          "label": "前后端状态边界"
+        }
+      ]
+    },
+    {
+      "id": "generation-apis",
+      "kind": "core",
+      "shape": "adapter",
+      "label": "Generation APIs",
+      "sublabel": "图片 · 首帧 · 动画 · 任务快照",
+      "tag": "AUTHENTICATED ADAPTER",
+      "pos": [760, 610],
+      "size": [230, 100],
+      "details": [
+        "把节点语义映射为 /generation/image、/first-frame 与 /action 请求。",
+        "候选数、方向、路线和任务预期都在前端适配器中显式校验。"
+      ],
+      "sources": [
+        { "path": "frontend/src/entities/generation/api.ts", "line": 989, "label": "完整动画请求" },
+        {
+          "path": "frontend/src/entities/generation/api.ts",
+          "line": 1029,
+          "label": "动作首帧请求"
+        },
+        { "path": "frontend/src/entities/generation/api.ts", "line": 1071, "label": "角色母版请求" }
+      ]
+    },
+    {
+      "id": "sse-recovery",
+      "kind": "core",
+      "shape": "adapter",
+      "label": "SSE + Recovery",
+      "sublabel": "先订阅再查询 · 断线对账 · 轮询降级",
+      "tag": "FINALIZATION LOOP",
+      "pos": [1045, 610],
+      "size": [230, 100],
+      "details": [
+        "受保护 SSE 用 fetch 流携带 Authorization，不能使用原生 EventSource。",
+        "Controller 先订阅再查询任务快照，关闭查询与订阅之间的丢事件窗口。",
+        "刷新恢复时复用 WorkflowRun 中记录的 taskId，不盲目创建新任务。"
+      ],
+      "sources": [
+        { "path": "frontend/src/shared/api/stream.ts", "line": 187, "label": "鉴权 SSE" },
+        {
+          "path": "frontend/src/features/workflow-controller/controller.ts",
+          "line": 1761,
+          "label": "订阅、快照与结算"
+        },
+        {
+          "path": "frontend/src/features/workflow-controller/controller.ts",
+          "line": 1991,
+          "label": "刷新恢复"
+        }
+      ]
+    },
+    {
+      "id": "client-bake",
+      "kind": "core",
+      "shape": "adapter",
+      "label": "Client Bake",
+      "sublabel": "可选三渲二 · 浏览器 WebGL 出帧",
+      "tag": "GPU ON DEVICE",
+      "pos": [1330, 610],
+      "size": [230, 100],
+      "details": [
+        "完整动画任务需要浏览器出帧时，Controller 拉起本地 WebGL runner。",
+        "浏览器逐帧渲染并上传；帧数、空帧、脚线和成色最终仍由服务端把关。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/features/client-bake/index.ts",
+          "line": 1,
+          "label": "浏览器出帧边界"
+        },
+        {
+          "path": "frontend/src/features/client-bake/index.ts",
+          "line": 47,
+          "label": "逐帧渲染与交付"
+        },
+        {
+          "path": "frontend/src/features/workflow-controller/controller.ts",
+          "line": 1802,
+          "label": "Controller 挂起出帧"
+        }
+      ]
+    },
+    {
+      "id": "quickstart-publisher",
+      "kind": "caution",
+      "shape": "publisher",
+      "label": "Quick Start 发布适配",
+      "sublabel": "service 内组装 Action 并更新 Character",
+      "tag": "CURRENTLY SEPARATE",
+      "pos": [430, 760],
+      "size": [245, 95],
+      "details": [
+        "Quick Start 审核后在 service 内从完整动画结果组装 Action，并直接更新 Character。",
+        "这条发布投影与 Editor 的共享 Publisher 尚未完全合流；图中保留分叉，避免误称端到端统一。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/pages/quick-start/service.ts",
+          "line": 1293,
+          "label": "Quick Start 审核发布"
+        },
+        {
+          "path": "frontend/src/pages/quick-start/service.ts",
+          "line": 1320,
+          "label": "组装 Action"
+        },
+        {
+          "path": "frontend/src/pages/quick-start/service.ts",
+          "line": 1352,
+          "label": "写入 Character"
+        }
+      ]
+    },
+    {
+      "id": "editor-publisher",
+      "kind": "core",
+      "shape": "publisher",
+      "label": "Asset Publisher",
+      "sublabel": "CharacterAssetPublisher · Editor 幂等发布与对账回滚",
+      "tag": "SHARED PUBLISHER",
+      "pos": [430, 880],
+      "size": [245, 95],
+      "details": [
+        "Editor 会话把审核节点、完整动画任务和 Character 交给 Publisher。",
+        "Action ID 使用首帧节点 ID，发布成功但 WorkflowRun 保存失败时可安全重试。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/pages/workflow-editor/runtime.ts",
+          "line": 217,
+          "label": "Editor 发布命令"
+        },
+        { "path": "frontend/src/features/export/index.ts", "line": 29, "label": "幂等发布约定" }
+      ]
+    },
+    {
+      "id": "asset-tree",
+      "kind": "core",
+      "shape": "asset-tree",
+      "label": "Character 资产树",
+      "sublabel": "Character → Outfit → Action → Sequence → Frame",
+      "tag": "DELIVERY BOUNDARY",
+      "pos": [760, 785],
+      "size": [260, 165],
+      "details": [
+        "造型、动作、方向序列与逐帧时长属于同一份 character_data。",
+        "Outfit、Action、Frame 没有独立端点；更新时随 Character 整棵提交。",
+        "WorkflowRun 保留制作过程，Character 资产树提供产品消费与导出。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/entities/character/index.ts",
+          "line": 45,
+          "label": "Frame 与方向序列"
+        },
+        {
+          "path": "frontend/src/entities/character/index.ts",
+          "line": 96,
+          "label": "Outfit / Character 树"
+        },
+        {
+          "path": "frontend/src/entities/character/index.ts",
+          "line": 146,
+          "label": "整树 API 边界"
+        }
+      ]
+    },
+    {
+      "id": "asset-library",
+      "kind": "surface",
+      "shape": "surface",
+      "label": "资产库",
+      "sublabel": "项目下已发布角色索引",
+      "pos": [1110, 780],
+      "size": [200, 95],
+      "details": ["按项目分页读取已发布 Character 摘要。", "草稿不会伪装成可交付资产出现在库中。"],
+      "sources": [
+        { "path": "frontend/src/pages/asset-library/index.tsx", "line": 14, "label": "资产库页面" },
+        {
+          "path": "frontend/src/pages/asset-library/index.tsx",
+          "line": 32,
+          "label": "已发布资产查询"
+        }
+      ]
+    },
+    {
+      "id": "character-detail",
+      "kind": "surface",
+      "shape": "surface-small",
+      "label": "角色详情",
+      "sublabel": "母版 · 造型 · 动作 · 像素精修",
+      "pos": [1110, 900],
+      "size": [200, 75],
+      "details": [
+        "读取完整 Character 树，组织造型、动作和精修入口。",
+        "可从当前造型构造导出模型，也可进入核验台。"
+      ],
+      "sources": [
+        { "path": "frontend/src/app/app.tsx", "line": 85, "label": "项目资产路由" },
+        {
+          "path": "frontend/src/pages/character-detail/index.tsx",
+          "line": 236,
+          "label": "角色导出入口"
+        }
+      ]
+    },
+    {
+      "id": "playtest",
+      "kind": "surface",
+      "shape": "surface",
+      "label": "Playtest",
+      "sublabel": "只读核验已发布动作",
+      "pos": [1360, 780],
+      "size": [180, 95],
+      "details": [
+        "只依赖 Character 公开类型与读取接口，不推进 Workflow、不修改资产。",
+        "按 Frame.index 与 durationMs 还原真实动作，并提供方向与动作键位核验。"
+      ],
+      "sources": [
+        { "path": "frontend/src/pages/playtest/README.md", "line": 13, "label": "只读页面边界" },
+        { "path": "frontend/src/pages/playtest/README.md", "line": 19, "label": "运行时模型" }
+      ]
+    },
+    {
+      "id": "export-package",
+      "kind": "surface",
+      "shape": "surface",
+      "label": "Export Package",
+      "sublabel": "PNG · Atlas · GIF · Meta · ZIP · Cocos",
+      "pos": [1580, 780],
+      "size": [170, 95],
+      "details": [
+        "同一渐进装配器被 Quick Start、Editor、角色详情和 Playtest 组合点复用。",
+        "浏览器验证帧序、尺寸、透明通道与质量状态，再生成 Sprite Sheet、元数据和 ZIP。"
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/features/export-package/README.md",
+          "line": 14,
+          "label": "导出数据流"
+        },
+        {
+          "path": "frontend/src/features/export-package/README.md",
+          "line": 23,
+          "label": "导出结构"
+        }
+      ]
+    },
+    {
+      "id": "agent-api",
+      "kind": "contract",
+      "shape": "endpoint",
+      "label": "/ai/chat",
+      "sublabel": "Agent 对话",
+      "pos": [250, 1065],
+      "size": [220, 65],
+      "details": ["AI SDK 协议经前端适配后进入同源 /ai/chat；模型密钥留在后端。"],
+      "sources": [
+        {
+          "path": "frontend/src/features/quick-start-agent/production.ts",
+          "line": 33,
+          "label": "路径改写"
+        }
+      ]
+    },
+    {
+      "id": "workflow-api",
+      "kind": "contract",
+      "shape": "endpoint",
+      "label": "/workflow-runs",
+      "sublabel": "CRUD · nodes JSON 持久化",
+      "pos": [600, 1065],
+      "size": [250, 65],
+      "details": ["后端保存 WorkflowRun.nodes；节点结构与推进规则仍由前端拥有。"],
+      "sources": [
+        {
+          "path": "frontend/src/entities/workflow-run/api.ts",
+          "line": 29,
+          "label": "WorkflowRun DTO"
+        }
+      ]
+    },
+    {
+      "id": "generation-api",
+      "kind": "contract",
+      "shape": "endpoint",
+      "label": "/generation/* · /tasks/*/events",
+      "sublabel": "任务创建 · 快照 · SSE 终态",
+      "pos": [930, 1065],
+      "size": [350, 65],
+      "details": ["任务在服务端运行；浏览器通过快照与 SSE 收回终态并完成流程闭环。"],
+      "sources": [
+        { "path": "frontend/src/entities/generation/api.ts", "line": 1093, "label": "任务快照" },
+        { "path": "frontend/src/entities/generation/api.ts", "line": 1120, "label": "任务订阅" }
+      ]
+    },
+    {
+      "id": "assets-api",
+      "kind": "contract",
+      "shape": "endpoint",
+      "label": "/projects · /characters",
+      "sublabel": "项目约束 · 完整资产树",
+      "pos": [1390, 1065],
+      "size": [280, 65],
+      "details": ["项目提供生成约束；Character 整树承载可消费、可核验、可导出的资产。"],
+      "sources": [
+        {
+          "path": "frontend/src/entities/character/index.ts",
+          "line": 146,
+          "label": "Character API"
+        }
+      ]
+    }
+  ],
+  "workflow_stages": [
+    { "id": "setup", "label": "角色设定", "short": "01" },
+    { "id": "template", "label": "角色母版", "short": "02" },
+    { "id": "first-frame", "label": "动作首帧", "short": "03" },
+    { "id": "method", "label": "生成路线", "short": "04" },
+    { "id": "animation", "label": "完整动画", "short": "05" },
+    { "id": "review", "label": "审核", "short": "06" }
+  ],
+  "asset_tree": [
+    { "id": "character", "label": "Character", "depth": 0 },
+    { "id": "outfit", "label": "Outfit", "depth": 1 },
+    { "id": "action", "label": "Action", "depth": 2 },
+    { "id": "sequence", "label": "Sequence", "depth": 3 },
+    { "id": "frame", "label": "Frame", "depth": 4 }
+  ],
+  "connections": [
+    {
+      "id": "quick-agent",
+      "from": "quick-start",
+      "to": "agent-runtime",
+      "label": "提案 / 授权",
+      "variant": "entry",
+      "route": [
+        [370, 338],
+        [430, 338]
+      ],
+      "label_pos": [400, 326]
+    },
+    {
+      "id": "editor-session-link",
+      "from": "workflow-editor",
+      "to": "editor-session",
+      "label": "用户命令",
+      "variant": "entry",
+      "route": [
+        [370, 508],
+        [430, 508]
+      ],
+      "label_pos": [400, 496]
+    },
+    {
+      "id": "agent-controller",
+      "from": "agent-runtime",
+      "to": "workflow-controller",
+      "label": "自动连续调用",
+      "variant": "entry",
+      "route": [
+        [675, 338],
+        [720, 338],
+        [720, 392],
+        [760, 392]
+      ],
+      "label_pos": [719, 325]
+    },
+    {
+      "id": "session-controller",
+      "from": "editor-session",
+      "to": "workflow-controller",
+      "label": "逐步调用",
+      "variant": "entry",
+      "route": [
+        [675, 508],
+        [720, 508],
+        [720, 474],
+        [760, 474]
+      ],
+      "label_pos": [718, 530]
+    },
+    {
+      "id": "controller-run",
+      "from": "workflow-controller",
+      "to": "workflow-run",
+      "label": "推进 / 保存",
+      "variant": "core",
+      "route": [
+        [1020, 432],
+        [1052, 432],
+        [1052, 402],
+        [1090, 402]
+      ],
+      "label_pos": [1052, 420]
+    },
+    {
+      "id": "controller-generation",
+      "from": "workflow-controller",
+      "to": "generation-apis",
+      "label": "创建 / 查询",
+      "variant": "core",
+      "route": [
+        [890, 515],
+        [890, 610]
+      ],
+      "label_pos": [933, 566]
+    },
+    {
+      "id": "generation-sse",
+      "from": "generation-apis",
+      "to": "sse-recovery",
+      "label": "任务身份",
+      "variant": "core",
+      "route": [
+        [990, 660],
+        [1045, 660]
+      ],
+      "label_pos": [1018, 648]
+    },
+    {
+      "id": "sse-controller",
+      "from": "sse-recovery",
+      "to": "workflow-controller",
+      "label": "终态收口",
+      "variant": "feedback",
+      "route": [
+        [1160, 610],
+        [1160, 565],
+        [980, 565],
+        [980, 515]
+      ],
+      "label_pos": [1068, 553]
+    },
+    {
+      "id": "sse-bake",
+      "from": "sse-recovery",
+      "to": "client-bake",
+      "label": "可选出帧",
+      "variant": "optional",
+      "route": [
+        [1275, 660],
+        [1330, 660]
+      ],
+      "label_pos": [1303, 648]
+    },
+    {
+      "id": "agent-quick-publish",
+      "from": "agent-runtime",
+      "to": "quickstart-publisher",
+      "label": "审核交付",
+      "variant": "caution",
+      "route": [
+        [552, 390],
+        [552, 760]
+      ],
+      "label_pos": [594, 732]
+    },
+    {
+      "id": "session-editor-publish",
+      "from": "editor-session",
+      "to": "editor-publisher",
+      "label": "审核交付",
+      "variant": "core",
+      "route": [
+        [552, 560],
+        [552, 880]
+      ],
+      "label_pos": [594, 865]
+    },
+    {
+      "id": "quick-assets",
+      "from": "quickstart-publisher",
+      "to": "asset-tree",
+      "label": "update",
+      "variant": "caution",
+      "route": [
+        [675, 808],
+        [720, 808],
+        [720, 826],
+        [760, 826]
+      ],
+      "label_pos": [716, 796]
+    },
+    {
+      "id": "editor-assets",
+      "from": "editor-publisher",
+      "to": "asset-tree",
+      "label": "publish",
+      "variant": "core",
+      "route": [
+        [675, 928],
+        [720, 928],
+        [720, 906],
+        [760, 906]
+      ],
+      "label_pos": [716, 948]
+    },
+    {
+      "id": "assets-library",
+      "from": "asset-tree",
+      "to": "asset-library",
+      "label": "已发布摘要",
+      "variant": "core",
+      "route": [
+        [1020, 826],
+        [1110, 826]
+      ],
+      "label_pos": [1065, 814]
+    },
+    {
+      "id": "library-detail",
+      "from": "asset-library",
+      "to": "character-detail",
+      "label": "完整资产",
+      "variant": "core",
+      "route": [
+        [1210, 875],
+        [1210, 900]
+      ],
+      "label_pos": [1250, 892]
+    },
+    {
+      "id": "assets-playtest",
+      "from": "asset-tree",
+      "to": "playtest",
+      "label": "只读核验",
+      "variant": "core",
+      "route": [
+        [1020, 850],
+        [1320, 850],
+        [1320, 828],
+        [1360, 828]
+      ],
+      "label_pos": [1320, 842]
+    },
+    {
+      "id": "assets-export",
+      "from": "asset-tree",
+      "to": "export-package",
+      "label": "渐进导出",
+      "variant": "core",
+      "route": [
+        [1020, 906],
+        [1535, 906],
+        [1535, 828],
+        [1580, 828]
+      ],
+      "label_pos": [1535, 893]
+    },
+    {
+      "id": "agent-contract",
+      "from": "agent-runtime",
+      "to": "agent-api",
+      "label": "Bearer",
+      "variant": "contract",
+      "route": [
+        [552, 390],
+        [552, 1030],
+        [360, 1030],
+        [360, 1065]
+      ],
+      "label_pos": [390, 1018]
+    },
+    {
+      "id": "run-contract",
+      "from": "workflow-run",
+      "to": "workflow-api",
+      "label": "JSON",
+      "variant": "contract",
+      "route": [
+        [1390, 580],
+        [1390, 1018],
+        [725, 1018],
+        [725, 1065]
+      ],
+      "label_pos": [760, 1006]
+    },
+    {
+      "id": "generation-contract",
+      "from": "generation-apis",
+      "to": "generation-api",
+      "label": "HTTP / SSE",
+      "variant": "contract",
+      "route": [
+        [875, 710],
+        [875, 1006],
+        [1105, 1006],
+        [1105, 1065]
+      ],
+      "label_pos": [1088, 994]
+    },
+    {
+      "id": "assets-contract",
+      "from": "asset-tree",
+      "to": "assets-api",
+      "label": "整树读写",
+      "variant": "contract",
+      "route": [
+        [890, 950],
+        [890, 1038],
+        [1530, 1038],
+        [1530, 1065]
+      ],
+      "label_pos": [1495, 1026]
+    }
+  ],
+  "truths": [
+    {
+      "number": "01",
+      "title": "双入口共享编排，不等于端到端完全统一",
+      "body": "Quick Start 与 Workflow Editor 共用 Controller 和 WorkflowRun；动作发布仍保留两条适配路径。"
+    },
+    {
+      "number": "02",
+      "title": "后端任务完成，不等于浏览器流程已经闭合",
+      "body": "SSE / 快照终态仍要由 Controller 结算并把节点变化持久化回 WorkflowRun。"
+    },
+    {
+      "number": "03",
+      "title": "交付的是资产，而不是一组图片",
+      "body": "最终被核验和导出的，是带造型、动作方向、帧序与时长的 Character 资产树。"
+    }
+  ]
+}
