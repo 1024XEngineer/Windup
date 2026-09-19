@@ -696,6 +696,25 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('还没写描述也能先把参考图存下来', async () => {
+    // 用户常常先传图再想文案。在这里拒空的话,上传成功了却因为描述为空而回写失败,
+    // 图就丢了 —— 而界面上参考图那栏标的是「选填」。真正必填的是提交生成那一刻,
+    // 那道闸在生成按钮上。
+    const { controller } = createController()
+
+    await controller.updateCharacterSetup('setup-1', {
+      prompt: '',
+      referenceMedia: ['https://img/my-own-character.png' as never],
+    })
+
+    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+      input: {
+        prompt: '',
+        referenceMedia: ['https://img/my-own-character.png'],
+      },
+    })
+  })
+
   it('接受上传母版时完成角色设定和母版节点', async () => {
     const { controller } = createController()
 
