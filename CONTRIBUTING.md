@@ -52,7 +52,7 @@ git checkout -b <分支名>
 
 - Tag 统一使用 `vX.Y.Z`;每个 Milestone 结束发一次 Release,描述列清本轮交付。
 - 生产部署必须先发版本:打 Tag → 创建 Release(写清变更内容)→ 部署。**任何部署只认 Release。**
-- 生产部署暂为手动,由发布人唯一执行;CD 自动化另立 Issue 跟进。
+- 正式 Release 创建后,Version 工作流自动部署该 tag 对应的提交到生产,并检查服务健康和线上版本。普通 main 更新不部署;配置和失败重试见 [生产部署](docs/production-deployment.md)。
 
 **怎么发一版**:把根目录 `VERSION` 改成新版本号,单独提一个 PR。合入且 Backend CI
 通过后,自动打 `v{VERSION}` 并创建 Release,notes 由上一个 tag 到本次提交的 commit
