@@ -23,7 +23,7 @@ from windup_framework.gateway.routes import (
     config_for_route,
     key_circuit_id,
     lookup_adapter,
-    routes_from_settings,
+    pool_routes,
 )
 from windup_framework.gateway.trace import AttemptDetail, AttemptTrace, emit
 from windup_framework.gateway.sequencer import AttemptSequencer
@@ -182,8 +182,10 @@ class ChatGateway:
         self._adapter = adapter
         self._circuit = circuit
         self._settings = settings
-        self._routes = routes_from_settings(settings, route_group=Scene.CHAT.value)
         self._route_adapters = dict(route_adapters or {})
+
+    def _pool_routes(self) -> tuple[GatewayRoute, ...]:
+        return pool_routes(self._settings, route_group=Scene.CHAT.value)
 
     def _adapter_for(self, route: GatewayRoute):
         return lookup_adapter(self._route_adapters, route, self._adapter)
@@ -236,6 +238,7 @@ class ChatGateway:
         last_http_status: int | None = None
         seq = AttemptSequencer()
         budget = AttemptBudget()
+        routes = self._pool_routes()
 
         def total_ms() -> int:
             return int((time.monotonic() - started) * 1000)
@@ -252,7 +255,7 @@ class ChatGateway:
                     scene=Scene.CHAT,
                     model=models[0],
                     family=Family.CHAT_COMPLETIONS.value,
-                    route=self._routes[0],
+                    route=routes[0],
                     attempt_index=seq.next_index(),
                     retry_count=0,
                     route_reason="skip_circuit_open",
@@ -269,15 +272,15 @@ class ChatGateway:
             )
             fail(None)
 
-        for route_index, route in enumerate(self._routes):
+        for route_index, route in enumerate(routes):
             if self._circuit.is_open("base_url:" + route.base_url_id):
-                if route_index + 1 < len(self._routes):
+                if route_index + 1 < len(routes):
                     fallback_used = True
                     route_reason_override = "base_url_unreached"
                     continue
                 fail(last_http_status)
             if self._circuit.is_open(key_circuit_id(route)):
-                if route_index + 1 < len(self._routes):
+                if route_index + 1 < len(routes):
                     fallback_used = True
                     route_reason_override = "key_rate_limit"
                     continue
@@ -385,7 +388,7 @@ class ChatGateway:
                         retry_count=retry_count,
                         has_job_id=False,
                     )
-                    has_next_route = route_index + 1 < len(self._routes)
+                    has_next_route = route_index + 1 < len(routes)
                     if step is NextStep.FAIL:
                         tier_step = budget.tier_b_escalation(
                             error_type,
@@ -453,7 +456,7 @@ class ChatGateway:
                         break
                     if step is NextStep.FALLBACK_KEY:
                         if has_next_route:
-                            nxt = self._routes[route_index + 1]
+                            nxt = routes[route_index + 1]
                             time.sleep(
                                 rate_limit_wait_s(
                                     retry_count=retry_count,
@@ -505,7 +508,8 @@ class ChatGateway:
                 f"chat gateway failed request_id={request_id} http_status=None"
             )
         last_http_status: int | None = None
-        for route_index, route in enumerate(self._routes):
+        routes = self._pool_routes()
+        for route_index, route in enumerate(routes):
             if self._circuit.is_open("base_url:" + route.base_url_id):
                 continue
             if self._circuit.is_open(key_circuit_id(route)):
@@ -534,7 +538,7 @@ class ChatGateway:
                 break
             else:
                 return
-            if route_index + 1 >= len(self._routes):
+            if route_index + 1 >= len(routes):
                 break
         raise RuntimeError(
             f"chat gateway failed request_id={request_id} http_status={last_http_status}"
@@ -554,7 +558,7 @@ def build_chat_gateway(config=None, *, adapter=None, circuit=None, **client_kwar
     cfg: AIProviderSettings = config or default_settings
     route_adapters = None
     if adapter is None:
-        routes = routes_from_settings(cfg, route_group=Scene.CHAT.value)
+        routes = pool_routes(cfg, route_group=Scene.CHAT.value)
         route_adapters = {
             route.route_id: LangChainChatAdapter(config_for_route(cfg, route), **client_kwargs)
             for route in routes

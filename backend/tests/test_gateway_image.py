@@ -182,7 +182,9 @@ def test_429_switches_key_on_same_base_url_before_model(monkeypatch, caplog):
     assert line["route_reason"] == "key_rate_limit"
     assert line["route_layer"] == "key"
     assert line["base_url_id"] == "primary"
-    assert line["api_key_id"].endswith("key1")
+    from windup_framework.gateway.pool_ids import credential_id
+
+    assert line["api_key_id"] == credential_id("primary", "key-b")
 
 
 def test_429_exhausted_keys_switches_backup_entry(monkeypatch, caplog):
