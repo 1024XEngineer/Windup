@@ -2,7 +2,7 @@ import { WindupMark } from '@/shared/ui/windup-mark'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
-import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.png'
+import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.webp'
 import { quotaApis as defaultQuotaApis } from '@/entities'
 import type { QuotaApis } from '@/entities'
 import { readActiveRun, subscribeActiveRun } from '@/features/active-run'

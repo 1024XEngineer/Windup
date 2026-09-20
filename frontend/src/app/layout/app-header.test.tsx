@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import type { AuthTokens, CreditAccount, QuotaApis, UserApis } from '@/entities'
 import { forgetActiveRun, rememberActiveRun } from '@/features/active-run'
 import { AuthSessionProvider } from '@/features/auth-session'
-import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.png'
+import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.webp'
 import { AppHeader } from './app-header'
 
 const user = {

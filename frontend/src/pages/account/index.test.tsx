@@ -7,7 +7,7 @@ import { quotaApis } from '@/entities'
 import type { AuthTokens, User, UserApis } from '@/entities'
 import { AuthSessionProvider } from '@/features/auth-session'
 import { AppRoutes } from '@/app/app'
-import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.png'
+import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.webp'
 
 const user: User = {
   id: '7',

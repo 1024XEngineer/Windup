@@ -12,7 +12,7 @@ import {
 import { useSearchParams } from 'react-router'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
-import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.png'
+import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.webp'
 import { quotaApis, type CreditRedemptionResult, type User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 import {
