@@ -7,6 +7,7 @@ import { quotaApis } from '@/entities'
 import type { AuthTokens, User, UserApis } from '@/entities'
 import { AuthSessionProvider } from '@/features/auth-session'
 import { AppRoutes } from '@/app/app'
+import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.webp'
 
 const user: User = {
   id: '7',
@@ -139,6 +140,9 @@ describe('AccountPage', () => {
     expect(screen.getByLabelText('昵称').getAttribute('placeholder')).toBe('输入昵称')
     expect(screen.getByTestId('account-profile-default-avatar').getAttribute('aria-hidden')).toBe(
       'true',
+    )
+    expect(screen.getByTestId('account-profile-default-avatar').getAttribute('src')).toBe(
+      defaultAccountAvatar,
     )
     expect(screen.queryByLabelText('邮箱验证码')).toBeNull()
 

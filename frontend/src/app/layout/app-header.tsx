@@ -2,6 +2,7 @@ import { WindupMark } from '@/shared/ui/windup-mark'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
+import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.webp'
 import { quotaApis as defaultQuotaApis } from '@/entities'
 import type { QuotaApis } from '@/entities'
 import { readActiveRun, subscribeActiveRun } from '@/features/active-run'
@@ -432,11 +433,13 @@ export function AppHeader({
                     accountMenu.expanded ? 'scale-110' : 'scale-100'
                   }`}
                 >
-                  <WindupMark
+                  <img
                     data-testid="default-account-avatar"
-
+                    src={defaultAccountAvatar}
+                    alt=""
                     aria-hidden="true"
                     className="h-5 w-5 object-contain"
+                    style={{ imageRendering: 'pixelated' }}
                   />
                 </span>
                 <span className="hidden truncate sm:inline">
