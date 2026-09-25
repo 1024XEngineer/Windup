@@ -2,10 +2,11 @@ name: Version
 
 # 版本的完整生命周期在这一个文件里:检查 VERSION 变更 → 自动 tag 与 Release → 部署。
 #
-# 两个 job 而不是一个,因为两件事的触发时机不同:
+# 三个 job 的触发时机不同:
 #   gate    在 PR 上跑。VERSION 非法或回退要在合并前就红 —— 合进 main 之后才炸的话,
 #           坏的是一次已经在 main 上的提交,而部署只认 Release。
 #   release 等**全部必需 CI**都绿之后跑。直接挂 push 会在测试未过时就发版(#334 第四节)。
+#   deploy 只接 release 确认的正式版本,不随普通 main 更新部署。
 on:
   pull_request:
   # 列两条 workflow 时是「任一完成即触发」而不是「全部完成」,所以先到的那条触发进来时
@@ -46,6 +47,7 @@ jobs:
         run: |
           python -m pip install --quiet pytest==8.3.4
           python -m pytest -q tests/test_version_gate.py
+          python -m unittest discover -s tests -p test_release_deploy.py
 
       - name: 校验 VERSION
         # 比对的是**基点上的** VERSION:单调性约束的是「改 VERSION 这个动作」。
@@ -64,9 +66,16 @@ jobs:
   release:
     # workflow_run 在 CI 失败时同样会触发,故必须自己判 conclusion。
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.repository == '1024XEngineer/Windup' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion == 'success'))
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
+      sha: ${{ steps.target.outputs.sha }}
     permissions:
       contents: write
       actions: read      # 要读同一提交上其它 workflow 的结论
@@ -160,6 +169,73 @@ jobs:
           fi
           gh release create "$NEXT" --title "$NEXT" --notes-file notes.md
 
+      - name: 确认本次部署的正式 Release
+        id: target
+        if: steps.ci.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # 同一个 Release 的失败部署可重跑; VERSION 未变的后续提交不会部署。
+        run: python3 scripts/release_deploy.py target >> "$GITHUB_OUTPUT"
+
   # ── 3. CD ────────────────────────────────────────────────────────────────
-  # 部署按 #653 单独处理:它需要 Environment Secrets 与 required reviewer,且本仓
-  # 当前没有任何部署 workflow。接进来的形态是本文件再加一个 needs: release 的 job。
+  # 接在同一工作流中:GITHUB_TOKEN 创建 Release 不会触发新的 release 工作流。
+  deploy:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    environment:
+      name: Production
+      url: https://windup.xin
+    concurrency:
+      group: windup-production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
+
+      - name: Install SSH client
+        run: sudo apt-get update -qq && sudo apt-get install -y sshpass
+
+      - name: Deploy Release
+        env:
+          DEPLOY_HOST: ${{ secrets.WINDUP_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.WINDUP_DEPLOY_USER }}
+          SSHPASS: ${{ secrets.WINDUP_DEPLOY_PASSWORD }}
+          KNOWN_HOSTS: ${{ secrets.WINDUP_DEPLOY_KNOWN_HOSTS }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+          RELEASE_SHA: ${{ needs.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?Missing WINDUP_DEPLOY_HOST}"
+          : "${DEPLOY_USER:?Missing WINDUP_DEPLOY_USER}"
+          : "${SSHPASS:?Missing WINDUP_DEPLOY_PASSWORD}"
+          : "${KNOWN_HOSTS:?Missing WINDUP_DEPLOY_KNOWN_HOSTS}"
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          umask 077
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/windup-known-hosts"
+          sshpass -e ssh -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/windup-known-hosts" \
+            -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd /root/workspace/Windup && python3 - deploy '$RELEASE_TAG' '$RELEASE_SHA'" \
+            < scripts/release_deploy.py
+
+      - name: Verify public service
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+          RELEASE_SHA: ${{ needs.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --max-time 15 \
+            "https://windup.xin/api/health?release=$RELEASE_SHA"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --max-time 15 \
+            "https://windup.xin/release.json?release=$RELEASE_SHA" \
+            | jq -e --arg tag "$RELEASE_TAG" --arg sha "$RELEASE_SHA" \
+              '.tag == $tag and .sha == $sha'
