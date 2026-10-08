@@ -18,7 +18,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,8 @@ from windup_app.server.quota.interface import QuotaService
 from windup_app.server.quota.model import (
     CreditAccount,
     CreditAccountView,
+    CreditBatch,
+    CreditFreezeAlloc,
     CreditRedemptionCode,
     CreditTransaction,
     CreditTransactionView,
@@ -174,6 +176,27 @@ class SqlAlchemyQuotaService(QuotaService):
             raise BizException("积分账户不存在", code=BizCode.NOT_FOUND)
         return account
 
+    def _get_or_create_account_for_update(
+        self, session: Session, user_id: int
+    ) -> CreditAccount:
+        """SELECT ... FOR UPDATE 锁定账户行，不存在则创建。"""
+        account = session.scalar(
+            select(CreditAccount)
+            .where(CreditAccount.user_id == user_id)
+            .with_for_update()
+        )
+        if account is None:
+            account = CreditAccount(
+                user_id=user_id,
+                balance=0,
+                frozen=0,
+                total_earned=0,
+                total_spent=0,
+            )
+            session.add(account)
+            session.flush()
+        return account
+
     def _write_txn(
         self,
         session: Session,
@@ -222,6 +245,67 @@ class SqlAlchemyQuotaService(QuotaService):
 
         account.balance -= amount
         account.frozen += amount
+        session.flush()
+
+        # 批次扣减：SUBSCRIPTION 来源优先 -> expires_at 升序（快过期的先用，nulls last） -> create_at 升序 (FIFO)
+        now = _now()
+        batches = session.scalars(
+            select(CreditBatch)
+            .where(
+                CreditBatch.user_id == user_id,
+                CreditBatch.remaining > 0,
+                or_(CreditBatch.expires_at.is_(None), CreditBatch.expires_at > now),
+            )
+            .order_by(
+                case((CreditBatch.source_type == int(CreditReason.SUBSCRIPTION), 0), else_=1),
+                case((CreditBatch.expires_at.is_(None), 1), else_=0),
+                CreditBatch.expires_at.asc(),
+                CreditBatch.create_at.asc(),
+                CreditBatch.id.asc(),
+            )
+            .with_for_update()
+        ).all()
+
+        remaining_to_reserve = amount
+        for batch in batches:
+            if remaining_to_reserve <= 0:
+                break
+            deduct = min(batch.remaining, remaining_to_reserve)
+            batch.remaining -= deduct
+            batch.frozen += deduct
+            batch.is_exhausted = 1 if (batch.remaining == 0 and batch.frozen == 0) else 0
+            remaining_to_reserve -= deduct
+
+            alloc = CreditFreezeAlloc(
+                freeze_ref=ref_id,
+                batch_id=batch.id,
+                amount=deduct,
+                status=1,  # 1=FROZEN
+            )
+            session.add(alloc)
+
+        # 兼容旧数据/测试环境未预置 batch 的情况
+        if remaining_to_reserve > 0:
+            legacy_batch = CreditBatch(
+                user_id=user_id,
+                source_type=int(CreditReason.REGISTER_GIFT),
+                source_ref="legacy_balance",
+                total=remaining_to_reserve,
+                remaining=0,
+                frozen=remaining_to_reserve,
+                is_exhausted=0,
+            )
+            session.add(legacy_batch)
+            session.flush()
+
+            alloc = CreditFreezeAlloc(
+                freeze_ref=ref_id,
+                batch_id=legacy_batch.id,
+                amount=remaining_to_reserve,
+                status=1,
+            )
+            session.add(alloc)
+
         session.flush()
 
         self._write_txn(
@@ -275,6 +359,39 @@ class SqlAlchemyQuotaService(QuotaService):
         refund = frozen_amount - actual_amount
         if refund > 0:
             account.balance += refund
+
+        # 批次结算：查找 freeze_ref == ref_id and status == 1
+        allocs = session.scalars(
+            select(CreditFreezeAlloc)
+            .where(
+                CreditFreezeAlloc.freeze_ref == ref_id,
+                CreditFreezeAlloc.status == 1,
+            )
+            .order_by(CreditFreezeAlloc.id.asc())
+            .with_for_update()
+        ).all()
+
+        remaining_actual = actual_amount
+        for alloc in allocs:
+            batch = session.scalar(
+                select(CreditBatch)
+                .where(CreditBatch.id == alloc.batch_id)
+                .with_for_update()
+            )
+            alloc_amt = alloc.amount
+            if batch is not None:
+                # 扣减 batch 上的 frozen
+                batch.frozen -= alloc_amt
+                # 实际扣减
+                deduct = min(alloc_amt, remaining_actual)
+                remaining_actual -= deduct
+                # 差额退回到 batch 余额
+                batch_refund = alloc_amt - deduct
+                if batch_refund > 0:
+                    batch.remaining += batch_refund
+                batch.is_exhausted = 1 if (batch.remaining == 0 and batch.frozen == 0) else 0
+
+            alloc.status = 2  # 2=CAPTURED
 
         session.flush()
 
@@ -330,6 +447,36 @@ class SqlAlchemyQuotaService(QuotaService):
 
         account.frozen -= amount
         account.balance += amount
+
+        # 批次解冻：查找 freeze_ref == ref_id and status == 1
+        allocs = session.scalars(
+            select(CreditFreezeAlloc)
+            .where(
+                CreditFreezeAlloc.freeze_ref == ref_id,
+                CreditFreezeAlloc.status == 1,
+            )
+            .order_by(CreditFreezeAlloc.id.asc())
+            .with_for_update()
+        ).all()
+
+        remaining_to_release = amount
+        for alloc in allocs:
+            if remaining_to_release <= 0:
+                break
+            release_amt = min(alloc.amount, remaining_to_release)
+            batch = session.scalar(
+                select(CreditBatch)
+                .where(CreditBatch.id == alloc.batch_id)
+                .with_for_update()
+            )
+            if batch is not None:
+                batch.remaining += release_amt
+                batch.frozen -= release_amt
+                batch.is_exhausted = 1 if (batch.remaining == 0 and batch.frozen == 0) else 0
+
+            alloc.status = 3  # 3=RELEASED
+            remaining_to_release -= release_amt
+
         session.flush()
 
         self._write_txn(
@@ -367,6 +514,8 @@ class SqlAlchemyQuotaService(QuotaService):
         amount: int,
         reason: int,
         ref_id: str | None = None,
+        *,
+        expires_at: datetime | None = None,
     ) -> None:
         """入账：balance += amount, total_earned += amount。"""
         if amount <= 0:
@@ -375,6 +524,18 @@ class SqlAlchemyQuotaService(QuotaService):
         account = self._get_account_for_update(session, user_id)
         account.balance += amount
         account.total_earned += amount
+
+        batch = CreditBatch(
+            user_id=user_id,
+            source_type=reason,
+            source_ref=ref_id,
+            total=amount,
+            remaining=amount,
+            frozen=0,
+            expires_at=expires_at,
+            is_exhausted=0,
+        )
+        session.add(batch)
         session.flush()
 
         self._write_txn(
@@ -439,7 +600,20 @@ class SqlAlchemyQuotaService(QuotaService):
         session.expire(redemption, ["redeemed_by", "redeemed_at"])
         account.balance += redemption.amount
         account.total_earned += redemption.amount
+
+        batch = CreditBatch(
+            user_id=user_id,
+            source_type=int(CreditReason.REDEMPTION),
+            source_ref=ref_id,
+            total=redemption.amount,
+            remaining=redemption.amount,
+            frozen=0,
+            expires_at=None,
+            is_exhausted=0,
+        )
+        session.add(batch)
         session.flush()
+
         self._write_txn(
             session,
             user_id,

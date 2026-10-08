@@ -26,11 +26,14 @@ from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
 from windup_app.server.quota.model import (
     CreditAccount,
+    CreditBatch,
+    CreditFreezeAlloc,
     CreditRedemptionCode,
     CreditTransaction,
     InviteCode,
     InviteRecord,
 )
+from windup_common.enums.quota import CreditReason
 from windup_app.server.sensitive_word.model import SensitiveWord
 from windup_app.server.user.model import User
 from windup_app.server.orchestrator.model import GenerationTaskRecord
@@ -81,15 +84,29 @@ def seed_credit_account(
 ) -> CreditAccount:
     """给测试用户补一张积分账户（注册赠送口径）。"""
     gift = quota_settings.register_gift_amount
+    bal = gift if balance is None else balance
     account = CreditAccount(
         user_id=user_id,
-        balance=gift if balance is None else balance,
+        balance=bal,
         frozen=0,
-        total_earned=gift,
+        total_earned=bal,
         total_spent=0,
     )
     session.add(account)
     session.flush()
+    if bal > 0:
+        batch = CreditBatch(
+            user_id=user_id,
+            source_type=int(CreditReason.REGISTER_GIFT),
+            source_ref="seed",
+            total=bal,
+            remaining=bal,
+            frozen=0,
+            expires_at=None,
+            is_exhausted=0,
+        )
+        session.add(batch)
+        session.flush()
     return account
 
 
@@ -127,6 +144,8 @@ def engine():
             Character.__table__,
             WorkflowRun.__table__,
             CreditAccount.__table__,
+            CreditBatch.__table__,
+            CreditFreezeAlloc.__table__,
             CreditRedemptionCode.__table__,
             CreditTransaction.__table__,
             InviteCode.__table__,
