@@ -15,7 +15,7 @@ from windup_framework.gateway.chat import (
     LangChainChatAdapter,
 )
 from windup_framework.gateway.circuit import CircuitBreaker
-from windup_framework.gateway.routes import key_circuit_id, routes_from_settings
+from windup_framework.gateway.routes import key_circuit_id, pool_routes
 from windup_framework.gateway.types import Scene
 from windup_framework.providers.chat import create_chat_model
 
@@ -194,7 +194,7 @@ def test_chat_skips_open_key_circuit_to_next_key():
     key_a = FakeChatAdapter({"gpt-4o-mini": [OK]})
     key_b = FakeChatAdapter({"gpt-4o-mini": [OK]})
     cfg = _primary_cfg(route_primary_api_keys="key-b")
-    routes = routes_from_settings(cfg, route_group=Scene.CHAT.value)
+    routes = pool_routes(cfg, route_group=Scene.CHAT.value)
     circuit = CircuitBreaker()
     circuit.open(key_circuit_id(routes[0]))
     gw = ChatGateway(

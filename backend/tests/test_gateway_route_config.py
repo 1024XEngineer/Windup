@@ -56,6 +56,10 @@ def test_routes_expand_extra_keys_on_same_base_url_before_fallback_url():
         ("backup", "key-c", "https://backup.example.com/v1"),
     ]
     assert routes[0].api_key_id != routes[1].api_key_id
+    assert routes[0].legacy_route_id == "primary.key0"
+    assert routes[1].legacy_route_id == "primary.key1"
+    assert routes[2].legacy_route_id == "backup.key0"
+    assert routes[0].route_id != routes[0].legacy_route_id
     assert routes[0].candidate_index == 0
     assert routes[1].candidate_index == 1
     assert routes[2].candidate_index == 2

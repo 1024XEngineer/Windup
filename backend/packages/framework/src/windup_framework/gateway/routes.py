@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from windup_framework.config.provider import AIProviderSettings
+from windup_framework.gateway.pool_ids import credential_id
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class GatewayRoute:
     base_url: str
     api_key_id: str | None
     api_key: str
+    legacy_route_id: str = ""
 
     @property
     def host(self) -> str | None:
@@ -46,7 +48,8 @@ def _expand_url(
 ) -> list[GatewayRoute]:
     routes: list[GatewayRoute] = []
     for i, api_key in enumerate(_unique_keys(first_key, extra_keys)):
-        api_key_id = f"{base_url_id}.key{i}"
+        legacy_route_id = f"{base_url_id}.key{i}"
+        api_key_id = credential_id(base_url_id, api_key)
         routes.append(
             GatewayRoute(
                 route_id=api_key_id,
@@ -57,9 +60,17 @@ def _expand_url(
                 base_url=base_url,
                 api_key_id=api_key_id,
                 api_key=api_key,
+                legacy_route_id=legacy_route_id,
             )
         )
     return routes
+
+
+def pool_routes(cfg: AIProviderSettings, *, route_group: str) -> tuple[GatewayRoute, ...]:
+    """凭证池物化路由；Admit 与 Gateway 统一读 :func:`get_pool_snapshot`。"""
+    from windup_framework.gateway.pool_registry import get_pool_snapshot
+
+    return get_pool_snapshot(route_group, cfg=cfg).gateway_routes(route_group)
 
 
 def routes_from_settings(cfg: AIProviderSettings, *, route_group: str) -> tuple[GatewayRoute, ...]:
@@ -97,6 +108,7 @@ def lookup_adapter(route_adapters: dict, route: GatewayRoute, default):
     return (
         route_adapters.get(route.route_id)
         or route_adapters.get(route.api_key_id)
+        or route_adapters.get(route.legacy_route_id)
         or route_adapters.get(route.base_url_id)
         or default
     )
