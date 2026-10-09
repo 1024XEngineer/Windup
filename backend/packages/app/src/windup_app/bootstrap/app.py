@@ -123,7 +123,7 @@ async def _lifespan(app: FastAPI):
     from windup_app.server.bill.service import service as bill_service
     import asyncio
     import time
-    from windup_framework.mq.client import mq
+    from windup_framework.db.redis import get_redis
 
     async def _bill_pending_close_worker():
         """Polling bill:pending_close zset for expired orders."""
@@ -134,7 +134,8 @@ async def _lifespan(app: FastAPI):
                 now_ts = int(time.time())
                 # Get orders to close
                 # ZRANGEBYSCORE bill:pending_close 0 now_ts
-                orders = mq.client.zrangebyscore("bill:pending_close", 0, now_ts)
+                redis_client = get_redis()
+                orders = redis_client.zrangebyscore("bill:pending_close", 0, now_ts)
                 for order_no in orders:
                     # Decoding bytes to str
                     if isinstance(order_no, bytes):
@@ -144,7 +145,7 @@ async def _lifespan(app: FastAPI):
                             bill_service.close_expired_orders(db_session, order_no)
                             db_session.commit()
                         # If success, remove from zset
-                        mq.client.zrem("bill:pending_close", order_no)
+                        redis_client.zrem("bill:pending_close", order_no)
                     except Exception as e:
                         logger.error(f"Error closing order {order_no}: {e}")
 
