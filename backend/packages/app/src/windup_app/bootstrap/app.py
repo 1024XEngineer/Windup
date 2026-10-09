@@ -24,6 +24,7 @@ from windup_app.server.character.service import service as character_service
 from windup_app.server.project.model import Project  # noqa: F401
 from windup_app.server.project.service import service as project_service
 from windup_app.server.quota import model as quota_model  # noqa: F401
+from windup_app.server.bill import model as bill_model  # noqa: F401
 from windup_app.server.sensitive_word.model import SensitiveWord  # noqa: F401
 from windup_app.server.sensitive_word.seed import seed_sensitive_words
 from windup_app.server.sensitive_word.service import (
@@ -46,6 +47,9 @@ from windup_app.web.api.media import router as media_router
 from windup_app.web.api.pixel_perfect import router as pixel_perfect_router
 from windup_app.web.api.project import router as project_router
 from windup_app.web.api.quota import router as quota_router
+from windup_app.web.api.bill import router as bill_router
+from windup_app.web.api.bill_notify import router as bill_notify_router
+from windup_app.web.api.admin_bill import router as admin_bill_router
 from windup_app.web.api.render3d import router as render3d_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
@@ -116,6 +120,57 @@ async def _lifespan(app: FastAPI):
         session.close()
     print_banner()
     from windup_app.web.api.generation import event_bus
+    from windup_app.server.bill.service import service as bill_service
+    import asyncio
+    import time
+    from windup_framework.mq.client import mq
+
+    async def _bill_pending_close_worker():
+        """Polling bill:pending_close zset for expired orders."""
+        logger = logging.getLogger("windup.bill.worker.pending_close")
+        logger.info("Bill pending close worker started.")
+        while True:
+            try:
+                now_ts = int(time.time())
+                # Get orders to close
+                # ZRANGEBYSCORE bill:pending_close 0 now_ts
+                orders = mq.client.zrangebyscore("bill:pending_close", 0, now_ts)
+                for order_no in orders:
+                    # Decoding bytes to str
+                    if isinstance(order_no, bytes):
+                        order_no = order_no.decode("utf-8")
+                    try:
+                        with SessionLocal() as db_session:
+                            bill_service.close_expired_orders(db_session, order_no)
+                            db_session.commit()
+                        # If success, remove from zset
+                        mq.client.zrem("bill:pending_close", order_no)
+                    except Exception as e:
+                        logger.error(f"Error closing order {order_no}: {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in bill pending close worker: {e}")
+            await asyncio.sleep(10)
+
+    async def _subscription_expired_worker():
+        """Polling expired subscriptions."""
+        logger = logging.getLogger("windup.bill.worker.subscription")
+        logger.info("Subscription expiration worker started.")
+        while True:
+            try:
+                with SessionLocal() as db_session:
+                    bill_service.process_expired_subscriptions(db_session)
+                    db_session.commit()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error processing expired subscriptions: {e}")
+            await asyncio.sleep(60)
+
+    bill_close_task = asyncio.create_task(_bill_pending_close_worker())
+    sub_expire_task = asyncio.create_task(_subscription_expired_worker())
 
     sse_subscriber = RedisTaskEventSubscriber(
         lambda project_id, task_id, event, data: event_bus.publish(
@@ -131,6 +186,9 @@ async def _lifespan(app: FastAPI):
     try:
         yield
     finally:
+        bill_close_task.cancel()
+        sub_expire_task.cancel()
+        # await asyncio.gather(bill_close_task, sub_expire_task, return_exceptions=True)
         sensitive_word_subscriber.stop()
         sse_subscriber.stop()
 
@@ -177,6 +235,9 @@ def create_app() -> FastAPI:
     app.include_router(generation_router)
     app.include_router(quota_router)
     app.include_router(admin_quota_router)
+    app.include_router(bill_router)
+    app.include_router(bill_notify_router)
+    app.include_router(admin_bill_router)
     app.include_router(render3d_router)
     app.include_router(agent_router)
     app.include_router(action_preset_router)

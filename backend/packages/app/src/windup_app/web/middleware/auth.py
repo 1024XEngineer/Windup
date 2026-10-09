@@ -68,6 +68,7 @@ AUTH_WHITELIST_PREFIXES: tuple[str, ...] = (
     "/docs",
     "/redoc",
     "/openapi",
+    "/bill/notify",
 )
 
 

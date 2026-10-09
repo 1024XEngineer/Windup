@@ -165,6 +165,27 @@ class SqlAlchemyQuotaService(QuotaService):
         )
         return _to_account_view(account) if account else None
 
+    def get_active_batches(self, session: Session, user_id: int):
+        """查询用户当前未过期且有余额的批次，按来源分类统计。"""
+        now = _now()
+        batches = session.scalars(
+            select(CreditBatch)
+            .where(
+                CreditBatch.user_id == user_id,
+                CreditBatch.remaining > 0,
+                or_(CreditBatch.expires_at.is_(None), CreditBatch.expires_at > now),
+            )
+        ).all()
+
+        perpetual_credits = sum(b.remaining for b in batches if b.expires_at is None)
+        expiring_credits = sum(b.remaining for b in batches if b.expires_at is not None)
+
+        return {
+            "perpetual_credits": perpetual_credits,
+            "expiring_credits": expiring_credits,
+            "batches": batches
+        }
+
     def _get_account_for_update(self, session: Session, user_id: int) -> CreditAccount:
         """SELECT ... FOR UPDATE 锁定账户行。"""
         account = session.scalar(

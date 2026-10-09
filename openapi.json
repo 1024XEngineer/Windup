@@ -85,6 +85,41 @@
         "title": "AdminAccessOut",
         "type": "object"
       },
+      "AdminRefundIn": {
+        "properties": {
+          "amount_fen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Fen"
+          },
+          "order_no": {
+            "title": "Order No",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "order_no"
+        ],
+        "title": "AdminRefundIn",
+        "type": "object"
+      },
       "ArtStyle": {
         "description": "项目的美术风格。\n\n只有 ``PIXEL`` 改变管线行为(出帧吸附母版像素网格、颜色吸回母版色板),其余取值\n只进提示词。像素网格密度不在这一维 —— 它由目标分辨率定,两处各定一遍会打架。",
         "enum": [
@@ -1696,6 +1731,39 @@
         "title": "ChatUsageResponse",
         "type": "object"
       },
+      "CreateOrderIn": {
+        "properties": {
+          "amount_fen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Fen"
+          },
+          "channel": {
+            "default": "alipay",
+            "title": "Channel",
+            "type": "string"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          }
+        },
+        "title": "CreateOrderIn",
+        "type": "object"
+      },
       "CreditAccountOut": {
         "description": "积分账户响应。",
         "properties": {
@@ -1708,6 +1776,17 @@
             "title": "Create At",
             "type": "string"
           },
+          "expiring_credits": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiring Credits"
+          },
           "frozen": {
             "title": "Frozen",
             "type": "integer"
@@ -1715,6 +1794,17 @@
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "perpetual_credits": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Perpetual Credits"
           },
           "total_earned": {
             "title": "Total Earned",
@@ -2421,6 +2511,124 @@
         "title": "ListResponse[InviteRecordOut]",
         "type": "object"
       },
+      "ListResponse_OrderOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "description": "业务数据列表",
+            "items": {
+              "$ref": "#/components/schemas/OrderOut"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "description": "当前页码,从 1 开始",
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 0,
+            "description": "每页条数;0 表示不分页(全量)",
+            "minimum": 0.0,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          },
+          "total": {
+            "default": 0,
+            "description": "数据总数;分页时为查询条件总数,不分页时为 len(data)",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ListResponse[OrderOut]",
+        "type": "object"
+      },
+      "ListResponse_ProductOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "description": "业务数据列表",
+            "items": {
+              "$ref": "#/components/schemas/ProductOut"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "description": "当前页码,从 1 开始",
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 0,
+            "description": "每页条数;0 表示不分页(全量)",
+            "minimum": 0.0,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          },
+          "total": {
+            "default": 0,
+            "description": "数据总数;分页时为查询条件总数,不分页时为 len(data)",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ListResponse[ProductOut]",
+        "type": "object"
+      },
       "ListResponse_ProjectListOut_": {
         "properties": {
           "code": {
@@ -2707,6 +2915,117 @@
         "title": "OpenAIErrorResponse",
         "type": "object"
       },
+      "OrderOut": {
+        "properties": {
+          "amount_fen": {
+            "title": "Amount Fen",
+            "type": "integer"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "create_at": {
+            "format": "date-time",
+            "title": "Create At",
+            "type": "string"
+          },
+          "credits": {
+            "title": "Credits",
+            "type": "integer"
+          },
+          "expire_at": {
+            "format": "date-time",
+            "title": "Expire At",
+            "type": "string"
+          },
+          "order_no": {
+            "title": "Order No",
+            "type": "string"
+          },
+          "paid_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid At"
+          },
+          "pay_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pay Url"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          },
+          "product_snapshot": {
+            "additionalProperties": true,
+            "title": "Product Snapshot",
+            "type": "object"
+          },
+          "product_type": {
+            "title": "Product Type",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "order_no",
+          "product_id",
+          "product_type",
+          "product_snapshot",
+          "amount_fen",
+          "credits",
+          "channel",
+          "provider",
+          "status",
+          "pay_url",
+          "expire_at",
+          "paid_at",
+          "closed_at",
+          "create_at"
+        ],
+        "title": "OrderOut",
+        "type": "object"
+      },
       "OutfitRigFacts": {
         "description": "绑骨模型的骨架事实。**记录用，不是判据。**\n\n出帧台每渲一段动作都会从模型里读出这些数，此前算完即丢（#774）。存下来是为了\n让「这个造型的骨架长什么样」不必每次重新解析 GLB，也让挂点有据可查——自动绑骨\n保留了挂点骨，武器握持按骨名定位即可，不必重新标定。\n\n为什么不当闸：曾以「28 骨 · humanoid 命名 · 无 mixamorig 前缀」作硬校验，2026-08-26\n量全部归档产物即推翻——骨数是 24 / 27 / 28 / 43 / 49，其中 24 与 27 正是混元自己绑\n的四足，同一条链路出来的骨数就不是常数；带前缀的那个是 Mixamo 绑的，属重定向路线\n的正常输入。据此当闸会把自家产物一起挡掉。",
         "properties": {
@@ -2763,6 +3082,98 @@
           "bones"
         ],
         "title": "OutfitRigFacts",
+        "type": "object"
+      },
+      "ProductOut": {
+        "properties": {
+          "amount_fen": {
+            "title": "Amount Fen",
+            "type": "integer"
+          },
+          "badge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Badge"
+          },
+          "credits": {
+            "title": "Credits",
+            "type": "integer"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "extra_meta": {
+            "additionalProperties": true,
+            "title": "Extra Meta",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "original_amount_fen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Amount Fen"
+          },
+          "sort_order": {
+            "title": "Sort Order",
+            "type": "integer"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          },
+          "type": {
+            "title": "Type",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "tier",
+          "name",
+          "description",
+          "amount_fen",
+          "credits",
+          "original_amount_fen",
+          "badge",
+          "sort_order",
+          "extra_meta"
+        ],
+        "title": "ProductOut",
         "type": "object"
       },
       "ProjectCreate": {
@@ -3565,6 +3976,48 @@
         "title": "Response[NoneType]",
         "type": "object"
       },
+      "Response_OrderOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[OrderOut]",
+        "type": "object"
+      },
       "Response_ProjectOut_": {
         "properties": {
           "code": {
@@ -3647,6 +4100,48 @@
           }
         },
         "title": "Response[RedeemCodeOut]",
+        "type": "object"
+      },
+      "Response_SubscriptionStatusOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubscriptionStatusOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[SubscriptionStatusOut]",
         "type": "object"
       },
       "Response_TokenResponse_": {
@@ -3861,6 +4356,50 @@
         "title": "Response[dict]",
         "type": "object"
       },
+      "Response_dict_str__Any__": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据",
+            "title": "Data"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[dict[str, Any]]",
+        "type": "object"
+      },
       "SendCodeRequest": {
         "description": "发送验证码请求。",
         "properties": {
@@ -3896,6 +4435,74 @@
           "new_password"
         ],
         "title": "SetPasswordRequest",
+        "type": "object"
+      },
+      "SubscriptionOut": {
+        "properties": {
+          "period_end": {
+            "format": "date-time",
+            "title": "Period End",
+            "type": "string"
+          },
+          "period_start": {
+            "format": "date-time",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tier",
+          "status",
+          "period_start",
+          "period_end"
+        ],
+        "title": "SubscriptionOut",
+        "type": "object"
+      },
+      "SubscriptionStatusOut": {
+        "properties": {
+          "active_subscription": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubscriptionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiring_credits": {
+            "title": "Expiring Credits",
+            "type": "integer"
+          },
+          "next_subscription": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubscriptionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "perpetual_credits": {
+            "title": "Perpetual Credits",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "perpetual_credits",
+          "expiring_credits"
+        ],
+        "title": "SubscriptionStatusOut",
         "type": "object"
       },
       "TokenResponse": {
@@ -4373,6 +4980,48 @@
         "summary": "List Action Presets",
         "tags": [
           "action-presets"
+        ]
+      }
+    },
+    "/admin/bill/refunds": {
+      "post": {
+        "description": "管理员手动发起退款（开发占位）。",
+        "operationId": "admin_refund_admin_bill_refunds_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRefundIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_str__Any__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Refund",
+        "tags": [
+          "admin_bill"
         ]
       }
     },
@@ -5082,6 +5731,287 @@
         "summary": "Set Password",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/bill/notify/epay": {
+      "get": {
+        "description": "易支付异步通知接收端点。",
+        "operationId": "epay_notify_bill_notify_epay_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Epay Notify",
+        "tags": [
+          "bill_notify"
+        ]
+      },
+      "post": {
+        "description": "易支付异步通知接收端点。",
+        "operationId": "epay_notify_bill_notify_epay_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Epay Notify",
+        "tags": [
+          "bill_notify"
+        ]
+      }
+    },
+    "/bill/orders": {
+      "get": {
+        "description": "查询当前用户的订单列表。",
+        "operationId": "list_orders_bill_orders_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_OrderOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Orders",
+        "tags": [
+          "bill"
+        ]
+      },
+      "post": {
+        "description": "创建充值或订阅订单。",
+        "operationId": "create_order_bill_orders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOrderIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_OrderOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Order",
+        "tags": [
+          "bill"
+        ]
+      }
+    },
+    "/bill/orders/{order_no}": {
+      "get": {
+        "description": "查询订单详情。",
+        "operationId": "get_order_bill_orders__order_no__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_no",
+            "required": true,
+            "schema": {
+              "title": "Order No",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_OrderOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Order",
+        "tags": [
+          "bill"
+        ]
+      }
+    },
+    "/bill/orders/{order_no}/close": {
+      "post": {
+        "description": "手动关闭待支付的订单。",
+        "operationId": "close_order_bill_orders__order_no__close_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_no",
+            "required": true,
+            "schema": {
+              "title": "Order No",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Close Order",
+        "tags": [
+          "bill"
+        ]
+      }
+    },
+    "/bill/products": {
+      "get": {
+        "description": "查询当前在售商品，按 sort_order 升序。",
+        "operationId": "list_products_bill_products_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_ProductOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Products",
+        "tags": [
+          "bill"
+        ]
+      }
+    },
+    "/bill/subscription": {
+      "get": {
+        "description": "查询用户的订阅状态与积分余额详情。",
+        "operationId": "get_subscription_status_bill_subscription_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_SubscriptionStatusOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Subscription Status",
+        "tags": [
+          "bill"
         ]
       }
     },
