@@ -22,6 +22,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from windup_app.bootstrap.app import create_app
+from windup_app.server.bill.model import (
+    Order,
+    PaymentEvent,
+    Product,
+    Refund,
+    Subscription,
+)
 from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
 from windup_app.server.quota.model import (
@@ -153,6 +160,11 @@ def engine():
             SensitiveWord.__table__,
             GenerationTaskRecord.__table__,
             MqMessage.__table__,
+            Product.__table__,
+            Order.__table__,
+            PaymentEvent.__table__,
+            Subscription.__table__,
+            Refund.__table__,
         ],
     )
     yield engine

@@ -17,9 +17,15 @@ from windup_app.server.bill.provider import (
     get_provider,
     register_provider,
 )
+from windup_app.server.bill.service import (
+    SqlAlchemyBillService,
+    service,
+)
 
 __all__ = [
     "BillService",
+    "SqlAlchemyBillService",
+    "service",
     "Product",
     "Order",
     "PaymentEvent",
