@@ -25,6 +25,8 @@ export interface RunClientBakeOptions {
   apis: Render3DApis
   onProgress?: (progress: BakeProgress) => void
   signal?: AbortSignal
+  /** 判黑后的等待。测试注入,免得真等几秒。 */
+  sleep?: (ms: number) => Promise<void>
 }
 
 /** 出帧中途被放弃(用户离开页面 / 上层取消)。不当失败上报,任务留给期限兜底。 */
@@ -44,8 +46,13 @@ export class BakeAborted extends Error {
 /** 主体平均亮度下限。纯黑剪影量到 0.0,正常帧量到约 148 —— 取 20 只拦「全黑」。 */
 const MIN_SUBJECT_LUMA = 20
 
+/** 判黑后重试几次、每次等多久。贴图解码是几百毫秒的事,给到 3 秒是十倍余量。 */
+const BLACK_FRAME_RETRIES = 10
+const BLACK_FRAME_WAIT_MS = 300
+
 export async function runClientBake(options: RunClientBakeOptions): Promise<void> {
   const { job, apis, onProgress, signal } = options
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const throwIfAborted = () => {
     if (signal?.aborted) throw new BakeAborted()
   }
@@ -79,11 +86,20 @@ export async function runClientBake(options: RunClientBakeOptions): Promise<void
         )
       }
       // 纯黑主体逃得过覆盖率那道闸(它只数 alpha),所以在这里再判一次亮度。
-      // 触发点几乎只有一个:贴图还没传上 GPU 就渲了 —— 交付出去才看得见。
-      const luma = stage.subjectLuma()
+      // 触发点几乎只有一个:贴图还没解码完就渲了。
+      //
+      // **判黑之后先重试,不直接失败。** compileAsync 只保证着色器编译与已解码贴图
+      // 的上传,不等图片本身解码 —— 实测线上仍会在第 0 帧撞上。而这是个纯等待问题:
+      // 再渲一次就好了。直接失败等于把一个几百毫秒能自愈的状况变成整单报废。
+      let luma = stage.subjectLuma()
+      for (let k = 0; luma >= 0 && luma < MIN_SUBJECT_LUMA && k < BLACK_FRAME_RETRIES; k++) {
+        await sleep(BLACK_FRAME_WAIT_MS)
+        luma = stage.subjectLuma()
+      }
       if (luma >= 0 && luma < MIN_SUBJECT_LUMA) {
         throw new StageError(
-          `第 ${i} 帧主体是纯黑(平均亮度 ${luma.toFixed(1)} < ${MIN_SUBJECT_LUMA})，贴图可能还没就绪`,
+          `第 ${i} 帧主体是纯黑(平均亮度 ${luma.toFixed(1)} < ${MIN_SUBJECT_LUMA})，` +
+            `等了 ${(BLACK_FRAME_RETRIES * BLACK_FRAME_WAIT_MS) / 1000} 秒仍未就绪`,
         )
       }
       await apis.putBakeFrame(job.taskId, i, await stage.grab())
