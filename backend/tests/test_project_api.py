@@ -119,7 +119,7 @@ def test_create_with_explicit_name_skips_project_namer(auth_client):
     assert project_api.service._namer.calls == []
 
 
-def test_create_automatic_duplicate_uses_readable_sequence(auth_client):
+def test_create_automatic_duplicate_keeps_the_same_display_name(auth_client):
     project_api.service._namer = _FakeProjectNamer(result="雾" * 20)
     payload = _payload(project_name=None, name_context="同一份角色描述")
 
@@ -127,8 +127,8 @@ def test_create_automatic_duplicate_uses_readable_sequence(auth_client):
     second = auth_client.post("/projects", json=payload).json()
 
     assert first["data"]["project_name"] == "雾" * 20
-    assert second["data"]["project_name"] == f"{'雾' * 17}… 2"
-    assert len(second["data"]["project_name"]) == 20
+    assert second["data"]["project_name"] == "雾" * 20
+    assert second["data"]["id"] != first["data"]["id"]
 
 
 def test_create_namer_failure_falls_back_to_description(auth_client):
@@ -154,15 +154,14 @@ def test_create_without_name_or_context_uses_unnamed_fallback(auth_client):
     assert resp.json()["data"]["project_name"] == "未命名项目"
 
 
-def test_create_duplicate_name_returns_400(auth_client):
-    auth_client.post("/projects", json=_payload(project_name="重名"))
-    resp = auth_client.post("/projects", json=_payload(project_name="重名"))
+def test_create_duplicate_display_names_returns_distinct_projects(auth_client):
+    first = auth_client.post("/projects", json=_payload(project_name="重名")).json()
+    second = auth_client.post("/projects", json=_payload(project_name="重名")).json()
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["code"] == 400
-    assert body["message"] == "项目名称已存在"
-    assert body["data"] is None
+    assert first["code"] == 200
+    assert second["code"] == 200
+    assert first["data"]["project_name"] == second["data"]["project_name"] == "重名"
+    assert first["data"]["id"] != second["data"]["id"]
 
 
 def test_create_validation_error_returns_400(auth_client):
@@ -363,8 +362,10 @@ def test_rename_success_persists_the_new_name(auth_client):
     assert persisted["project_name"] == "重命名后"
 
 
-def test_rename_duplicate_name_returns_400(auth_client):
-    auth_client.post("/projects", json=_payload(project_name="已存在"))
+def test_rename_to_an_existing_display_name_is_allowed(auth_client):
+    existing = auth_client.post(
+        "/projects", json=_payload(project_name="已存在")
+    ).json()["data"]
     created = auth_client.post(
         "/projects", json=_payload(project_name="待修改")
     ).json()["data"]
@@ -373,10 +374,14 @@ def test_rename_duplicate_name_returns_400(auth_client):
         f"/projects/{created['id']}", json={"project_name": "已存在"}
     )
 
-    assert resp.json()["code"] == 400
-    assert resp.json()["message"] == "项目名称已存在"
+    assert resp.json()["code"] == 200
+    assert resp.json()["data"]["project_name"] == "已存在"
     persisted = auth_client.get(f"/projects/{created['id']}").json()["data"]
-    assert persisted["project_name"] == "待修改"
+    assert persisted["project_name"] == "已存在"
+    assert (
+        auth_client.get(f"/projects/{existing['id']}").json()["data"]["project_name"]
+        == "已存在"
+    )
 
 
 def test_rename_rejects_another_users_project(auth_client, auth_client_b):

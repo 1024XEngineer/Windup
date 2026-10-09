@@ -40,15 +40,3 @@ def resolve_project_name(
     if cleaned_description:
         return _clip(cleaned_description)
     return FALLBACK_NAME
-
-
-def numbered_project_name(base_name: str, sequence: int) -> str:
-    """为重名自动标题追加可读编号，同时守住数据库 20 字上限。"""
-    if sequence <= 1:
-        return _clip(base_name)
-    suffix = f" {sequence}"
-    max_base_length = NAME_MAX_LEN - len(suffix)
-    characters = list(base_name)
-    if len(characters) > max_base_length:
-        characters = characters[: max_base_length - 1] + ["…"]
-    return f"{''.join(characters)}{suffix}"

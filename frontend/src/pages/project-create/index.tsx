@@ -160,9 +160,7 @@ export function ProjectCreatePage() {
               onChange={(event) => setName(event.target.value)}
               className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
             />
-            <small className="text-[10px] text-app-faint">
-              最多 {NAME_MAX_LENGTH} 个字，同一账号下不能重名。
-            </small>
+            <small className="text-[10px] text-app-faint">最多 {NAME_MAX_LENGTH} 个字。</small>
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
