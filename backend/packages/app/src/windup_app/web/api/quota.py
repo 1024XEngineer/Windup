@@ -48,6 +48,8 @@ class CreditAccountOut(BaseModel):
     total_spent: int
     create_at: datetime
     update_at: datetime
+    expiring_credits: int | None = None
+    perpetual_credits: int | None = None
 
 
 class CreditTransactionOut(BaseModel):
@@ -116,7 +118,14 @@ def get_balance(
         from windup_common.exceptions import BizException
 
         raise BizException("积分账户不存在", code=BizCode.NOT_FOUND)
-    return Response.success(CreditAccountOut.model_validate(account))
+
+    batch_info = service.get_active_batches(session, user_id)
+
+    out = CreditAccountOut.model_validate(account)
+    out.expiring_credits = batch_info["expiring_credits"]
+    out.perpetual_credits = batch_info["perpetual_credits"]
+
+    return Response.success(out)
 
 
 @router.get("/transactions", response_model=ListResponse[CreditTransactionOut])

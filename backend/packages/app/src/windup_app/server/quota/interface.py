@@ -84,6 +84,8 @@ class QuotaService(ABC):
         amount: int,
         reason: int,
         ref_id: str | None = None,
+        *,
+        expires_at: datetime | None = None,
     ) -> None:
         """入账：增加可用余额与累计获得。"""
 

@@ -222,6 +222,41 @@ def test_register_endpoint_success_without_invite_code(client, mock_user_redis):
     assert body["data"]["access_token"]
 
 
+def test_register_creates_credit_batch(client, db_session, mock_user_redis):
+    """F6: 注册送积分时同时建立 CreditBatch，使余额由批次承载。"""
+    mock_user_redis.get.return_value = "123456"
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": "batch@example.com",
+            "password": "password123",
+            "code": "123456",
+        },
+    )
+    assert resp.status_code == 200
+
+    from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount, CreditBatch
+    from windup_common.enums.quota import CreditReason
+
+    user = db_session.scalar(select(User).where(User.email == "batch@example.com"))
+    assert user is not None
+
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == user.id)
+    )
+    assert account is not None
+    assert account.balance > 0
+
+    batch = db_session.scalar(
+        select(CreditBatch).where(CreditBatch.user_id == user.id)
+    )
+    assert batch is not None
+    assert batch.source_type == int(CreditReason.REGISTER_GIFT)
+    assert batch.remaining == account.balance
+    assert batch.expires_at is None
+
+
 def test_login_by_code_endpoint_creates_unknown_email(
     client, db_session, mock_user_redis
 ):

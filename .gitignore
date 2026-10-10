@@ -40,3 +40,4 @@ htmlcov/
 
 # 本地数据库初始化脚本
 init.sql
+.npm-cache/

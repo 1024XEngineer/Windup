@@ -18,6 +18,7 @@ from windup_common.exceptions import BizException
 
 from windup_app.server.quota.model import (
     CreditAccount,
+    CreditBatch,
     CreditRedemptionCode,
     CreditTransaction,
 )
@@ -46,6 +47,19 @@ def user_with_account(db_session: Session):
         total_spent=0,
     )
     db_session.add(account)
+    db_session.flush()
+
+    batch = CreditBatch(
+        user_id=user.id,
+        source_type=int(CreditReason.REGISTER_GIFT),
+        source_ref="test_user_seed",
+        total=quota_settings.register_gift_amount,
+        remaining=quota_settings.register_gift_amount,
+        frozen=0,
+        expires_at=None,
+        is_exhausted=0,
+    )
+    db_session.add(batch)
     db_session.flush()
 
     return user

@@ -13,6 +13,8 @@ ORM 模型
     windup_invite_code       邀请码
     windup_invite_record     邀请记录
     windup_token_usage       Token 用量记录
+    windup_credit_batch      积分批次（有效期与来源追踪）
+    windup_credit_freeze_alloc 冻结分配明细（任务冻结对应批次）
 """
 
 from dataclasses import dataclass, field
@@ -21,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import (
     BigInteger,
     DateTime,
+    Index,
     Integer,
     SmallInteger,
     String,
@@ -210,6 +213,89 @@ class InviteRecord(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+class CreditBatch(Base):
+    """积分批次表。按来源类型独立存放，支持有效期管理与先进先出/订阅优先消耗。"""
+
+    __tablename__ = "windup_credit_batch"
+    __table_args__ = (
+        Index(
+            "ix_credit_batch_user_exhausted_expires",
+            "user_id",
+            "is_exhausted",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        nullable=False,
+        index=True,
+    )
+    source_type: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    total: Mapped[int] = mapped_column(Integer, nullable=False)
+    remaining: Mapped[int] = mapped_column(Integer, nullable=False)
+    frozen: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_exhausted: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    create_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("frozen", 0)
+        kwargs.setdefault("is_exhausted", 0)
+        super().__init__(*args, **kwargs)
+
+
+class CreditFreezeAlloc(Base):
+    """任务冻结分配明细。记录每笔生成任务从哪些批次分别冻结了多少积分。"""
+
+    __tablename__ = "windup_credit_freeze_alloc"
+    __table_args__ = (
+        Index("ix_credit_freeze_alloc_ref_status", "freeze_ref", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    freeze_ref: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    batch_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        nullable=False,
+    )
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=1
+    )  # 1=FROZEN, 2=CAPTURED, 3=RELEASED
+    create_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    update_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("status", 1)
+        super().__init__(*args, **kwargs)
 
 
 # class TokenUsage(Base):

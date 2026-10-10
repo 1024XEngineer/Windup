@@ -24,6 +24,9 @@ class CreditReason(IntEnum):
     FROZEN = 7             # 预付费冻结（占用余额）
     CAPTURED = 8    # 预付费实际扣减（冻结转消耗）
     REDEMPTION = 9  # 兑换码入账
+    TOP_UP = 10     # 充值入账
+    SUBSCRIPTION = 11  # 订阅额度发放
+    SUBSCRIPTION_EXPIRE = 12  # 订阅额度到期清零
     # AGENT_TOKEN = 9        # Agent token 消耗（后付费）先不实现后付费场景
 
 
