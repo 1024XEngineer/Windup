@@ -14,6 +14,7 @@ from windup_app.server.bill.provider import (
     ProviderCreateParams,
     ProviderCreateResult,
     ProviderNotifyResult,
+    ProviderQueryResult,
     get_provider,
     register_provider,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "ProviderCreateParams",
     "ProviderCreateResult",
     "ProviderNotifyResult",
+    "ProviderQueryResult",
     "EpayProvider",
     "register_provider",
     "get_provider",

@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from windup_common.enums.bill import ProductType, OrderStatus
+from windup_app.server.bill.epay import EpayProvider
+from windup_app.server.bill.provider import ProviderQueryResult
 from windup_app.server.bill.model import Product, Order, Subscription
 from windup_app.server.quota.model import CreditAccount
 from windup_app.server.user.model import User
@@ -91,7 +93,19 @@ def test_create_and_get_order(auth_client: TestClient, db_session: Session):
     assert resp3.json()["data"]["order_no"] == order_no
 
 
-def test_close_order(auth_client: TestClient, db_session: Session):
+def test_close_order(auth_client: TestClient, db_session: Session, monkeypatch):
+    # close_expired_orders 会调 EpayProvider.query_order，mock 为 unpaid 避免真实 HTTP
+    monkeypatch.setattr(
+        EpayProvider,
+        "query_order",
+        lambda self, order_no: ProviderQueryResult(
+            order_no=order_no,
+            provider_trade_no=None,
+            amount_fen=0,
+            status="unpaid",
+            raw_data={},
+        ),
+    )
     p1, _ = _create_mock_products(db_session)
     db_session.commit()
 
@@ -199,3 +213,9 @@ def test_epay_notify(client: TestClient, db_session: Session, monkeypatch):
     db_session.expire_all()
     o = db_session.scalar(select(Order).where(Order.order_no == "TEST_NOTIFY_001"))
     assert o.status == OrderStatus.PAID
+
+
+def test_admin_bill_refunds_route_removed(auth_client: TestClient):
+    """F3/F4: /admin/bill/refunds 路由已删除，不应可达。"""
+    resp = auth_client.post("/admin/bill/refunds", json={"order_no": "x"})
+    assert resp.status_code == 404

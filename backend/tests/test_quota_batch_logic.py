@@ -328,3 +328,161 @@ def test_redeem_code_creates_batch(db_session):
     assert batches[0].remaining == 500
     assert batches[0].source_type == int(CreditReason.REDEMPTION)
     assert batches[0].source_ref == f"redemption:{row.id}"
+
+
+def test_reserve_lazy_expires_stale_batches(db_session):
+    """F5: reserve 时惰性清零已过期未清理的订阅批次，过期积分不可用。"""
+    now = datetime.now(timezone.utc)
+    account = CreditAccount(
+        user_id=2001,
+        balance=200,
+        frozen=0,
+        total_earned=200,
+        total_spent=0,
+    )
+    db_session.add(account)
+    # 一个已过期未清理的订阅批次 + 一个未过期的永久批次
+    expired_batch = CreditBatch(
+        user_id=2001,
+        source_type=int(CreditReason.SUBSCRIPTION),
+        source_ref="sub:lazy",
+        total=100,
+        remaining=100,
+        frozen=0,
+        is_exhausted=0,
+        expires_at=now - timedelta(minutes=5),
+    )
+    active_batch = CreditBatch(
+        user_id=2001,
+        source_type=int(CreditReason.REGISTER_GIFT),
+        source_ref="register:2001",
+        total=100,
+        remaining=100,
+        frozen=0,
+        is_exhausted=0,
+        expires_at=None,
+    )
+    db_session.add(expired_batch)
+    db_session.add(active_batch)
+    db_session.flush()
+
+    # reserve 50：惰性过期先清零 100（balance 200→100），再从活跃批次冻结 50
+    quota_service.reserve_credit(db_session, 2001, 50, "task:lazy")
+
+    db_session.refresh(expired_batch)
+    assert expired_batch.remaining == 0
+    assert expired_batch.is_exhausted == 1
+
+    db_session.refresh(account)
+    assert account.balance == 50  # 200 - 100(惰性过期) - 50(冻结)
+    assert account.frozen == 50
+
+    # 过期流水已写
+    from windup_app.server.quota.model import CreditTransaction
+    txn = db_session.scalar(
+        select(CreditTransaction).where(
+            CreditTransaction.ref_id == f"lazy:batch:{expired_batch.id}"
+        )
+    )
+    assert txn is not None
+    assert txn.reason == int(CreditReason.SUBSCRIPTION_EXPIRE)
+
+
+def test_release_expired_batch_does_not_revive(db_session):
+    """H2: 冻结跨越过期点的积分，解冻时过期部分不回余额。"""
+    now = datetime.now(timezone.utc)
+    account = CreditAccount(
+        user_id=2002,
+        balance=200,
+        frozen=0,
+        total_earned=200,
+        total_spent=0,
+    )
+    db_session.add(account)
+    # 两个批次：一个已过期，一个未过期
+    expired_batch = CreditBatch(
+        user_id=2002,
+        source_type=int(CreditReason.SUBSCRIPTION),
+        source_ref="sub:expired",
+        total=100,
+        remaining=100,
+        frozen=0,
+        is_exhausted=0,
+        expires_at=now - timedelta(minutes=1),
+    )
+    active_batch = CreditBatch(
+        user_id=2002,
+        source_type=int(CreditReason.REGISTER_GIFT),
+        source_ref="register:1",
+        total=100,
+        remaining=100,
+        frozen=0,
+        is_exhausted=0,
+        expires_at=None,
+    )
+    db_session.add(expired_batch)
+    db_session.add(active_batch)
+    db_session.flush()
+
+    # 冻结 150（先从过期批次扣 100，再从活跃批次扣 50）
+    # 但 reserve 的惰性过期会先清零过期批次 → 过期批 remaining=0，不参与冻结
+    # 所以只从活跃批次冻结 150 → 余额不足（活跃只有 100）
+    # 改为冻结 100（全部从活跃批次）
+    quota_service.reserve_credit(db_session, 2002, 100, "task:cross_expire")
+    db_session.refresh(account)
+    assert account.balance == 0
+    assert account.frozen == 100
+
+    # 标记批次为已过期（模拟冻结后、解冻前过期了）
+    db_session.refresh(active_batch)
+    active_batch.expires_at = now - timedelta(minutes=1)
+    db_session.flush()
+
+    # 解冻 100：批次已过期，不应回余额
+    quota_service.release_credit(db_session, 2002, 100, "task:cross_expire")
+    db_session.refresh(account)
+    assert account.balance == 0  # 过期部分不回余额
+    assert account.frozen == 0
+
+
+def test_capture_expired_batch_refund_does_not_revive(db_session):
+    """H2: capture 差额返还时，过期批次部分不回余额。"""
+    now = datetime.now(timezone.utc)
+    account = CreditAccount(
+        user_id=2003,
+        balance=200,
+        frozen=0,
+        total_earned=200,
+        total_spent=0,
+    )
+    db_session.add(account)
+    batch = CreditBatch(
+        user_id=2003,
+        source_type=int(CreditReason.REGISTER_GIFT),
+        source_ref="register:2",
+        total=200,
+        remaining=200,
+        frozen=0,
+        is_exhausted=0,
+        expires_at=None,
+    )
+    db_session.add(batch)
+    db_session.flush()
+
+    # 冻结 200
+    quota_service.reserve_credit(db_session, 2003, 200, "task:capture_expire")
+    db_session.refresh(account)
+    assert account.balance == 0
+    assert account.frozen == 200
+
+    # 标记批次过期
+    db_session.refresh(batch)
+    batch.expires_at = now - timedelta(minutes=1)
+    db_session.flush()
+
+    # 实际消耗 50，差额 150 应返还但不回余额（批次已过期）
+    quota_service.capture_credit(db_session, 2003, 50, "task:capture_expire", 200)
+    db_session.refresh(account)
+    assert account.balance == 0  # 过期部分不回余额
+    assert account.frozen == 0
+    assert account.total_spent == 50

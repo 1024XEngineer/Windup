@@ -1,12 +1,16 @@
 """支付与订阅领域服务实现。
 
 实现订单创建、支付回调验签处理、订单查询与超时关闭、订阅到期与批次轮转。
+
+全局锁序：订单 → 用户 → 订阅 → 账户 → 批次。发货路径（`_fulfill_order`）
+以用户行为串行化起点（订阅排期的空结果集上 FOR UPDATE 锁不住任何行，
+而用户行必然存在），quota 服务内部统一先锁账户再锁批次。
 """
 
 from datetime import datetime, timedelta, timezone
 import logging
 import secrets
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,6 +32,7 @@ from windup_app.server.quota.model import (
     CreditBatch,
     CreditTransaction,
 )
+from windup_app.server.user.model import User
 from windup_common.enums.bill import (
     OrderStatus,
     PaymentEventType,
@@ -42,6 +47,12 @@ from windup_common.exceptions import BizException
 from windup_framework.db.redis import get_redis
 
 logger = logging.getLogger("windup.bill.service")
+
+# 易支付"支付成功"状态值。签名只负责认证，发货前必须核对业务状态。
+_SUCCESS_STATUSES = frozenset({"TRADE_SUCCESS", "SUCCESS"})
+
+# 订单过期后上游结果仍 unknown 时的强制关单时限（小时）。
+_FORCE_CLOSE_GRACE_HOURS = 24
 
 
 class SqlAlchemyBillService(BillService):
@@ -161,7 +172,19 @@ class SqlAlchemyBillService(BillService):
         provider = get_provider(PaymentProviderType.EPAY)
         notify_res = provider.verify_notify(payload)
 
-        # 3. 行锁查询订单
+        # 3. 业务状态校验：签名合法只代表通知来自网关，不代表支付成功
+        if str(notify_res.status).upper() not in _SUCCESS_STATUSES:
+            logger.warning(
+                "[WINDUP] 非成功支付通知被拒绝 | order_no=%s trade_status=%s",
+                notify_res.order_no,
+                notify_res.status,
+            )
+            raise BizException(
+                f"非成功支付通知（trade_status={notify_res.status}）",
+                code=BizCode.BAD_REQUEST,
+            )
+
+        # 4. 行锁查询订单
         order = session.scalar(
             select(Order)
             .where(Order.order_no == notify_res.order_no)
@@ -173,26 +196,63 @@ class SqlAlchemyBillService(BillService):
         if order.amount_fen != notify_res.amount_fen:
             raise BizException("订单金额不匹配", code=BizCode.BAD_REQUEST)
 
-        # 4. 幂等检查
+        # 5. 幂等检查
         if order.status == OrderStatus.PAID:
             logger.info("Order %s already paid, skipping duplicate notify", order.order_no)
             return order
 
-        if order.status != OrderStatus.PENDING:
+        if order.status in (OrderStatus.REFUNDING, OrderStatus.REFUNDED):
             logger.warning(
-                "Order %s status is %s (not PENDING), ignoring notify",
+                "Order %s status is %s, ignoring notify",
                 order.order_no,
                 order.status,
             )
             return order
 
+        if order.status == OrderStatus.CLOSED:
+            # 迟到的成功回调：网关侧已扣款，本地曾按未支付关单。复活并发货，
+            # 否则用户已付款却拿不到积分/订阅。
+            logger.warning(
+                "[WINDUP] CLOSED 订单收到成功回调，复活并发货 | order_no=%s",
+                order.order_no,
+            )
+
+        self._fulfill_order(session, order, notify_res.provider_trade_no)
+        return order
+
+    def _fulfill_order(
+        self, session: Session, order: Order, provider_trade_no: str
+    ) -> None:
+        """订单置 PAID 并发放积分/订阅。
+
+        调用方必须已持有订单行锁。入口先锁用户行：两个并发回调各自锁住不同
+        订单行互不阻塞，而订阅排期查询可能落在空结果集上（FOR UPDATE 锁不住
+        任何行），用户行是唯一稳定的串行化点。锁序：订单（已持）→ 用户 →
+        订阅 → 账户 → 批次。
+        """
         now = datetime.now(timezone.utc)
+
+        user = session.scalar(
+            select(User).where(User.id == order.user_id).with_for_update()
+        )
+        if user is None:
+            # 用户已注销：订单事实仍要落地，但无从发货，留 ERROR 给运营
+            order.status = OrderStatus.PAID
+            order.paid_at = now
+            order.provider_trade_no = provider_trade_no
+            logger.error(
+                "[WINDUP] 已支付订单的用户不存在，跳过发货 | order_no=%s user_id=%s",
+                order.order_no,
+                order.user_id,
+            )
+            session.flush()
+            return
+
         order.status = OrderStatus.PAID
         order.paid_at = now
-        order.provider_trade_no = notify_res.provider_trade_no
+        order.provider_trade_no = provider_trade_no
         session.flush()
 
-        # 5. 积分发放（充值 vs 订阅）
         if order.product_type == ProductType.TOP_UP:
             self._ensure_credit_account(session, order.user_id)
             self.quota_service.credit(
@@ -211,7 +271,7 @@ class SqlAlchemyBillService(BillService):
             if tier is None:
                 tier = SubscriptionTier.PLUS
 
-            # 查询当前用户是否存在有效的活跃订阅
+            # 查询当前用户是否存在有效的活跃订阅（用户锁内，排期安全）
             latest_active = session.scalar(
                 select(Subscription)
                 .where(
@@ -257,28 +317,127 @@ class SqlAlchemyBillService(BillService):
                     expires_at=sub_end,
                 )
 
+    def query_order(self, session: Session, order_no: str) -> Order | None:
+        """查询订单详情，回调丢失时向上游补偿查询。
+
+        本地 PENDING/CLOSED 的订单向上游核实：上游已支付的补发货（回调丢失
+        或被迟到关闭），其余返回本地行。PAID/REFUNDING/REFUNDED 不查上游。
+        """
+        order = session.scalar(select(Order).where(Order.order_no == order_no))
+        if order is None:
+            return None
+        if order.status not in (OrderStatus.PENDING, OrderStatus.CLOSED):
+            return order
+
+        try:
+            provider = get_provider(order.provider)
+            query_res = provider.query_order(order_no)
+        except Exception as exc:
+            logger.warning("Failed to query order %s on provider: %s", order_no, exc)
+            return order
+
+        if query_res.status != "paid":
+            return order
+
+        if query_res.amount_fen != order.amount_fen:
+            logger.error(
+                "[WINDUP] 上游支付金额与订单不符，拒绝补偿发货 | order_no=%s local=%s upstream=%s",
+                order_no,
+                order.amount_fen,
+                query_res.amount_fen,
+            )
+            return order
+
+        # 锁单复核：回调可能与本查询并发，PAID 幂等由 _fulfill_order 前的复核保证
+        locked = session.scalar(
+            select(Order).where(Order.order_no == order_no).with_for_update()
+        )
+        if locked is not None and locked.status in (OrderStatus.PENDING, OrderStatus.CLOSED):
+            if locked.status == OrderStatus.CLOSED:
+                logger.warning(
+                    "[WINDUP] 上游查询发现 CLOSED 订单已支付，复活并发货 | order_no=%s",
+                    order_no,
+                )
+            self._fulfill_order(session, locked, query_res.provider_trade_no or "")
+            session.flush()
+            return locked
         return order
 
-    def query_order(self, session: Session, order_no: str) -> Order | None:
-        """查询订单详情。"""
-        return session.scalar(select(Order).where(Order.order_no == order_no))
+    def close_expired_orders(
+        self, session: Session, order_no: str
+    ) -> Literal["closed", "paid", "retry", "skipped"]:
+        """关闭超时未支付的订单。
 
-    def close_expired_orders(self, session: Session, order_no: str) -> bool:
-        """关闭超时未支付的订单。"""
+        先无锁向上游核实（HTTP 不持锁，不阻塞并发的回调事务），确认上游
+        未支付才迁移 CLOSED；上游已支付的转发货；结果不确定时保留 PENDING
+        返回 "retry"，由调用方延后重试，防止"用户已付款但本地已关单"。
+
+        返回值：
+        - "closed": 已确认未支付，本地置 CLOSED
+        - "paid":   上游已支付，已补发货
+        - "retry":  上游结果不确定（网关超时/契约不符），订单保持 PENDING
+        - "skipped": 订单非 PENDING（已 PAID/CLOSED/退款中），无需处理
+        """
+        # 1. 无锁预读：非 PENDING 直接跳过
+        order = session.scalar(
+            select(Order).where(Order.order_no == order_no)
+        )
+        if order is None or order.status != OrderStatus.PENDING:
+            return "skipped"
+
+        # 2. 无锁向上游核实支付结果
+        try:
+            provider = get_provider(order.provider)
+            query_res = provider.query_order(order_no)
+        except Exception as exc:
+            logger.warning("Failed to query order %s on provider: %s", order_no, exc)
+            query_res = None
+
+        # 3. 锁单复核（回调可能在此期间已把它置为 PAID）
         order = session.scalar(
             select(Order).where(Order.order_no == order_no).with_for_update()
         )
-        if order is not None and order.status == OrderStatus.PENDING:
+        if order is None or order.status != OrderStatus.PENDING:
+            return "skipped"
+
+        now = datetime.now(timezone.utc)
+
+        if query_res is not None and query_res.status == "paid":
+            if query_res.amount_fen != order.amount_fen:
+                logger.error(
+                    "[WINDUP] 上游支付金额与订单不符，保持 PENDING 待运营处理 | order_no=%s local=%s upstream=%s",
+                    order_no,
+                    order.amount_fen,
+                    query_res.amount_fen,
+                )
+                return "retry"
+            self._fulfill_order(session, order, query_res.provider_trade_no or "")
+            session.flush()
+            return "paid"
+
+        if query_res is not None and query_res.status in ("unpaid", "not_found"):
             order.status = OrderStatus.CLOSED
-            order.closed_at = datetime.now(timezone.utc)
+            order.closed_at = now
             session.flush()
             try:
-                provider = get_provider(order.provider)
                 provider.close_order(order_no)
             except Exception as exc:
                 logger.warning("Failed to close order %s on provider: %s", order_no, exc)
-            return True
-        return False
+            return "closed"
+
+        # unknown：过期超过宽限期仍无法核实上游时强关，留 ERROR 供运营追款
+        if now > order.expire_at + timedelta(hours=_FORCE_CLOSE_GRACE_HOURS):
+            logger.error(
+                "[WINDUP] 订单上游结果持续未知超过 %s 小时，强制关单 | order_no=%s",
+                _FORCE_CLOSE_GRACE_HOURS,
+                order_no,
+            )
+            order.status = OrderStatus.CLOSED
+            order.closed_at = now
+            session.flush()
+            return "closed"
+
+        return "retry"
 
     def process_expired_subscriptions(self, session: Session) -> int:
         """处理已到期的订阅，清零当期批次并轮转待生效订阅。"""
@@ -295,7 +454,16 @@ class SqlAlchemyBillService(BillService):
         count = 0
         for sub in expired_subs:
             count += 1
-            # 1. 查找对应的订阅积分批次并清零可用余额
+            # 锁序：先账户后批次（与 quota 服务的 reserve/capture/release 一致）。
+            # 旧实现批次→账户与 reserve 的账户→批次构成 AB-BA 死锁环。
+            account = session.scalar(
+                select(CreditAccount)
+                .where(CreditAccount.user_id == sub.user_id)
+                .with_for_update()
+            )
+
+            # 1. 查找对应的订阅积分批次并清零可用余额（锁内复核 remaining>0，
+            # 与 reserve 的惰性过期互斥，两边谁先清零谁写 expire 流水）
             batch = session.scalar(
                 select(CreditBatch)
                 .where(
@@ -312,11 +480,6 @@ class SqlAlchemyBillService(BillService):
                 batch.is_exhausted = 1 if batch.frozen == 0 else 0
 
                 # 同步扣减账户可用余额
-                account = session.scalar(
-                    select(CreditAccount)
-                    .where(CreditAccount.user_id == sub.user_id)
-                    .with_for_update()
-                )
                 if account is not None:
                     account.balance -= expired_amount
                     txn = CreditTransaction(

@@ -14,10 +14,15 @@ from windup_app.server.bill.provider import (
     ProviderCreateParams,
     ProviderCreateResult,
     ProviderNotifyResult,
+    ProviderQueryResult,
     register_provider,
 )
 from windup_common.enums.bill import PaymentProviderType
 from windup_framework.config.bill import settings as bill_settings
+
+# 未配置 WINDUP_BILL_EPAY_API_URL 时的回落地址（测试环境）。
+# 生产部署必须配置真实网关，否则下单不可用。
+_FALLBACK_API_URL = "https://pay.example.com"
 
 
 class EpayProvider(PaymentProvider):
@@ -29,13 +34,14 @@ class EpayProvider(PaymentProvider):
         key: str | None = None,
         notify_url: str | None = None,
         return_url: str | None = None,
-        api_url: str = "https://pay.example.com",
+        api_url: str | None = None,
     ) -> None:
         self.pid = pid if pid is not None else bill_settings.epay_pid
         self.key = key if key is not None else (bill_settings.epay_private_key or bill_settings.epay_public_key)
         self.notify_url = notify_url if notify_url is not None else bill_settings.epay_notify_url
         self.return_url = return_url if return_url is not None else bill_settings.epay_return_url
-        self.api_url = api_url.rstrip("/")
+        resolved_api_url = api_url if api_url is not None else (bill_settings.epay_api_url or _FALLBACK_API_URL)
+        self.api_url = resolved_api_url.rstrip("/")
 
     @staticmethod
     def sign_params(params: dict[str, Any], key: str) -> str:
@@ -111,6 +117,82 @@ class EpayProvider(PaymentProvider):
             amount_fen=amount_fen,
             status=trade_status,
             raw_payload=payload,
+        )
+
+    def query_order(self, order_no: str) -> ProviderQueryResult:
+        """主动向上游网关查询订单支付结果。
+
+        各易支付网关 ``api.php?act=order`` 响应契约不完全一致（字段名 money/status/
+        trade_status 混用），因此只在能明确判定时返回 paid/unpaid/not_found，
+        其余一律 unknown —— 调用方在 unknown 下不得迁移订单终态。
+        """
+        params = {
+            "act": "order",
+            "pid": self.pid,
+            "out_trade_no": order_no,
+        }
+        params["sign"] = self.sign_params(params, self.key)
+        params["sign_type"] = "MD5"
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(
+                    f"{self.api_url}/api.php",
+                    params={k: v for k, v in params.items() if k != "act"},
+                )
+                if resp.status_code != 200:
+                    return self._unknown_result(order_no, {"http_status": resp.status_code})
+                try:
+                    data = resp.json()
+                except ValueError:
+                    return self._unknown_result(order_no, {"body": resp.text[:500]})
+        except Exception as exc:
+            return self._unknown_result(order_no, {"error": repr(exc)})
+
+        code = data.get("code")
+        if code not in (0, 1, "0", "1"):
+            # 网关返回业务错误码：-1 等通常代表订单不存在，但各网关语义不一，统一 not_found
+            # 之外的错误（签名失败、系统异常）无法区分，保守返回 unknown。
+            return self._unknown_result(order_no, data)
+        if code in (0, "0"):
+            return ProviderQueryResult(
+                order_no=order_no,
+                provider_trade_no=None,
+                amount_fen=0,
+                status="not_found",
+                raw_data=data,
+            )
+
+        trade_status = str(data.get("trade_status") or data.get("status") or "").upper()
+        provider_trade_no = data.get("trade_no")
+        money = data.get("money")
+        amount_fen = int(round(float(money) * 100)) if money is not None else 0
+
+        if trade_status in ("TRADE_SUCCESS", "SUCCESS") or data.get("status") == 1:
+            return ProviderQueryResult(
+                order_no=order_no,
+                provider_trade_no=str(provider_trade_no) if provider_trade_no else None,
+                amount_fen=amount_fen,
+                status="paid",
+                raw_data=data,
+            )
+        if trade_status in ("TRADE_PENDING", "WAIT_BUYER_PAY", "UNPAY", "NOTPAY", "WAIT"):
+            return ProviderQueryResult(
+                order_no=order_no,
+                provider_trade_no=str(provider_trade_no) if provider_trade_no else None,
+                amount_fen=amount_fen,
+                status="unpaid",
+                raw_data=data,
+            )
+        return self._unknown_result(order_no, data)
+
+    @staticmethod
+    def _unknown_result(order_no: str, raw: dict[str, Any]) -> ProviderQueryResult:
+        return ProviderQueryResult(
+            order_no=order_no,
+            provider_trade_no=None,
+            amount_fen=0,
+            status="unknown",
+            raw_data=raw,
         )
 
     def close_order(self, order_no: str) -> bool:

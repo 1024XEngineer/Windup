@@ -41,6 +41,8 @@ async def epay_notify(
         logger.warning("[WINDUP] 收到的易支付回调 payload 为空")
         return PlainTextResponse("fail")
 
+    logger.info("[WINDUP] 收到易支付回调 | payload=%s", payload)
+
     try:
         bill_service.handle_notify(session, payload)
         return PlainTextResponse("success")

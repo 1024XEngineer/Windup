@@ -49,7 +49,6 @@ from windup_app.web.api.project import router as project_router
 from windup_app.web.api.quota import router as quota_router
 from windup_app.web.api.bill import router as bill_router
 from windup_app.web.api.bill_notify import router as bill_notify_router
-from windup_app.web.api.admin_bill import router as admin_bill_router
 from windup_app.web.api.render3d import router as render3d_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
@@ -125,35 +124,52 @@ async def _lifespan(app: FastAPI):
     import time
     from windup_framework.db.redis import get_redis
 
+    # 关单重试间隔（秒）：unknown 结果延后重试的间隔
+    _CLOSE_RETRY_DELAY = 600
+
     async def _bill_pending_close_worker():
-        """Polling bill:pending_close zset for expired orders."""
+        """Polling bill:pending_close zset for expired orders.
+
+        bump-then-process：取出 order_no 后先把 score 推到 now+600s，只有终态
+        （closed/paid/skipped）才 zrem。崩溃最多延迟 600s 重试不丢单，兼治多
+        实例重复处理（score>now 不会被再次选出）。每单处理体包 to_thread，
+        同步 httpx + DB 不再阻塞事件循环。
+        """
         logger = logging.getLogger("windup.bill.worker.pending_close")
         logger.info("Bill pending close worker started.")
         while True:
             try:
                 now_ts = int(time.time())
-                # Get orders to close
-                # ZRANGEBYSCORE bill:pending_close 0 now_ts
                 redis_client = get_redis()
                 orders = redis_client.zrangebyscore("bill:pending_close", 0, now_ts)
                 for order_no in orders:
-                    # Decoding bytes to str
                     if isinstance(order_no, bytes):
                         order_no = order_no.decode("utf-8")
+                    # 先 bump score，防止崩溃丢单与多实例重复处理
+                    redis_client.zadd(
+                        "bill:pending_close",
+                        {order_no: now_ts + _CLOSE_RETRY_DELAY},
+                    )
                     try:
-                        with SessionLocal() as db_session:
-                            bill_service.close_expired_orders(db_session, order_no)
-                            db_session.commit()
-                        # If success, remove from zset
-                        redis_client.zrem("bill:pending_close", order_no)
+                        result = await asyncio.to_thread(
+                            _close_one_order, order_no
+                        )
+                        if result in ("closed", "paid", "skipped"):
+                            redis_client.zrem("bill:pending_close", order_no)
                     except Exception as e:
                         logger.error(f"Error closing order {order_no}: {e}")
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in bill pending close worker: {e}")
             await asyncio.sleep(10)
+
+    def _close_one_order(order_no: str) -> str:
+        """在线程池中处理单个订单的关单逻辑。"""
+        with SessionLocal() as db_session:
+            result = bill_service.close_expired_orders(db_session, order_no)
+            db_session.commit()
+            return result
 
     async def _subscription_expired_worker():
         """Polling expired subscriptions."""
@@ -161,14 +177,18 @@ async def _lifespan(app: FastAPI):
         logger.info("Subscription expiration worker started.")
         while True:
             try:
-                with SessionLocal() as db_session:
-                    bill_service.process_expired_subscriptions(db_session)
-                    db_session.commit()
+                await asyncio.to_thread(_process_subscriptions_once)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error processing expired subscriptions: {e}")
             await asyncio.sleep(60)
+
+    def _process_subscriptions_once() -> None:
+        """在线程池中处理一轮订阅过期。"""
+        with SessionLocal() as db_session:
+            bill_service.process_expired_subscriptions(db_session)
+            db_session.commit()
 
     bill_close_task = asyncio.create_task(_bill_pending_close_worker())
     sub_expire_task = asyncio.create_task(_subscription_expired_worker())
@@ -238,7 +258,6 @@ def create_app() -> FastAPI:
     app.include_router(admin_quota_router)
     app.include_router(bill_router)
     app.include_router(bill_notify_router)
-    app.include_router(admin_bill_router)
     app.include_router(render3d_router)
     app.include_router(agent_router)
     app.include_router(action_preset_router)

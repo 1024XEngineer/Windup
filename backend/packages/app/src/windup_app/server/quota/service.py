@@ -252,11 +252,48 @@ class SqlAlchemyQuotaService(QuotaService):
 
     # -- 预付费：冻结 / 扣减 / 解冻 ----------------------------------------
 
+    def _expire_stale_batches(self, session: Session, user_id: int, account: CreditAccount) -> None:
+        """惰性过期：清零已过有效期但余额未清的批次。
+
+        订阅批次依赖 60s 轮询 worker 清零，但 worker 与任意一次 reserve 之间没有
+        原子屏障——不做这一步，过期额度会先通过账户余额检查，再因批次查询排除
+        过期批次而落进 legacy fallback，被转成无期限积分。
+        """
+        now = _now()
+        stale_batches = session.scalars(
+            select(CreditBatch)
+            .where(
+                CreditBatch.user_id == user_id,
+                CreditBatch.remaining > 0,
+                CreditBatch.expires_at.is_not(None),
+                CreditBatch.expires_at <= now,
+            )
+            .with_for_update()
+        ).all()
+        for batch in stale_batches:
+            expired_amount = batch.remaining
+            batch.remaining = 0
+            batch.is_exhausted = 1 if batch.frozen == 0 else 0
+            account.balance -= expired_amount
+            # ref 与 worker 的 expire:sub:{id} 不同源，UniqueConstraint 保证幂等
+            self._write_txn(
+                session,
+                user_id,
+                -expired_amount,
+                CreditReason.SUBSCRIPTION_EXPIRE,
+                BillingMode.PREPAID,
+                account.balance,
+                f"lazy:batch:{batch.id}",
+            )
+
     def reserve_credit(
         self, session: Session, user_id: int, amount: int, ref_id: str
     ) -> None:
         """预付费冻结：balance -= amount, frozen += amount。"""
         account = self._get_account_for_update(session, user_id)
+
+        # 批次扣减前先清掉已过期未清零的批次，保证余额检查与批次视图一致
+        self._expire_stale_batches(session, user_id, account)
 
         if account.balance < amount:
             raise BizException(
@@ -307,6 +344,12 @@ class SqlAlchemyQuotaService(QuotaService):
 
         # 兼容旧数据/测试环境未预置 batch 的情况
         if remaining_to_reserve > 0:
+            logger.warning(
+                "[WINDUP] 积分批次不足，回退 legacy 批次 | user_id=%s gap=%s ref_id=%s",
+                user_id,
+                remaining_to_reserve,
+                ref_id,
+            )
             legacy_batch = CreditBatch(
                 user_id=user_id,
                 source_type=int(CreditReason.REGISTER_GIFT),
@@ -359,6 +402,10 @@ class SqlAlchemyQuotaService(QuotaService):
 
         若 actual_amount < frozen_amount，差额退回 balance。
         同一 ``ref_id`` 已有 CAPTURED 流水则跳过（MQ 重投幂等）。
+
+        差额返还按各分配批次的 ``expires_at`` 拆分：冻结跨越了批次有效期时
+        （任务冻结于到期前、结算于到期清理后），过期部分只解除冻结并记过期
+        流水，不回可用余额，避免复活已过期的订阅额度。
         """
         account = self._get_account_for_update(session, user_id)
         if self._txn_for(session, ref_id, int(CreditReason.CAPTURED)) is not None:
@@ -376,11 +423,6 @@ class SqlAlchemyQuotaService(QuotaService):
         # 实际消耗
         account.total_spent += actual_amount
 
-        # 差额退回
-        refund = frozen_amount - actual_amount
-        if refund > 0:
-            account.balance += refund
-
         # 批次结算：查找 freeze_ref == ref_id and status == 1
         allocs = session.scalars(
             select(CreditFreezeAlloc)
@@ -392,6 +434,8 @@ class SqlAlchemyQuotaService(QuotaService):
             .with_for_update()
         ).all()
 
+        refundable = 0
+        expired_refund = 0
         remaining_actual = actual_amount
         for alloc in allocs:
             batch = session.scalar(
@@ -406,13 +450,21 @@ class SqlAlchemyQuotaService(QuotaService):
                 # 实际扣减
                 deduct = min(alloc_amt, remaining_actual)
                 remaining_actual -= deduct
-                # 差额退回到 batch 余额
+                # 差额：未过期的回批次余额，已过期的只解冻
                 batch_refund = alloc_amt - deduct
                 if batch_refund > 0:
-                    batch.remaining += batch_refund
+                    if batch.expires_at is not None and _is_expired(batch.expires_at):
+                        expired_refund += batch_refund
+                    else:
+                        batch.remaining += batch_refund
+                        refundable += batch_refund
                 batch.is_exhausted = 1 if (batch.remaining == 0 and batch.frozen == 0) else 0
 
             alloc.status = 2  # 2=CAPTURED
+
+        # 差额退回：只加未过期部分
+        if refundable > 0:
+            account.balance += refundable
 
         session.flush()
 
@@ -428,23 +480,35 @@ class SqlAlchemyQuotaService(QuotaService):
         )
 
         # 有差额退回时写退款流水（用不同 reason 区分，ref_id 加后缀去重）
-        if refund > 0:
+        if refundable > 0:
             self._write_txn(
                 session,
                 user_id,
-                refund,
+                refundable,
                 CreditReason.REFUND,
                 BillingMode.PREPAID,
                 account.balance,
                 f"{ref_id}:refund",
             )
+        # 过期部分写 delta=0 的标记流水：留审计痕迹且不影响 Σdelta
+        if expired_refund > 0:
+            self._write_txn(
+                session,
+                user_id,
+                0,
+                CreditReason.SUBSCRIPTION_EXPIRE,
+                BillingMode.PREPAID,
+                account.balance,
+                f"{ref_id}:refund_expired",
+            )
 
         logger.info(
-            "[WINDUP] 积分扣减 | user_id=%s actual=%s frozen=%s refund=%s balance=%s",
+            "[WINDUP] 积分扣减 | user_id=%s actual=%s frozen=%s refund=%s expired_refund=%s balance=%s",
             user_id,
             actual_amount,
             frozen_amount,
-            refund,
+            refundable,
+            expired_refund,
             account.balance,
         )
 
@@ -454,6 +518,11 @@ class SqlAlchemyQuotaService(QuotaService):
         """预付费解冻：frozen -= amount, balance += amount。
 
         同一 ``ref_id`` 已有解冻流水则跳过（MQ 重投幂等）。
+
+        返还按各分配批次的 ``expires_at`` 拆分：冻结跨越批次有效期时（任务冻结于
+        到期前、失败解冻于到期清理后），过期部分只解除冻结并记过期流水，不回
+        可用余额，避免复活已过期的订阅额度。幂等标记流水的 delta 写未过期返还额
+        （全额过期时为 0），保证部分过期场景下 Σdelta 与 balance 变化一致。
         """
         account = self._get_account_for_update(session, user_id)
         if self._txn_for(session, f"{ref_id}:release", int(CreditReason.REFUND)) is not None:
@@ -467,7 +536,6 @@ class SqlAlchemyQuotaService(QuotaService):
             )
 
         account.frozen -= amount
-        account.balance += amount
 
         # 批次解冻：查找 freeze_ref == ref_id and status == 1
         allocs = session.scalars(
@@ -480,6 +548,8 @@ class SqlAlchemyQuotaService(QuotaService):
             .with_for_update()
         ).all()
 
+        refundable = 0
+        expired_release = 0
         remaining_to_release = amount
         for alloc in allocs:
             if remaining_to_release <= 0:
@@ -491,29 +561,50 @@ class SqlAlchemyQuotaService(QuotaService):
                 .with_for_update()
             )
             if batch is not None:
-                batch.remaining += release_amt
+                if batch.expires_at is not None and _is_expired(batch.expires_at):
+                    # 过期：只解冻，不回批次余额
+                    expired_release += release_amt
+                else:
+                    batch.remaining += release_amt
+                    refundable += release_amt
                 batch.frozen -= release_amt
                 batch.is_exhausted = 1 if (batch.remaining == 0 and batch.frozen == 0) else 0
 
             alloc.status = 3  # 3=RELEASED
             remaining_to_release -= release_amt
 
+        # 可用余额只回加未过期部分
+        if refundable > 0:
+            account.balance += refundable
+
         session.flush()
 
         self._write_txn(
             session,
             user_id,
-            amount,
+            refundable,
             CreditReason.REFUND,
             BillingMode.PREPAID,
             account.balance,
             f"{ref_id}:release",
         )
+        if expired_release > 0:
+            self._write_txn(
+                session,
+                user_id,
+                0,
+                CreditReason.SUBSCRIPTION_EXPIRE,
+                BillingMode.PREPAID,
+                account.balance,
+                f"{ref_id}:release_expired",
+            )
 
         logger.info(
-            "[WINDUP] 积分解冻 | user_id=%s amount=%s ref_id=%s balance=%s",
+            "[WINDUP] 积分解冻 | user_id=%s amount=%s refundable=%s expired=%s ref_id=%s balance=%s",
             user_id,
             amount,
+            refundable,
+            expired_release,
             ref_id,
             account.balance,
         )

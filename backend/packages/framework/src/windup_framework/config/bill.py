@@ -21,6 +21,7 @@ class BillSettings(BaseSettings):
     epay_public_key: str = ""
     epay_notify_url: str = ""
     epay_return_url: str = ""
+    epay_api_url: str = ""
 
 
 settings = BillSettings()

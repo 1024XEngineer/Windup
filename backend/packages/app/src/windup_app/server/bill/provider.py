@@ -5,7 +5,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from windup_common.enums.bill import PaymentProviderType
 
@@ -45,6 +45,22 @@ class ProviderNotifyResult:
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class ProviderQueryResult:
+    """主动查询上游订单结果。
+
+    status 四态：paid（已支付，金额带回应由调用方校验）、unpaid（明确的未支付）、
+    not_found（上游查无此单）、unknown（网关不可达 / 响应不可解析 / 契约不符）。
+    unknown 语义下调用方不得迁移任何终态，只能保持可重试状态。
+    """
+
+    order_no: str
+    provider_trade_no: str | None
+    amount_fen: int
+    status: Literal["paid", "unpaid", "not_found", "unknown"]
+    raw_data: dict[str, Any] = field(default_factory=dict)
+
+
 class PaymentProvider(ABC):
     """支付提供商抽象基类。"""
 
@@ -55,6 +71,10 @@ class PaymentProvider(ABC):
     @abstractmethod
     def verify_notify(self, payload: dict[str, Any]) -> ProviderNotifyResult:
         """验证异步回调通知签名并解析标准化支付结果。"""
+
+    @abstractmethod
+    def query_order(self, order_no: str) -> ProviderQueryResult:
+        """向上游支付通道主动查询订单支付结果。"""
 
     @abstractmethod
     def close_order(self, order_no: str) -> bool:

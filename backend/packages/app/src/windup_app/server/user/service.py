@@ -25,7 +25,7 @@ from windup_common.enums.quota import CreditReason
 from windup_common.exceptions import BizException
 from windup_framework.config.quota import settings as quota_settings
 
-from windup_app.server.quota.model import CreditAccount, CreditTransaction
+from windup_app.server.quota.model import CreditAccount, CreditBatch, CreditTransaction
 from windup_app.server.user.interface import UserService
 from windup_app.server.mq.catalog import EMAIL_STREAM, MSG_TYPE_VERIFICATION_CODE
 from windup_app.server.user.model import (
@@ -641,7 +641,11 @@ class SqlAlchemyUserService(UserService):
     # -- 内部方法 --------------------------------------------------------
 
     def _create_credit_account(self, session: Session, user_id: int) -> None:
-        """注册时创建积分账户并赠送初始积分。"""
+        """注册时创建积分账户并赠送初始积分。
+
+        赠送积分同时写入一个无有效期的 CreditBatch，保证新账户的可用余额
+        全部由批次承载（批次余额与账户余额的口径一致）。
+        """
         account = CreditAccount(
             user_id=user_id,
             balance=quota_settings.register_gift_amount,
@@ -650,7 +654,18 @@ class SqlAlchemyUserService(UserService):
             total_spent=0,
         )
         session.add(account)
-        session.flush()
+
+        batch = CreditBatch(
+            user_id=user_id,
+            source_type=int(CreditReason.REGISTER_GIFT),
+            source_ref=f"register:{user_id}",
+            total=quota_settings.register_gift_amount,
+            remaining=quota_settings.register_gift_amount,
+            frozen=0,
+            expires_at=None,
+            is_exhausted=0,
+        )
+        session.add(batch)
 
         txn = CreditTransaction(
             user_id=user_id,

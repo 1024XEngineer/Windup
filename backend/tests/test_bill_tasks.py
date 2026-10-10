@@ -2,15 +2,33 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+from windup_app.server.bill.epay import EpayProvider
 from windup_app.server.bill.model import Order, Subscription
+from windup_app.server.bill.provider import ProviderQueryResult
 from windup_app.server.bill.service import service as bill_service
 from windup_app.server.quota.model import CreditAccount, CreditBatch, CreditTransaction
 from windup_common.enums.bill import OrderStatus, PaymentProviderType, SubscriptionStatus, SubscriptionTier
 from windup_common.enums.quota import CreditReason
 
 
-def test_close_expired_orders(db_session):
+def _patch_query_unpaid(monkeypatch):
+    """让 EpayProvider.query_order 返回 unpaid，避免真实 HTTP 请求。"""
+    monkeypatch.setattr(
+        EpayProvider,
+        "query_order",
+        lambda self, order_no: ProviderQueryResult(
+            order_no=order_no,
+            provider_trade_no=None,
+            amount_fen=0,
+            status="unpaid",
+            raw_data={},
+        ),
+    )
+
+
+def test_close_expired_orders(db_session, monkeypatch):
     """Test closing an expired PENDING order."""
+    _patch_query_unpaid(monkeypatch)
     now = datetime.now(timezone.utc)
     order = Order(
         order_no="TEST_CLOSE_01",
@@ -29,15 +47,16 @@ def test_close_expired_orders(db_session):
 
     # Close the order
     result = bill_service.close_expired_orders(db_session, "TEST_CLOSE_01")
-    assert result is True
+    assert result == "closed"
 
     # Verify status and closed_at
     closed_order = db_session.scalar(select(Order).where(Order.order_no == "TEST_CLOSE_01"))
     assert closed_order.status == OrderStatus.CLOSED
     assert closed_order.closed_at is not None
 
-def test_close_expired_orders_non_pending(db_session):
+def test_close_expired_orders_non_pending(db_session, monkeypatch):
     """Test closing ignores non-PENDING orders."""
+    _patch_query_unpaid(monkeypatch)
     now = datetime.now(timezone.utc)
     order = Order(
         order_no="TEST_CLOSE_02",
@@ -57,7 +76,7 @@ def test_close_expired_orders_non_pending(db_session):
 
     # Attempt to close
     result = bill_service.close_expired_orders(db_session, "TEST_CLOSE_02")
-    assert result is False
+    assert result == "skipped"
 
     # Verify untouched
     unchanged_order = db_session.scalar(select(Order).where(Order.order_no == "TEST_CLOSE_02"))

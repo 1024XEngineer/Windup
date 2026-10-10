@@ -85,41 +85,6 @@
         "title": "AdminAccessOut",
         "type": "object"
       },
-      "AdminRefundIn": {
-        "properties": {
-          "amount_fen": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Amount Fen"
-          },
-          "order_no": {
-            "title": "Order No",
-            "type": "string"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          }
-        },
-        "required": [
-          "order_no"
-        ],
-        "title": "AdminRefundIn",
-        "type": "object"
-      },
       "ArtStyle": {
         "description": "项目的美术风格。\n\n只有 ``PIXEL`` 改变管线行为(出帧吸附母版像素网格、颜色吸回母版色板),其余取值\n只进提示词。像素网格密度不在这一维 —— 它由目标分辨率定,两处各定一遍会打架。",
         "enum": [
@@ -4356,50 +4321,6 @@
         "title": "Response[dict]",
         "type": "object"
       },
-      "Response_dict_str__Any__": {
-        "properties": {
-          "code": {
-            "default": 200,
-            "description": "业务状态码:成功 200,失败非 200",
-            "title": "Code",
-            "type": "integer"
-          },
-          "data": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "业务数据",
-            "title": "Data"
-          },
-          "message": {
-            "default": "success",
-            "description": "提示信息",
-            "title": "Message",
-            "type": "string"
-          },
-          "timestamp": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "响应时间;默认不携带,不携带时省略",
-            "title": "Timestamp"
-          }
-        },
-        "title": "Response[dict[str, Any]]",
-        "type": "object"
-      },
       "SendCodeRequest": {
         "description": "发送验证码请求。",
         "properties": {
@@ -4980,48 +4901,6 @@
         "summary": "List Action Presets",
         "tags": [
           "action-presets"
-        ]
-      }
-    },
-    "/admin/bill/refunds": {
-      "post": {
-        "description": "管理员手动发起退款（开发占位）。",
-        "operationId": "admin_refund_admin_bill_refunds_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AdminRefundIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response_dict_str__Any__"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Admin Refund",
-        "tags": [
-          "admin_bill"
         ]
       }
     },
@@ -5887,7 +5766,7 @@
     },
     "/bill/orders/{order_no}": {
       "get": {
-        "description": "查询订单详情。",
+        "description": "查询订单详情（回调丢失时向上游补偿查询）。",
         "operationId": "get_order_bill_orders__order_no__get",
         "parameters": [
           {
@@ -5930,7 +5809,7 @@
     },
     "/bill/orders/{order_no}/close": {
       "post": {
-        "description": "手动关闭待支付的订单。",
+        "description": "手动关闭待支付的订单。\n\nservice 内部先向上游核实支付结果：上游未支付才置 CLOSED，已支付则补发货，\n结果不确定时返回 \"retry\"。",
         "operationId": "close_order_bill_orders__order_no__close_post",
         "parameters": [
           {

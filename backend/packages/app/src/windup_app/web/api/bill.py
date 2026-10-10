@@ -174,13 +174,10 @@ def get_order(
     request: Request = None,
     session: Session = Depends(get_session),
 ) -> Response[OrderOut]:
-    """查询订单详情。"""
+    """查询订单详情（回调丢失时向上游补偿查询）。"""
     user_id = request.state.current_user.id
 
-    order = session.scalar(
-        select(Order)
-        .where(Order.order_no == order_no)
-    )
+    order = bill_service.query_order(session, order_no)
 
     if order is None or order.user_id != user_id:
         raise BizException("订单不存在", code=BizCode.NOT_FOUND)
@@ -194,13 +191,15 @@ def close_order(
     request: Request = None,
     session: Session = Depends(get_session),
 ) -> Response[None]:
-    """手动关闭待支付的订单。"""
+    """手动关闭待支付的订单。
+
+    service 内部先向上游核实支付结果：上游未支付才置 CLOSED，已支付则补发货，
+    结果不确定时返回 "retry"。
+    """
     user_id = request.state.current_user.id
 
     order = session.scalar(
-        select(Order)
-        .where(Order.order_no == order_no)
-        .with_for_update()
+        select(Order).where(Order.order_no == order_no)
     )
 
     if order is None or order.user_id != user_id:
@@ -210,7 +209,9 @@ def close_order(
     if order.status != OrderStatus.PENDING:
         raise BizException("只能关闭待支付的订单", code=BizCode.BAD_REQUEST)
 
-    bill_service.close_expired_orders(session, order_no)
+    result = bill_service.close_expired_orders(session, order_no)
+    if result == "retry":
+        raise BizException("上游关单结果未确认，请稍后重试", code=BizCode.BAD_REQUEST)
 
     return Response.success(None)
 

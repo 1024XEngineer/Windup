@@ -4,6 +4,7 @@
 """
 
 from abc import ABC, abstractmethod
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -31,8 +32,14 @@ class BillService(ABC):
         """查询订单详情（必要时向上游渠道补偿查询）。"""
 
     @abstractmethod
-    def close_expired_orders(self, session: Session, order_no: str):
-        """关闭超时未支付的订单。"""
+    def close_expired_orders(
+        self, session: Session, order_no: str
+    ) -> Literal["closed", "paid", "retry", "skipped"]:
+        """关闭超时未支付的订单。
+
+        先向上游核实支付结果：确认未支付才迁移 CLOSED；上游已支付的补发货；
+        结果不确定时保持 PENDING 并返回 "retry"，由调用方延后重试。
+        """
 
     @abstractmethod
     def process_expired_subscriptions(self, session: Session):
