@@ -7,6 +7,7 @@ const stage = vi.hoisted(() => ({
   clips: { walk: 1.0667 } as Record<string, number>,
   coverage: 0.01,
   luma: 148,
+  lumaFn: null as null | (() => number),
   setups: [] as Array<[string, number, number]>,
   yaw: null as number | null,
   disposed: 0,
@@ -37,7 +38,7 @@ vi.mock('./stage', async () => {
             return i * 0.1
           },
           coverage: () => stage.coverage,
-          subjectLuma: () => stage.luma,
+          subjectLuma: () => (stage.lumaFn ? stage.lumaFn() : stage.luma),
           rigInfo: () => ({
             loader: 'gltf',
             rootBone: 'Hips',
@@ -71,6 +72,7 @@ beforeEach(() => {
   stage.clips = { walk: 1.0667 }
   stage.coverage = 0.01
   stage.luma = 148
+  stage.lumaFn = null
   stage.setups = []
   stage.yaw = null
   stage.disposed = 0
@@ -118,9 +120,25 @@ describe('浏览器出帧驱动', () => {
     expect(stage.disposed).toBe(1)
   })
 
-  it('主体是纯黑时当场失败 —— 覆盖率那道闸拦不住它', async () => {
-    // 贴图还没传上 GPU 就渲的话,模型是个纯黑剪影,而它的 alpha 占比与正常帧
-    // **一模一样**(线上实测 0.101 对 0.101)—— 只数 alpha 的闸放它过去。
+  it('第一帧是黑的先等一下再看,好了就继续 —— 那是贴图还在解码,几百毫秒能自愈', async () => {
+    // compileAsync 只保证着色器编译与已解码贴图的上传,不等图片本身解码,
+    // 实测线上仍会在第 0 帧撞上。直接失败等于把一个能自愈的状况变成整单报废。
+    let calls = 0
+    stage.lumaFn = () => (++calls <= 2 ? 0 : 148)
+    const waits: number[] = []
+    const apis = stubRender3DApis({})
+    await runClientBake({
+      job: bakeJob(),
+      apis,
+      sleep: async (ms) => {
+        waits.push(ms)
+      },
+    })
+    expect(waits.length).toBeGreaterThan(0) // 确实等过
+    expect(calls).toBeGreaterThan(2) // 重试之后才拿到正常亮度
+  })
+
+  it('等满了还是黑才失败,并且不把那一帧传上去', async () => {
     stage.luma = 0
     const uploaded: number[] = []
     let failed = ''
@@ -134,7 +152,9 @@ describe('浏览器出帧驱动', () => {
         failed = reason
       },
     })
-    await expect(runClientBake({ job: bakeJob(), apis })).rejects.toThrow('纯黑')
+    await expect(runClientBake({ job: bakeJob(), apis, sleep: async () => {} })).rejects.toThrow(
+      '纯黑',
+    )
     expect(uploaded).toEqual([])
     expect(failed).toContain('纯黑')
   })
