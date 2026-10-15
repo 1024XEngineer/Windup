@@ -1,51 +1,106 @@
-import { useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useSearchParams } from 'react-router'
-import { ArrowUpRight, Check, Plus, X } from '@phosphor-icons/react'
+import { ArrowUpRight, Check, Plus } from '@phosphor-icons/react'
+import { BILL_PRODUCT_TYPE, billApis } from '@/entities'
+import type { BillApis, BillOrder } from '@/entities'
+import {
+  subscriptionName,
+  topUpQuote,
+  useBillOrders,
+  useBillProducts,
+  useSubscriptionStatus,
+} from '@/features/billing'
+import { CheckoutDialog } from './checkout-dialog'
+import type { PurchaseSelection } from './checkout-dialog'
+import { OrderHistory } from './order-history'
+import { credits as formatCredits, moment } from './presentation'
 import './subscription.css'
 
-const plans = [
-  {
-    name: 'Plus',
-    price: 29,
-    credits: 400,
-    saving: '9.4%',
-    unit: '0.0725',
-  },
-  {
-    name: 'Pro',
-    price: 99,
-    credits: 1500,
-    saving: '17.5%',
-    unit: '0.0660',
-  },
-  {
-    name: 'Max',
-    price: 199,
-    credits: 3200,
-    saving: '22.3%',
-    unit: '0.0622',
-  },
-]
 const amounts = [5, 10, 20, 30, 40, 100]
 
-export function SubscriptionPage() {
+interface SubscriptionPageProps {
+  apis?: BillApis
+  navigateToPayment?: (url: string) => void
+}
+
+const navigateToCashier = (url: string) => window.location.assign(url)
+
+export function SubscriptionPage({
+  apis = billApis,
+  navigateToPayment = navigateToCashier,
+}: SubscriptionPageProps = {}) {
   const [params, setParams] = useSearchParams()
   const recharge = params.get('tab') === 'credits'
+  const orderNo = params.get('order_no') || params.get('out_trade_no')
   const [amount, setAmount] = useState('20')
-  const [selectedPlan, setSelectedPlan] = useState<string | null>(null)
-  const [selection, setSelection] = useState<{
-    name: string
-    price: number
-    credits: number
-  } | null>(null)
-  const dialog = useRef<HTMLDialogElement>(null)
+  const [selectedPlan, setSelectedPlan] = useState<number | null>(null)
+  const [selection, setSelection] = useState<PurchaseSelection | null>(null)
+  const [page, setPage] = useState(1)
+  const products = useBillProducts(apis)
+  const subscription = useSubscriptionStatus(true, apis)
+  const history = useBillOrders(page, apis)
+  const reloadSubscription = subscription.reload
+  const reloadHistory = history.reload
+  const onPaid = useCallback(() => {
+    reloadSubscription()
+    reloadHistory()
+  }, [reloadSubscription, reloadHistory])
+  const plans = products.data?.filter((item) => item.type === BILL_PRODUCT_TYPE.SUBSCRIPTION) ?? []
+  const current = subscription.data?.activeSubscription
+  const next = subscription.data?.nextSubscription
+  const currentPlan = subscription.data ? subscriptionName(current?.tier) : '—'
+  const quote = topUpQuote(amount)
+  const valid = quote !== null
   const value = Number(amount)
-  const valid = /^\d+$/.test(amount) && Number.isSafeInteger(value * 100) && value >= 5
-  const credits = valid ? Math.ceil((value * 100) / 8) : 0
-  function preview(item: { name: string; price: number; credits: number }) {
-    setSelection(item)
-    dialog.current?.showModal()
+  const credits = quote?.credits ?? 0
+
+  function changeTab(tab: 'plans' | 'credits') {
+    setParams((current) => {
+      const next = new URLSearchParams(current)
+      if (tab === 'credits') next.set('tab', 'credits')
+      else next.delete('tab')
+      return next
+    })
   }
+
+  function showOrder(order: BillOrder) {
+    // 订单号写回路由后才切换弹窗内容，避免下单结束与路由更新之间卸载弹窗。
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current)
+        next.delete('out_trade_no')
+        next.set('order_no', order.orderNo)
+        return next
+      },
+      { replace: true },
+    )
+    reloadHistory()
+  }
+
+  function closeCheckout() {
+    setSelection(null)
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current)
+        for (const key of [
+          'order_no',
+          'out_trade_no',
+          'trade_no',
+          'trade_status',
+          'sign',
+          'sign_type',
+          'money',
+          'type',
+          'pid',
+          'name',
+        ])
+          next.delete(key)
+        return next
+      },
+      { replace: true },
+    )
+  }
+
   return (
     <main className="subscription-page">
       <header className="subscription-heading">
@@ -53,10 +108,10 @@ export function SubscriptionPage() {
       </header>
       <div className="subscription-toolbar">
         <div className="subscription-tabs" aria-label="购买类型">
-          <button aria-pressed={!recharge} onClick={() => setParams({})}>
+          <button aria-pressed={!recharge} onClick={() => changeTab('plans')}>
             会员套餐
           </button>
-          <button aria-pressed={recharge} onClick={() => setParams({ tab: 'credits' })}>
+          <button aria-pressed={recharge} onClick={() => changeTab('credits')}>
             积分充值
           </button>
         </div>
@@ -101,7 +156,7 @@ export function SubscriptionPage() {
           </div>
           <div className="recharge-summary">
             <p>本次将获得</p>
-            <strong>
+            <strong aria-label="本次到账积分">
               {valid ? credits.toLocaleString('zh-CN') : '—'}
               <span> 积分</span>
             </strong>
@@ -112,51 +167,88 @@ export function SubscriptionPage() {
             </div>
             <div>
               <span>当前方案</span>
-              <span>Free</span>
+              <span>{currentPlan}</span>
             </div>
             <button
               className="subscription-button primary"
               disabled={!valid}
-              onClick={() => preview({ name: '积分充值', price: value, credits })}
+              onClick={() => {
+                if (quote) setSelection({ name: '积分充值', ...quote, kind: 'topup' })
+              }}
             >
               充值积分 <ArrowUpRight size={17} />
             </button>
             <small>充值只增加积分，不改变会员资格。</small>
           </div>
         </section>
+      ) : products.error ? (
+        <div className="py-6 text-center">
+          <p role="alert" className="text-sm text-app-danger">
+            {products.error}
+          </p>
+          <button
+            type="button"
+            onClick={products.reload}
+            className="mt-3 text-sm underline underline-offset-4"
+          >
+            重新加载套餐
+          </button>
+        </div>
+      ) : products.data === null ? (
+        <p role="status" className="py-6 text-center text-sm text-app-muted">
+          正在加载套餐…
+        </p>
+      ) : plans.length === 0 ? (
+        <p className="py-6 text-center text-sm text-app-muted">暂无在售套餐</p>
       ) : (
         <div className="subscription-plans">
-          {plans.map((plan, index) => (
+          {plans.map((plan) => (
             <article
-              key={plan.name}
-              className={`subscription-plan ${index === 1 ? 'recommended' : ''} ${selectedPlan === plan.name ? 'selected' : ''}`}
-              onClick={() => setSelectedPlan(plan.name)}
+              key={plan.id}
+              className={`subscription-plan ${plan.badge ? 'recommended' : ''} ${selectedPlan === plan.id ? 'selected' : ''}`}
+              onClick={() => setSelectedPlan(plan.id)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
+                if (
+                  event.target === event.currentTarget &&
+                  (event.key === 'Enter' || event.key === ' ')
+                ) {
                   event.preventDefault()
-                  setSelectedPlan(plan.name)
+                  setSelectedPlan(plan.id)
                 }
               }}
               role="button"
               tabIndex={0}
-              aria-pressed={selectedPlan === plan.name}
+              aria-pressed={selectedPlan === plan.id}
             >
               <div className="subscription-plan-head">
-                {index === 1 && <span className="subscription-recommended">最受欢迎</span>}
+                {plan.badge && <span className="subscription-recommended">{plan.badge}</span>}
               </div>
               <h2>{plan.name}</h2>
               <div className="subscription-price">
                 <span>¥</span>
-                {plan.price}
+                {plan.amountFen / 100}
                 <small>/ 月</small>
               </div>
               <div className="subscription-creditline">
                 <strong>{plan.credits.toLocaleString('zh-CN')}</strong>
                 <span>积分</span>
-                <em>省 {plan.saving}</em>
+                {plan.amountFen < plan.credits * 8 && (
+                  <em>省 {((1 - plan.amountFen / (plan.credits * 8)) * 100).toFixed(1)}%</em>
+                )}
               </div>
-              <button className="subscription-button" onClick={() => preview(plan)}>
-                {selectedPlan === plan.name ? '已选择' : `选择 ${plan.name}`}
+              <button
+                className="subscription-button"
+                onClick={() =>
+                  setSelection({
+                    name: plan.name,
+                    amountFen: plan.amountFen,
+                    credits: plan.credits,
+                    productId: plan.id,
+                    kind: 'subscription',
+                  })
+                }
+              >
+                {selectedPlan === plan.id ? '已选择' : `选择 ${plan.name}`}
                 <ArrowUpRight size={17} />
               </button>
               <div className="subscription-plan-details">
@@ -173,7 +265,10 @@ export function SubscriptionPage() {
                   会员专属能力<span>筹备中</span>
                 </p>
               </div>
-              <p className="subscription-unit">约 ¥{plan.unit} / 积分</p>
+              <p className="subscription-unit">
+                约 ¥{plan.credits > 0 ? (plan.amountFen / 100 / plan.credits).toFixed(4) : '—'} /
+                积分
+              </p>
             </article>
           ))}
         </div>
@@ -181,43 +276,71 @@ export function SubscriptionPage() {
       <section className="subscription-footnote">
         <div>
           <p className="subscription-current-plan">
-            当前订阅方案：<strong>Free</strong>
+            当前订阅方案：<strong aria-label="当前方案">{currentPlan}</strong>
           </p>
+          {subscription.data && (
+            <>
+              <p>
+                长期积分{' '}
+                <span aria-label="长期积分">
+                  {formatCredits(subscription.data.perpetualCredits)}
+                </span>{' '}
+                · 本期积分{' '}
+                <span aria-label="本期积分">
+                  {formatCredits(subscription.data.expiringCredits)}
+                </span>
+              </p>
+              {current && (
+                <p>
+                  当前账期：{moment(current.periodStart)} 至 {moment(current.periodEnd)}
+                </p>
+              )}
+              {next && (
+                <p>
+                  已续购 {subscriptionName(next.tier)}：{moment(next.periodStart)} 至{' '}
+                  {moment(next.periodEnd)}
+                </p>
+              )}
+            </>
+          )}
+          {subscription.error && (
+            <div className="mt-2 text-sm text-app-danger">
+              <span role="alert">{subscription.error}</span>
+              <button
+                type="button"
+                onClick={subscription.reload}
+                className="ml-3 underline underline-offset-4"
+              >
+                重新加载订阅
+              </button>
+            </div>
+          )}
           <h3>Free 包含的功能</h3>
           <p>Free 同样支持标准制作、局部重做与透明素材导出；生成任务按实际报价消耗积分。</p>
         </div>
         <div>
           <h4>暂未开放的会员权益</h4>
           <p>
-            更好的模型、高质量处理、三渲二暂未开放。会员期限、积分有效期与续购规则将在开售前说明。
+            更好的模型、高质量处理、三渲二暂未开放。订阅按月手动续购，本期积分到期失效；充值积分长期有效。
           </p>
         </div>
       </section>
-      <dialog
-        ref={dialog}
-        className="subscription-dialog"
-        onClick={(event) => {
-          if (event.target === event.currentTarget) dialog.current?.close()
-        }}
-        aria-labelledby="purchase-title"
-      >
-        <button
-          className="subscription-dialog-close"
-          aria-label="关闭购买预览"
-          onClick={() => dialog.current?.close()}
-        >
-          <X size={20} />
-        </button>
-        <h2 id="purchase-title">{selection?.name}</h2>
-        <div className="subscription-dialog-total">
-          ¥{selection?.price}
-          <span>{selection?.credits.toLocaleString('zh-CN')} 积分</span>
-        </div>
-        <p>支付还没有接入，请联系管理员。当前不会扣款，也不会变更积分或会员资格。</p>
-        <button className="subscription-button primary" onClick={() => dialog.current?.close()}>
-          知道了
-        </button>
-      </dialog>
+      <details className="mt-7 border-t border-app-line pt-5 text-sm text-app-muted">
+        <summary className="cursor-pointer">订单记录</summary>
+        <OrderHistory resource={history} onSelect={showOrder} onPageChange={setPage} />
+      </details>
+      {(selection || orderNo) && (
+        <CheckoutDialog
+          selection={orderNo ? null : selection}
+          orderNo={orderNo}
+          apis={apis}
+          onClose={closeCheckout}
+          onCreated={showOrder}
+          onPaid={onPaid}
+          onOrderChanged={reloadHistory}
+          navigateToPayment={navigateToPayment}
+        />
+      )}
     </main>
   )
 }

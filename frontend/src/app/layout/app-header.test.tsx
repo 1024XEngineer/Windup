@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import type { AuthTokens, CreditAccount, QuotaApis, UserApis } from '@/entities'
+import { createBillApis } from '@/entities'
+import { createBillBackend } from '@/test/bill-backend'
 import { forgetActiveRun, rememberActiveRun } from '@/features/active-run'
 import { AuthSessionProvider } from '@/features/auth-session'
 import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.webp'
@@ -88,6 +90,7 @@ function renderHeader(
   apis = createApis(),
   previousEntry?: string,
   quota = createQuotaMock(),
+  bill = createBillApis({ baseUrl: '/api', fetchFn: createBillBackend().fetchFn }),
 ) {
   return {
     apis,
@@ -103,7 +106,7 @@ function renderHeader(
               path="*"
               element={
                 <>
-                  <AppHeader quotaApis={quota} />
+                  <AppHeader quotaApis={quota} billApis={bill} />
                   <LocationProbe />
                 </>
               }
@@ -119,6 +122,31 @@ function renderAuthenticatedHeader(entry = '/') {
   window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
   return renderHeader(entry)
 }
+
+it('账号菜单显示后端真实会员档位，不固定显示 Free', async () => {
+  window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+  const backend = createBillBackend()
+  backend.subscription.active_subscription = {
+    tier: 2,
+    status: 1,
+    period_start: '2026-10-01T00:00:00Z',
+    period_end: '2026-11-01T00:00:00Z',
+  }
+  renderHeader(
+    '/workspace',
+    undefined,
+    undefined,
+    undefined,
+    createBillApis({ baseUrl: '/api', fetchFn: backend.fetchFn }),
+  )
+  fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+  const menu = screen.getByTestId('account-menu')
+  expect(await within(menu).findByText('Pro')).toBeTruthy()
+  expect(within(menu).queryByText('Free')).toBeNull()
+  expect(within(menu).getByRole('link', { name: '管理订阅' }).getAttribute('href')).toBe(
+    '/account/subscription',
+  )
+})
 
 function finishBackAnimation() {
   act(() => vi.advanceTimersByTime(240))
