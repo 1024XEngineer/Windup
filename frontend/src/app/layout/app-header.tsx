@@ -4,10 +4,11 @@ import { Link, useLocation, useNavigate } from 'react-router'
 
 import defaultAccountAvatar from '@/assets/account/avatars/windup-witch-avatar.webp'
 import { quotaApis as defaultQuotaApis } from '@/entities'
-import type { QuotaApis } from '@/entities'
+import type { BillApis, QuotaApis } from '@/entities'
 import { readActiveRun, subscribeActiveRun } from '@/features/active-run'
 import { AUTH_SESSION_STORAGE_PREFIX, useAuthSession } from '@/features/auth-session'
 import { useQuotaBalance } from '@/features/quota'
+import { subscriptionName, useSubscriptionStatus } from '@/features/billing'
 import {
   productControlClass,
   productMenuItemClass,
@@ -28,6 +29,7 @@ interface ProductNavigationItem {
 
 export interface AppHeaderProps {
   quotaApis?: QuotaApis
+  billApis?: BillApis
   variant?: 'product' | 'marketing'
 }
 
@@ -117,6 +119,7 @@ function WaveText({ playId, text }: { playId: number; text: string }) {
  */
 export function AppHeader({
   quotaApis = defaultQuotaApis,
+  billApis,
   variant = 'product',
 }: AppHeaderProps = {}) {
   const { pathname, search, hash } = useLocation()
@@ -130,6 +133,10 @@ export function AppHeader({
   const creditBalance = useQuotaBalance(
     accountMenu.mounted && session.state.status === 'authenticated',
     quotaApis,
+  )
+  const subscription = useSubscriptionStatus(
+    accountMenu.mounted && session.state.status === 'authenticated',
+    billApis,
   )
   const [wave, setWave] = useState({ entry: '', playId: 0 })
   const activeRunUserId = session.state.status === 'authenticated' ? session.state.user.id : null
@@ -460,9 +467,13 @@ export function AppHeader({
               >
                 <div className="flex min-h-14 items-center justify-between gap-3 border-b border-app-ink/10 px-3 py-2.5">
                   <div className="min-w-0">
-                    <p className="truncate text-[13px] font-semibold text-app-ink-soft">Free</p>
+                    <p className="truncate text-[13px] font-semibold text-app-ink-soft">
+                      {subscription.data
+                        ? subscriptionName(subscription.data.activeSubscription?.tier)
+                        : '—'}
+                    </p>
                     <p className="mt-0.5 truncate text-[11px] text-app-muted">
-                      当前订阅 · 标准创作
+                      {subscription.error ? '订阅信息暂不可用' : '当前订阅 · 标准创作'}
                     </p>
                   </div>
                   <Link
@@ -470,7 +481,7 @@ export function AppHeader({
                     onClick={accountMenu.close}
                     className="shrink-0 rounded-md bg-app-ink px-3 py-1.5 text-[12px] font-medium text-app-canvas transition-opacity hover:opacity-80"
                   >
-                    升级
+                    {subscription.data?.activeSubscription ? '管理订阅' : '升级'}
                   </Link>
                 </div>
                 <div
