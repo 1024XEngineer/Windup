@@ -1,5 +1,18 @@
 /** entities 唯一公开入口。外部不得绕过本文件访问内部文件。 */
 
+/* 账单 —— 商品、支付订单与订阅账期，以后端账本为准。 */
+export { billApis, createBillApis, BILL_ORDER_STATUS, BILL_PRODUCT_TYPE } from './bill'
+export type {
+  BillApis,
+  BillOrder,
+  BillProduct,
+  BillSubscription,
+  CreateBillOrder,
+  CreateBillApisOptions,
+  PaymentChannel,
+  SubscriptionStatus,
+} from './bill'
+
 /* 用户 —— 认证传输与稳定会话身份 */
 export { createUserApis, userApis } from './user'
 export type { AuthTokens, CreateUserApisOptions, SendCodePurpose, User, UserApis } from './user'
