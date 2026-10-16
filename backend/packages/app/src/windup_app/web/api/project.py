@@ -25,7 +25,7 @@ from windup_app.server.character.cleanup import extract_object_keys
 from windup_app.server.character.service import service as character_service
 from windup_app.server.media.service import service as media_service
 from windup_app.server.project.interface import UNSET
-from windup_app.server.project.naming import numbered_project_name, resolve_project_name
+from windup_app.server.project.naming import resolve_project_name
 from windup_app.server.project.service import service
 
 logger = logging.getLogger("windup.project.api")
@@ -158,36 +158,6 @@ class ProjectListOut(ProjectOut):
     preview_url: str | None
 
 
-#: 项目名唯一约束的名字。判别 ``IntegrityError`` 到底是不是重名,靠它而不是靠
-#: "反正这一段只可能重名"。
-_NAME_UNIQUE = "uq_windup_project_user_name"
-
-
-def _is_duplicate_name(exc: IntegrityError) -> bool:
-    """这个完整性错误是不是**项目重名**。
-
-    不是就返回 False,让它原样抛出去 —— 原先这两处一律当重名,于是**任何**约束违约
-    都被伪装成「项目名称已存在」。实测的形态(#676 评审):某一列是 ``NOT NULL`` 且无
-    默认值,INSERT 不点名它就违约,用户看到的是「项目名称已存在」而那个名字是全新的,
-    日志里刷 100 条「创建并发重名」,真实原因不在任何一条日志里 ——
-    **比静默更糟:它给出一个自信且错误的诊断。**
-
-    判别取约束名 + 驱动的 SQLSTATE。取不到 ``orig`` 时保守当成重名:那是原先的行为,
-    在判别不了的场合不改变既有语义。
-    """
-    orig = getattr(exc, "orig", None)
-    if orig is None:
-        return True
-    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
-    if sqlstate is not None:
-        # 23505 = unique_violation。非唯一约束(23502 not_null / 23503 foreign_key /
-        # 23514 check)一律不是重名。
-        return str(sqlstate) == "23505"
-    # 没有 SQLSTATE 的驱动(如 SQLite)退回看文本里有没有那个约束名。
-    text = f"{orig}".lower()
-    return _NAME_UNIQUE in text or ("unique" in text and "project_name" in text)
-
-
 @router.post("", response_model=Response[ProjectOut])
 def create_project(
     body: ProjectCreate,
@@ -195,52 +165,15 @@ def create_project(
     session: Session = Depends(get_session),
 ) -> Response[ProjectOut]:
     user_id = request.state.current_user.id
-    automatic_name = not (body.project_name or "").strip()
-    base_name = resolve_project_name(
+    project_name = resolve_project_name(
         body.project_name, body.name_context, service._namer
     )
     fields = body.model_dump(exclude={"project_name", "name_context"})
     fields["game_style"] = _stored_style(body.game_style)
-
-    for sequence in range(1, 101 if automatic_name else 2):
-        project_name = numbered_project_name(base_name, sequence)
-        if service.project_name_exists(
-            session, user_id=user_id, project_name=project_name
-        ):
-            if automatic_name:
-                continue
-            logger.warning(
-                "[WINDUP] 创建拒绝-名称重复 | user_id=%s project_name=%s",
-                user_id,
-                project_name,
-            )
-            raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
-        try:
-            project = service.create_project(
-                session, user_id=user_id, project_name=project_name, **fields
-            )
-            return Response.success(
-                ProjectOut.model_validate(project), message="创建成功"
-            )
-        except IntegrityError as exc:
-            session.rollback()
-            if not _is_duplicate_name(exc):
-                # 不是重名就别冒充重名。原样抛出去,让它以 500 + 真实堆栈出现 ——
-                # 一个查得到原因的 500,好过一个查不到原因的 400。
-                logger.exception(
-                    "[WINDUP] 创建项目完整性错误(非重名) | user_id=%s project_name=%s",
-                    user_id,
-                    project_name,
-                )
-                raise
-            logger.warning(
-                "[WINDUP] 创建并发重名 | user_id=%s project_name=%s",
-                user_id,
-                project_name,
-            )
-            if not automatic_name:
-                break
-    raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
+    project = service.create_project(
+        session, user_id=user_id, project_name=project_name, **fields
+    )
+    return Response.success(ProjectOut.model_validate(project), message="创建成功")
 
 
 @router.get("", response_model=ListResponse[ProjectListOut])
@@ -297,28 +230,15 @@ def update_project(
     if project is None or project.user_id != user_id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
     rename_to = body.project_name if body.project_name != project.project_name else None
-    if rename_to is not None and service.project_name_exists(
-        session, user_id=user_id, project_name=rename_to
-    ):
-        raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
-    try:
-        project = service.update_project(
-            session,
-            project,
-            project_name=rename_to,
-            game_style=(
-                UNSET if body.game_style is None else _stored_style(body.game_style)
-            ),
-            auto_pixelate=(UNSET if body.auto_pixelate is None else body.auto_pixelate),
-        )
-    except IntegrityError as exc:
-        session.rollback()
-        if not _is_duplicate_name(exc):
-            logger.exception(
-                "[WINDUP] 改项目完整性错误(非重名) | project_id=%s", project_id,
-            )
-            raise
-        raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST) from None
+    project = service.update_project(
+        session,
+        project,
+        project_name=rename_to,
+        game_style=(
+            UNSET if body.game_style is None else _stored_style(body.game_style)
+        ),
+        auto_pixelate=(UNSET if body.auto_pixelate is None else body.auto_pixelate),
+    )
     return Response.success(ProjectOut.model_validate(project), message="修改成功")
 
 

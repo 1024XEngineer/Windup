@@ -37,12 +37,6 @@ class ProjectService(ABC):
         """
 
     @abstractmethod
-    def project_name_exists(
-        self, session: Session, *, user_id: int, project_name: str
-    ) -> bool:
-        """判断用户下的项目名称是否已存在。"""
-
-    @abstractmethod
     def get_project(
         self, session: Session, project_id: int, *, for_update: bool = False
     ) -> Project | None:

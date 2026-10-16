@@ -2,7 +2,16 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, SmallInteger, String, Text, UniqueConstraint, true
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    true,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from windup_framework.db import Base
@@ -12,10 +21,6 @@ class Project(Base):
     """项目表,保存生成所需的全局约束。"""
 
     __tablename__ = "windup_project"
-    __table_args__ = (
-        UniqueConstraint("user_id", "project_name", name="uq_windup_project_user_name"),
-    )
-
     # Postgres 上 BigInteger 自增;variant 到 Integer 让 SQLite(测试库)走
     # INTEGER PRIMARY KEY 自增(SQLite 仅对该声明自动分配 rowid)。
     id: Mapped[int] = mapped_column(
@@ -36,8 +41,13 @@ class Project(Base):
     )
     sprite_sample_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     create_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
     )
     update_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
